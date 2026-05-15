@@ -1,0 +1,87 @@
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import '../core/constants.dart';
+
+class SplashScreen extends StatefulWidget {
+  const SplashScreen({super.key});
+
+  @override
+  State<SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _fadeAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+    _fadeAnim = CurvedAnimation(parent: _controller, curve: Curves.easeIn);
+    _controller.forward();
+    _navigate();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _navigate() async {
+    await Future.delayed(const Duration(seconds: 3));
+    if (mounted) context.go('/login');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: FadeTransition(
+        opacity: _fadeAnim,
+        child: Column(
+          children: [
+            // Logo ocupa la mayor parte de la pantalla
+            Expanded(
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 32),
+                  child: Image.asset(
+                    'assets/images/logo.png',
+                    width: size.width * 0.85,
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              ),
+            ),
+            // Barra de carga abajo
+            Padding(
+              padding: const EdgeInsets.only(bottom: 60),
+              child: Column(
+                children: [
+                  CircularProgressIndicator(
+                    color: AppConstants.primaryColor,
+                    strokeWidth: 2.5,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Cargando...',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.black.withValues(alpha: 0.35),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
