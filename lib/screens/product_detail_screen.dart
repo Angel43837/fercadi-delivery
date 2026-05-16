@@ -54,7 +54,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
           SliverAppBar(
             expandedHeight: 320,
             pinned: true,
-            backgroundColor: AppConstants.bgColor,
+            backgroundColor: AppConstants.primaryColor,
             foregroundColor: Colors.white,
             flexibleSpace: FlexibleSpaceBar(
               background: images.isNotEmpty
@@ -104,52 +104,62 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
             ),
           ),
           SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.product.name,
-                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '\$${widget.product.price.toStringAsFixed(0)} MXN',
-                    style: const TextStyle(fontSize: 22, color: AppConstants.primaryColor, fontWeight: FontWeight.bold),
-                  ),
-                  if (widget.product.description != null) ...[
-                    const SizedBox(height: 16),
+            child: Container(
+              width: double.infinity,
+              decoration: const BoxDecoration(
+                color: AppConstants.surface2Color,
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(24),
+                  topRight: Radius.circular(24),
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 40),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Text(
-                      widget.product.description!,
-                      style: TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 15, height: 1.5),
+                      widget.product.name,
+                      style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppConstants.primaryColor),
                     ),
-                  ],
-                  const SizedBox(height: 32),
-                  Row(
-                    children: [
-                      const Text('Cantidad', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-                      const Spacer(),
-                      _QuantityButton(
-                        icon: Icons.remove,
-                        onTap: () { if (_quantity > 1) setState(() => _quantity--); },
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
-                        child: Text(
-                          '$_quantity',
-                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
-                        ),
-                      ),
-                      _QuantityButton(
-                        icon: Icons.add,
-                        filled: true,
-                        onTap: () => setState(() => _quantity++),
+                    const SizedBox(height: 8),
+                    Text(
+                      '\$${widget.product.price.toStringAsFixed(0)} MXN',
+                      style: TextStyle(fontSize: 22, color: AppConstants.primaryColor, fontWeight: FontWeight.bold),
+                    ),
+                    if (widget.product.description != null) ...[
+                      const SizedBox(height: 16),
+                      Text(
+                        widget.product.description!,
+                        style: TextStyle(color: Colors.black.withOpacity(0.65), fontSize: 15, height: 1.5),
                       ),
                     ],
-                  ),
-                  const SizedBox(height: 100),
-                ],
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        Text('Cantidad', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black)),
+                        const Spacer(),
+                        _QuantityButton(
+                          icon: Icons.remove,
+                          onTap: () { if (_quantity > 1) setState(() => _quantity--); },
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: Text(
+                            '$_quantity',
+                            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black),
+                          ),
+                        ),
+                        _QuantityButton(
+                          icon: Icons.add,
+                          filled: true,
+                          onTap: () => setState(() => _quantity++),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                ),
               ),
             ),
           ),
@@ -158,9 +168,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       bottomNavigationBar: Container(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
         decoration: BoxDecoration(
-          color: AppConstants.surfaceColor,
+          color: AppConstants.primaryColor,
           boxShadow: [
-            BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 10, offset: const Offset(0, -4)),
+            BoxShadow(color: Colors.black.withOpacity(0.18), blurRadius: 10, offset: const Offset(0, -4)),
           ],
         ),
         child: SafeArea(
@@ -168,10 +178,12 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
             onPressed: _addToCart,
             style: ElevatedButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: 16),
+              backgroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
             child: Text(
               'Agregar al pedido  •  \$${(widget.product.price * _quantity).toStringAsFixed(0)} MXN',
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppConstants.primaryColor),
             ),
           ),
         ),

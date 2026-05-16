@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import '../core/constants.dart';
 import '../models/restaurant.dart';
 import '../models/category.dart';
@@ -119,29 +120,22 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
       backgroundColor: AppConstants.bgColor,
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Grupo Fercadi',
-                style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white)),
-            Row(children: [
-              Icon(Icons.location_on,
-                  size: 13, color: AppConstants.primaryColor),
-              const SizedBox(width: 2),
-              Text(_locationLabel(),
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.white.withValues(alpha: 0.5))),
-            ]),
-          ],
-        ),
+        backgroundColor: AppConstants.primaryColor,
+        elevation: 0,
+        centerTitle: true,
+        title: Padding(
+  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),  // Ajustá estos valores
+  child: SvgPicture.asset(
+    'assets/images/logo.svg',
+    width: MediaQuery.of(context).size.width * 0.175,
+    fit: BoxFit.contain,
+    colorFilter: const ColorFilter.mode(Colors.white, BlendMode.srcIn),
+  ),
+),
         actions: [
           IconButton(
-            icon: Icon(Icons.logout, color: Colors.white.withValues(alpha: 0.5), size: 20),
-            onPressed: () => context.go('/login'),
+            icon: Icon(Icons.menu, color: Colors.white.withValues(alpha: 0.9), size: 24),
+            onPressed: () {},
           ),
           Stack(clipBehavior: Clip.none, children: [
             IconButton(
@@ -156,7 +150,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                 child: Container(
                   padding: const EdgeInsets.all(4),
                   decoration: const BoxDecoration(
-                      color: AppConstants.primaryColor,
+                      color: AppConstants.surfaceColor,
                       shape: BoxShape.circle),
                   child: Text('$cartCount',
                       style: const TextStyle(
@@ -203,10 +197,11 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
               return Padding(
                 padding: const EdgeInsets.only(bottom: 20),
                 child: Center(
-                  child: Image.asset(
-                    'assets/images/logo.png',
-                    width: MediaQuery.of(context).size.width * 0.72,
+                  child: SvgPicture.asset(
+                    'assets/images/logo.svg',
+                    width: MediaQuery.of(context).size.width * 0.42,
                     fit: BoxFit.contain,
+                    colorFilter: const ColorFilter.mode(Colors.white, BlendMode.srcIn),
                   ),
                 ),
               );
@@ -230,10 +225,17 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
       duration: const Duration(milliseconds: 250),
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: AppConstants.surfaceColor,
-        borderRadius: BorderRadius.circular(16),
+        color: AppConstants.primaryColor,
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.25),
+            offset: const Offset(0, 8),
+            blurRadius: 18,
+          ),
+        ],
         border: isExpanded
-            ? Border.all(color: AppConstants.primaryColor, width: 1.5)
+            ? Border.all(color: AppConstants.surfaceColor, width: 1.2)
             : null,
       ),
       child: Column(children: [
@@ -241,43 +243,15 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
           onTap: () => _toggleRestaurant(r.id),
           behavior: HitTestBehavior.opaque,
           child: Padding(
-            padding: const EdgeInsets.all(14),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
             child: Row(children: [
-              Container(
-                width: 54,
-                height: 54,
-                decoration: BoxDecoration(
-                    color: AppConstants.surface2Color,
-                    borderRadius: BorderRadius.circular(12)),
-                child: r.imageUrl != null
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Image.network(r.imageUrl!,
-                            fit: BoxFit.cover,
-                            errorBuilder: (ctx, e, s) => const Icon(
-                                Icons.restaurant,
-                                color: AppConstants.primaryColor,
-                                size: 28)))
-                    : const Icon(Icons.restaurant,
-                        color: AppConstants.primaryColor, size: 28),
-              ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
               Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(r.name,
-                          style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white)),
-                      if (r.address != null)
-                        Text(r.address!,
-                            style: TextStyle(
-                                fontSize: 12,
-                                color:
-                                    Colors.white.withValues(alpha: 0.45))),
-                    ]),
+                child: Text(r.name,
+                    style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white)),
               ),
               GestureDetector(
                 onTap: () => context.read<AppDataProvider>().toggleLike(r.id),
@@ -362,7 +336,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
               duration: const Duration(milliseconds: 200),
               margin: const EdgeInsets.only(right: 8),
               padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
                 color: isSelected ? color : color.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(20),
@@ -380,10 +354,10 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                           style: const TextStyle(fontSize: 14))),
                 Text(cat.name,
                     style: TextStyle(
-                        fontSize: 12,
+                        fontSize: 13,
                         fontWeight: isSelected
                             ? FontWeight.bold
-                            : FontWeight.w500,
+                            : FontWeight.w600,
                         color: isSelected
                             ? Colors.white
                             : color.withValues(alpha: 0.9))),
@@ -400,7 +374,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
   Widget _buildProducts(
       Restaurant r, List<Category> cats, int selIdx, AppDataProvider appData) {
     final catId   = cats[selIdx].id;
-    final accent  = _catColors[selIdx % _catColors.length];
+    final accent  = AppConstants.primaryColor;
     final regular = (_prods[r.id]?[catId] ?? [])
         .where((p) => appData.getProductAvailability(p.id, p.isAvailable))
         .toList();
@@ -439,8 +413,15 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
       decoration: BoxDecoration(
         color: AppConstants.surface2Color,
         borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            offset: const Offset(0, 6),
+            blurRadius: 12,
+          ),
+        ],
         border: isExpanded
-            ? Border.all(color: accent, width: 1.5)
+            ? Border.all(color: AppConstants.primaryColor, width: 1.2)
             : null,
       ),
       child: Column(children: [
@@ -464,25 +445,25 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(p.name,
-                          style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white)),
+                    Text(p.name,
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: AppConstants.primaryColor)),
                       if (p.description != null)
                         Text(p.description!,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                                fontSize: 11,
-                                color:
-                                    Colors.white.withValues(alpha: 0.45))),
+                      style: TextStyle(
+                        fontSize: 11,
+                        color:
+                          Colors.black.withOpacity(0.45))),
                       const SizedBox(height: 4),
-                      Text('\$${p.price.toStringAsFixed(0)} MXN',
-                          style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: accent)),
+                    Text('\$${p.price.toStringAsFixed(0)} MXN',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: AppConstants.primaryColor)),
                     ]),
               ),
               AnimatedRotation(

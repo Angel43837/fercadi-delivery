@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import '../core/constants.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -51,10 +52,11 @@ class _SplashScreenState extends State<SplashScreen>
               child: Center(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 32),
-                  child: Image.asset(
-                    'assets/images/logo.png',
-                    width: size.width * 0.85,
+                  child: SvgPicture.asset(
+                    'assets/images/logo.svg',
+                    width: size.width * 0.6,
                     fit: BoxFit.contain,
+                    colorFilter: const ColorFilter.mode(Colors.white, BlendMode.srcIn),
                   ),
                 ),
               ),

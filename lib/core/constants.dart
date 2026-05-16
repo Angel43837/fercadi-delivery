@@ -5,8 +5,8 @@ class AppConstants {
   static const String supabaseAnonKey = 'TU_SUPABASE_ANON_KEY';
 
   // Colores principales
-  static const Color primaryColor  = Color(0xFFE91E8C); // Rosa/magenta
-  static const Color bgColor       = Color(0xFF121212); // Fondo oscuro
-  static const Color surfaceColor  = Color(0xFF1E1E1E); // Superficie tarjetas
-  static const Color surface2Color = Color(0xFF2A2A2A); // Superficie secundaria
+  static const Color primaryColor  = Color(0xFFFF5722); // Naranja principal
+  static const Color bgColor       = Color(0xFFFF5722); // Fondo naranja
+  static const Color surfaceColor  = Color(0xFFFF7043); // Tarjetas (más claro)
+  static const Color surface2Color = Color(0xFFFFFFFF); // Superficie secundaria (blanco)
 }
