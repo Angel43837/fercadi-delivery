@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -610,7 +611,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
       child: Center(child: Icon(Icons.fastfood, size: size, color: AppConstants.primaryColor)),
     );
     if (url == null) return placeholder;
-    if (url.startsWith('/') || url.startsWith('file:')) {
+    if (!kIsWeb && (url.startsWith('/') || url.startsWith('file:'))) {
       return Image.file(File(url), fit: BoxFit.cover,
           errorBuilder: (_, _, _) => placeholder);
     }

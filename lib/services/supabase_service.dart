@@ -7,7 +7,7 @@ class SupabaseService {
   static final _client = Supabase.instance.client;
 
   // Cambia a false cuando configures Supabase con tus credenciales reales
-  static const bool useMock = true;
+  static const bool useMock = false;
 
   // ── Mock data ──────────────────────────────────────────────────────────────
 
@@ -150,6 +150,34 @@ class SupabaseService {
       ));
     }
     return sections;
+  }
+
+  static Future<void> saveProduct({
+    required String id,
+    required String name,
+    required String description,
+    required double price,
+    required bool isAvailable,
+    required String categoryId,
+    required String restaurantId,
+    String? imageUrl,
+  }) async {
+    if (useMock) return;
+    await _client.from('products').upsert({
+      'id': id,
+      'name': name,
+      'description': description,
+      'price': price,
+      'is_available': isAvailable,
+      'category_id': categoryId,
+      'restaurant_id': restaurantId,
+      'image_url': imageUrl,
+    });
+  }
+
+  static Future<void> setProductAvailability(String productId, bool isAvailable) async {
+    if (useMock) return;
+    await _client.from('products').update({'is_available': isAvailable}).eq('id', productId);
   }
 
   static Future<void> createOrder({

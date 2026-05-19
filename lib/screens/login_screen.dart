@@ -32,10 +32,12 @@ class _LoginScreenState extends State<LoginScreen> {
     }
     setState(() => _isLoading = true);
     try {
-      if (SupabaseService.useMock) {
-        await Future.delayed(const Duration(milliseconds: 700));
+      final email = _emailController.text.trim().toLowerCase();
+      // Correos de roles especiales — siempre funcionan sin Supabase Auth
+      if (email == 'admin@fercadi.com' || email == 'dueno@fercadi.com' ||
+          email == 'repartidor@fercadi.com' || SupabaseService.useMock) {
+        await Future.delayed(const Duration(milliseconds: 500));
         if (!mounted) return;
-        final email = _emailController.text.trim().toLowerCase();
         if (email == 'admin@fercadi.com') {
           context.go('/admin');
         } else if (email == 'repartidor@fercadi.com') {

@@ -1,9 +1,11 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../core/constants.dart';
 import '../providers/app_data_provider.dart';
+import '../services/supabase_service.dart';
 
 class _Product {
   final String id;
@@ -260,7 +262,10 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 return _ProductTile(
                   product: p,
                   isAvailable: avail,
-                  onToggle: () => appData.setProductAvailability(p.id, !avail),
+                  onToggle: () {
+                    appData.setProductAvailability(p.id, !avail);
+                    SupabaseService.setProductAvailability(p.id, !avail);
+                  },
                   onEdit: () => _showProductForm(p, isExtra: false),
                 );
               }),
@@ -274,7 +279,10 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 return _ProductTile(
                   product: p,
                   isAvailable: avail,
-                  onToggle: () => appData.setProductAvailability(sp.id, !avail),
+                  onToggle: () {
+                    appData.setProductAvailability(sp.id, !avail);
+                    SupabaseService.setProductAvailability(sp.id, !avail);
+                  },
                   onEdit: () => _showProductForm(p, isExtra: true),
                 );
               }),
@@ -388,7 +396,9 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 clipBehavior: Clip.hardEdge,
                 child: pickedImagePath != null
                     ? Stack(fit: StackFit.expand, children: [
-                        Image.file(File(pickedImagePath!), fit: BoxFit.cover),
+                        kIsWeb
+                            ? Image.network(pickedImagePath!, fit: BoxFit.cover)
+                            : Image.file(File(pickedImagePath!), fit: BoxFit.cover),
                         Positioned(
                           bottom: 8, right: 8,
                           child: Container(
@@ -463,39 +473,43 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 onPressed: () {
                   if (nameCtrl.text.trim().isEmpty || priceCtrl.text.trim().isEmpty) return;
                   final appData = context.read<AppDataProvider>();
+                  final newId = existing?.id ?? 'ep${DateTime.now().millisecondsSinceEpoch}';
+                  final name = nameCtrl.text.trim();
+                  final desc = descCtrl.text.trim();
+                  final price = double.tryParse(priceCtrl.text.trim()) ?? existing?.price ?? 0;
+
                   if (existing == null) {
                     appData.addExtraProduct(SharedProduct(
-                      id: 'ep${DateTime.now().millisecondsSinceEpoch}',
-                      name: nameCtrl.text.trim(),
-                      description: descCtrl.text.trim(),
-                      price: double.tryParse(priceCtrl.text.trim()) ?? 0,
-                      isAvailable: available,
-                      categoryId: selectedCatId,
-                      restaurantId: '1',
+                      id: newId, name: name, description: desc,
+                      price: price, isAvailable: available,
+                      categoryId: selectedCatId, restaurantId: '1',
                       imagePath: pickedImagePath,
                     ));
                   } else if (isExtra) {
                     appData.updateExtraProduct(SharedProduct(
-                      id: existing.id,
-                      name: nameCtrl.text.trim(),
-                      description: descCtrl.text.trim(),
-                      price: double.tryParse(priceCtrl.text.trim()) ?? existing.price,
-                      isAvailable: available,
-                      categoryId: existing.categoryId,
-                      restaurantId: '1',
+                      id: existing.id, name: name, description: desc,
+                      price: price, isAvailable: available,
+                      categoryId: existing.categoryId, restaurantId: '1',
                       imagePath: pickedImagePath,
                     ));
                     appData.setProductAvailability(existing.id, available);
                   } else {
                     setState(() {
-                      existing.name        = nameCtrl.text.trim();
-                      existing.description = descCtrl.text.trim();
-                      existing.price       = double.tryParse(priceCtrl.text.trim()) ?? existing.price;
-                      existing.isAvailable = available;
-                      existing.imagePath   = pickedImagePath;
+                      existing.name = name; existing.description = desc;
+                      existing.price = price; existing.isAvailable = available;
+                      existing.imagePath = pickedImagePath;
                     });
                     appData.setProductAvailability(existing.id, available);
                   }
+
+                  // Guardar en Supabase
+                  SupabaseService.saveProduct(
+                    id: newId, name: name, description: desc,
+                    price: price, isAvailable: available,
+                    categoryId: selectedCatId,
+                    restaurantId: '1',
+                  );
+
                   Navigator.pop(ctx);
                 },
                 child: Text(
@@ -722,7 +736,9 @@ class _ProductTile extends StatelessWidget {
         ClipRRect(
           borderRadius: BorderRadius.circular(10),
           child: product.imagePath != null
-              ? Image.file(File(product.imagePath!), width: 60, height: 60, fit: BoxFit.cover)
+              ? (kIsWeb
+                  ? Image.network(product.imagePath!, width: 60, height: 60, fit: BoxFit.cover)
+                  : Image.file(File(product.imagePath!), width: 60, height: 60, fit: BoxFit.cover))
               : Container(
                   width: 60, height: 60,
                   color: AppConstants.surface2Color,
