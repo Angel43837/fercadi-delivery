@@ -152,6 +152,15 @@ class SupabaseService {
     return sections;
   }
 
+  static Future<List<Product>> getProductsForRestaurant(String restaurantId) async {
+    if (useMock) return [];
+    final data = await _client
+        .from('products')
+        .select()
+        .eq('restaurant_id', restaurantId);
+    return (data as List).map((e) => Product.fromJson(e)).toList();
+  }
+
   static Future<void> saveProduct({
     required String id,
     required String name,

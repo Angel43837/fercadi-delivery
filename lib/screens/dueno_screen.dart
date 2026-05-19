@@ -54,7 +54,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
     _Category(id: 'c12', name: 'Desayunos',     emoji: '🥞'),
   ];
 
-  final List<_Product> _products = [
+  List<_Product> _products = [
     _Product(id: 'p1', name: 'Big Mac',         description: 'Dos carnes, lechuga, queso, cebolla y salsa especial', price: 89,  isAvailable: true,  categoryId: 'c1'),
     _Product(id: 'p2', name: 'Quarter Pounder', description: 'Carne 100% res, queso americano, cebolla y mostaza',   price: 95,  isAvailable: true,  categoryId: 'c1'),
     _Product(id: 'p3', name: 'McPollo Crispy',  description: 'Pollo crujiente, lechuga y mayonesa en pan tostado',   price: 79,  isAvailable: false, categoryId: 'c1'),
@@ -64,6 +64,28 @@ class _DuenoScreenState extends State<DuenoScreen> {
     _Product(id: 'p7', name: 'Café Americano',  description: 'Café negro recién preparado',                          price: 40,  isAvailable: true,  categoryId: 'c3'),
     _Product(id: 'p8', name: 'McFlurry Oreo',   description: 'Helado suave con trozos de galleta Oreo',              price: 55,  isAvailable: true,  categoryId: 'c10'),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    if (!SupabaseService.useMock) _loadProductsFromSupabase();
+  }
+
+  Future<void> _loadProductsFromSupabase() async {
+    final data = await SupabaseService.getProductsForRestaurant('1');
+    if (!mounted) return;
+    setState(() {
+      _products = data.map((p) => _Product(
+        id: p.id,
+        name: p.name,
+        description: p.description ?? '',
+        price: p.price,
+        isAvailable: p.isAvailable,
+        categoryId: p.categoryId,
+        imagePath: p.imageUrl,
+      )).toList();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -470,7 +492,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
             SizedBox(
               width: double.infinity, height: 52,
               child: ElevatedButton(
-                onPressed: () {
+                onPressed: () async {
                   if (nameCtrl.text.trim().isEmpty || priceCtrl.text.trim().isEmpty) return;
                   final appData = context.read<AppDataProvider>();
                   final newId = existing?.id ?? 'ep${DateTime.now().millisecondsSinceEpoch}';
@@ -502,15 +524,16 @@ class _DuenoScreenState extends State<DuenoScreen> {
                     appData.setProductAvailability(existing.id, available);
                   }
 
-                  // Guardar en Supabase
-                  SupabaseService.saveProduct(
+                  // Guardar en Supabase y recargar
+                  await SupabaseService.saveProduct(
                     id: newId, name: name, description: desc,
                     price: price, isAvailable: available,
                     categoryId: selectedCatId,
                     restaurantId: '1',
                   );
+                  if (!SupabaseService.useMock) await _loadProductsFromSupabase();
 
-                  Navigator.pop(ctx);
+                  if (ctx.mounted) Navigator.pop(ctx);
                 },
                 child: Text(
                   existing == null ? 'AGREGAR PLATILLO' : 'GUARDAR CAMBIOS',
