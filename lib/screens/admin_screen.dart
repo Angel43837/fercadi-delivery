@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../core/constants.dart';
 import '../providers/app_data_provider.dart';
@@ -85,6 +86,12 @@ class _AdminScreenState extends State<AdminScreen> {
               const SizedBox(width: 5),
               const Text('En línea', style: TextStyle(color: Colors.green, fontSize: 11, fontWeight: FontWeight.w600)),
             ]),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            icon: Icon(Icons.logout, color: Colors.white.withValues(alpha: 0.5), size: 20),
+            tooltip: 'Cerrar sesión',
+            onPressed: () => context.go('/login'),
           ),
         ]),
       ),

@@ -135,8 +135,9 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
 ),
         actions: [
           IconButton(
-            icon: Icon(Icons.menu, color: Colors.white.withValues(alpha: 0.9), size: 24),
-            onPressed: () {},
+            icon: Icon(Icons.logout, color: Colors.white.withValues(alpha: 0.8), size: 22),
+            tooltip: 'Cerrar sesión',
+            onPressed: () => context.go('/login'),
           ),
           Stack(clipBehavior: Clip.none, children: [
             IconButton(

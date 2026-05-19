@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../core/constants.dart';
@@ -129,6 +130,11 @@ class _DuenoScreenState extends State<DuenoScreen> {
               Text('Panel del restaurante',
                   style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 12)),
             ]),
+          ),
+          IconButton(
+            icon: Icon(Icons.logout, color: Colors.white.withValues(alpha: 0.5), size: 20),
+            tooltip: 'Cerrar sesión',
+            onPressed: () => context.go('/login'),
           ),
           GestureDetector(
             onTap: () => appData.setRestaurantOpen('1', !isOpen),
