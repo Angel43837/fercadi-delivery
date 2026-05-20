@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants.dart';
+import '../services/supabase_service.dart';
 
 // Coordenadas mock dentro de Maravatío, Mich.
 const _kRestaurantPos = LatLng(19.9020, -100.4510);
@@ -15,12 +17,14 @@ class TrackingScreen extends StatefulWidget {
   final String restaurantName;
   final String address;
   final double total;
+  final String orderId;
 
   const TrackingScreen({
     super.key,
     required this.restaurantName,
     required this.address,
     required this.total,
+    this.orderId = 'o1',
   });
 
   @override
@@ -34,9 +38,12 @@ class _TrackingScreenState extends State<TrackingScreen> {
   static const int _maxSecs = 50;
 
   LatLng _motoPos = _kRestaurantPos;
+  bool _hasRealLocation = false;
+  RealtimeChannel? _realtimeChannel;
 
   // 0=Preparando, 1=En camino, 2=Llegando, 3=Entregado
   int get _step {
+    if (_hasRealLocation) return 1; // Si hay GPS real, siempre "en camino"
     if (_elapsed < 15) return 0;
     if (_elapsed < 40) return 1;
     if (_elapsed < 50) return 2;
@@ -53,8 +60,21 @@ class _TrackingScreenState extends State<TrackingScreen> {
   @override
   void initState() {
     super.initState();
+    // Suscribirse al GPS real del repartidor
+    _realtimeChannel = SupabaseService.subscribeToLocation(
+      widget.orderId,
+      (lat, lng) {
+        if (!mounted) return;
+        setState(() {
+          _hasRealLocation = true;
+          _motoPos = LatLng(lat, lng);
+        });
+        try { _mapCtrl.move(_motoPos, 15.0); } catch (_) {}
+      },
+    );
+    // Animación simulada como fallback si no hay GPS real
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted) return;
+      if (!mounted || _hasRealLocation) return;
       setState(() {
         if (_elapsed < _maxSecs) _elapsed++;
         if (_elapsed >= 15) {
@@ -71,6 +91,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
   @override
   void dispose() {
     _timer?.cancel();
+    _realtimeChannel?.unsubscribe();
     _mapCtrl.dispose();
     super.dispose();
   }

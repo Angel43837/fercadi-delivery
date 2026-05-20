@@ -172,6 +172,25 @@ class _OrderSummary extends StatelessWidget {
                 child: const Text('REALIZAR PEDIDO', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               ),
             ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => context.push('/tracking', extra: {
+                  'restaurantName': 'McDonalds',
+                  'address': 'Tu dirección',
+                  'total': 0.0,
+                  'orderId': 'o1',
+                }),
+                icon: const Icon(Icons.delivery_dining, size: 20),
+                label: const Text('RASTREAR MI PEDIDO', style: TextStyle(fontWeight: FontWeight.bold)),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  side: BorderSide(color: AppConstants.primaryColor),
+                  foregroundColor: AppConstants.primaryColor,
+                ),
+              ),
+            ),
           ],
         ),
       ),

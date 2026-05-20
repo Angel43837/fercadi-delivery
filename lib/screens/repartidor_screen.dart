@@ -2,8 +2,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 import '../core/constants.dart';
+import '../services/supabase_service.dart';
 
 // Posiciones mock de restaurantes en Maravatío
 const _posRestaurant1 = LatLng(19.9020, -100.4510); // McDonalds
@@ -87,6 +89,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   // GPS
   Position? _myPos;
   StreamSubscription<Position>? _gpsSub;
+  Timer? _broadcastTimer;
   final _mapCtrl = MapController();
 
   final _pendingOrders = List<_Order>.from(_mockOrders);
@@ -107,7 +110,14 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         _gpsSub = Geolocator.getPositionStream(
           locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 5),
         ).listen((pos) {
-          if (mounted) setState(() => _myPos = pos);
+          if (!mounted) return;
+          setState(() => _myPos = pos);
+          // Mover cámara cuando está en camino (step 2)
+          if (_step == 2) {
+            try {
+              _mapCtrl.move(LatLng(pos.latitude, pos.longitude), 15.5);
+            } catch (_) {}
+          }
         });
       }
     } catch (_) {}
@@ -116,6 +126,8 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   @override
   void dispose() {
     _gpsSub?.cancel();
+    _broadcastTimer?.cancel();
+    SupabaseService.stopLocationBroadcast();
     _mapCtrl.dispose();
     super.dispose();
   }
@@ -126,16 +138,28 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
       _pendingOrders.remove(order);
       _step = 0;
     });
+    SupabaseService.startLocationBroadcast(order.id);
   }
 
   void _avanzarStep() {
     if (_step < 3) {
       setState(() => _step++);
+      // Step 2 = En camino: empezar a transmitir GPS cada 5 segundos
+      if (_step == 2) {
+        _broadcastTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+          if (_myPos != null) {
+            SupabaseService.broadcastLocation(_myPos!.latitude, _myPos!.longitude);
+          }
+        });
+      }
     } else {
-      // Pedido entregado
+      // Pedido entregado: detener transmisión
+      _broadcastTimer?.cancel();
+      _broadcastTimer = null;
+      SupabaseService.stopLocationBroadcast();
       setState(() {
         _entregasHoy++;
-        _gananciaHoy += _activeOrder!.total * 0.15; // 15% comisión mock
+        _gananciaHoy += _activeOrder!.total * 0.15;
         _activeOrder = null;
         _step = 0;
       });
@@ -275,6 +299,11 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                     style:
                         TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 13)),
               ]),
+            ),
+            IconButton(
+              icon: Icon(Icons.logout, color: Colors.white.withValues(alpha: 0.6), size: 20),
+              onPressed: () => context.go('/login'),
+              tooltip: 'Salir',
             ),
             // Toggle disponible
             GestureDetector(
@@ -468,6 +497,29 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
               ]),
             ],
           ),
+          // Badge GPS transmitiendo (solo en step 2)
+          if (_step == 2)
+            Positioned(
+              top: 0, left: 0, right: 0,
+              child: SafeArea(
+                child: Center(
+                  child: Container(
+                    margin: const EdgeInsets.only(top: 12),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: Colors.green.withValues(alpha: 0.9),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.gps_fixed, color: Colors.white, size: 15),
+                      SizedBox(width: 6),
+                      Text('Transmitiendo ubicación en vivo',
+                          style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                    ]),
+                  ),
+                ),
+              ),
+            ),
           // Status badge sobre el mapa
           SafeArea(
             child: Padding(

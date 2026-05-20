@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/restaurant.dart';
 import '../models/category.dart';
@@ -115,7 +116,7 @@ class SupabaseService {
     if (useMock) return _mockProducts[categoryId] ?? [];
     final data = await _client
         .from('products')
-        .select('*, product_images(*)')
+        .select()
         .eq('category_id', categoryId)
         .eq('is_available', true);
     return (data as List).map((e) => Product.fromJson(e)).toList();
@@ -161,6 +162,23 @@ class SupabaseService {
     return (data as List).map((e) => Product.fromJson(e)).toList();
   }
 
+  static Future<String?> uploadProductImage(String localPath) async {
+    if (useMock) return null;
+    try {
+      final file = File(localPath);
+      final bytes = await file.readAsBytes();
+      final ext = localPath.split('.').last.toLowerCase();
+      final fileName = '${DateTime.now().millisecondsSinceEpoch}.$ext';
+      await _client.storage.from('product-images').uploadBinary(
+        fileName, bytes,
+        fileOptions: FileOptions(contentType: 'image/$ext', upsert: true),
+      );
+      return _client.storage.from('product-images').getPublicUrl(fileName);
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<void> saveProduct({
     required String id,
     required String name,
@@ -187,6 +205,45 @@ class SupabaseService {
   static Future<void> setProductAvailability(String productId, bool isAvailable) async {
     if (useMock) return;
     await _client.from('products').update({'is_available': isAvailable}).eq('id', productId);
+  }
+
+  // ── Tracking en tiempo real ────────────────────────────────────────────────
+
+  static RealtimeChannel? _broadcastChannel;
+
+  static Future<void> startLocationBroadcast(String orderId) async {
+    _broadcastChannel = _client.channel('tracking:$orderId');
+    _broadcastChannel!.subscribe();
+  }
+
+  static void broadcastLocation(double lat, double lng) {
+    _broadcastChannel?.sendBroadcastMessage(
+      event: 'location',
+      payload: {'lat': lat, 'lng': lng},
+    );
+  }
+
+  static void stopLocationBroadcast() {
+    _broadcastChannel?.unsubscribe();
+    _broadcastChannel = null;
+  }
+
+  static RealtimeChannel subscribeToLocation(
+    String orderId,
+    void Function(double lat, double lng) onUpdate,
+  ) {
+    final channel = _client.channel('tracking:$orderId');
+    channel
+        .onBroadcast(
+          event: 'location',
+          callback: (payload) {
+            final lat = (payload['lat'] as num).toDouble();
+            final lng = (payload['lng'] as num).toDouble();
+            onUpdate(lat, lng);
+          },
+        )
+        .subscribe();
+    return channel;
   }
 
   static Future<void> createOrder({

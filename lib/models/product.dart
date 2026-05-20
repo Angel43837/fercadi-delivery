@@ -27,9 +27,6 @@ class Product {
         price: (json['price'] as num).toDouble(),
         imageUrl: json['image_url'] as String?,
         isAvailable: json['is_available'] as bool? ?? true,
-        images: (json['product_images'] as List<dynamic>?)
-                ?.map((e) => e['image_url'] as String)
-                .toList() ??
-            [],
+        images: const [],
       );
 }

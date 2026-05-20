@@ -71,6 +71,7 @@ final appRouter = GoRouter(
           restaurantName: extra['restaurantName'] as String,
           address: extra['address'] as String,
           total: extra['total'] as double,
+          orderId: extra['orderId'] as String? ?? 'o1',
         );
       },
     ),

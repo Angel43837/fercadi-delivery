@@ -15,6 +15,6 @@ class Category {
         id: json['id'] as String,
         restaurantId: json['restaurant_id'] as String,
         name: json['name'] as String,
-        icon: json['icon'] as String?,
+        icon: (json['emoji_icon'] ?? json['icon']) as String?,
       );
 }

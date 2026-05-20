@@ -342,7 +342,10 @@ class _DuenoScreenState extends State<DuenoScreen> {
 
     Future<void> pickImage(ImageSource source, StateSetter setModal) async {
       final xfile = await picker.pickImage(source: source, imageQuality: 80);
-      if (xfile != null) setModal(() => pickedImagePath = xfile.path);
+      if (xfile == null) return;
+      setModal(() => pickedImagePath = xfile.path); // preview local mientras sube
+      final uploaded = await SupabaseService.uploadProductImage(xfile.path);
+      if (uploaded != null) setModal(() => pickedImagePath = uploaded);
     }
 
     showModalBottomSheet(
@@ -424,7 +427,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 clipBehavior: Clip.hardEdge,
                 child: pickedImagePath != null
                     ? Stack(fit: StackFit.expand, children: [
-                        kIsWeb
+                        (kIsWeb || pickedImagePath!.startsWith('http'))
                             ? Image.network(pickedImagePath!, fit: BoxFit.cover)
                             : Image.file(File(pickedImagePath!), fit: BoxFit.cover),
                         Positioned(
@@ -478,7 +481,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
 
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-              decoration: BoxDecoration(color: AppConstants.surface2Color, borderRadius: BorderRadius.circular(12)),
+              decoration: BoxDecoration(color: const Color(0xFFD84315), borderRadius: BorderRadius.circular(12)),
               child: Row(children: [
                 Icon(Icons.storefront_outlined, color: Colors.white.withValues(alpha: 0.5), size: 20),
                 const SizedBox(width: 10),
@@ -536,6 +539,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
                     price: price, isAvailable: available,
                     categoryId: selectedCatId,
                     restaurantId: '1',
+                    imageUrl: pickedImagePath,
                   );
                   if (!SupabaseService.useMock) await _loadProductsFromSupabase();
 
@@ -765,7 +769,7 @@ class _ProductTile extends StatelessWidget {
         ClipRRect(
           borderRadius: BorderRadius.circular(10),
           child: product.imagePath != null
-              ? (kIsWeb
+              ? ((kIsWeb || product.imagePath!.startsWith('http'))
                   ? Image.network(product.imagePath!, width: 60, height: 60, fit: BoxFit.cover)
                   : Image.file(File(product.imagePath!), width: 60, height: 60, fit: BoxFit.cover))
               : Container(
@@ -896,10 +900,10 @@ class _FormField extends StatelessWidget {
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
         labelText: label,
-        labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
-        prefixIcon: Icon(icon, color: Colors.white.withValues(alpha: 0.4), size: 20),
+        labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
+        prefixIcon: Icon(icon, color: Colors.white.withValues(alpha: 0.6), size: 20),
         filled: true,
-        fillColor: AppConstants.surface2Color,
+        fillColor: const Color(0xFFD84315),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
         focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
@@ -911,9 +915,9 @@ class _FormField extends StatelessWidget {
 
 InputDecoration _inputDecoration(String label) => InputDecoration(
   labelText: label,
-  labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
+  labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
   filled: true,
-  fillColor: AppConstants.surface2Color,
+  fillColor: const Color(0xFFD84315),
   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
   focusedBorder: OutlineInputBorder(
       borderRadius: BorderRadius.circular(12),
