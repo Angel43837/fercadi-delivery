@@ -1,48 +1,22 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants.dart';
+import '../services/location_service.dart';
 import '../services/supabase_service.dart';
 
-// Posiciones mock de restaurantes en Maravatío
-const _posRestaurant1 = LatLng(19.9020, -100.4510); // McDonalds
-const _posRestaurant2 = LatLng(19.8980, -100.4460); // Starbucks
-// Posiciones mock de clientes
-const _posCliente1 = LatLng(19.8900, -100.4370);
-const _posCliente2 = LatLng(19.8860, -100.4420);
-
-// Datos mock de pedidos pendientes
-final _mockOrders = [
-  _Order(
-    id: 'o1',
-    restaurantName: 'McDonalds',
-    restaurantIcon: '🍔',
-    restaurantPos: _posRestaurant1,
-    customerName: 'Carlos Pérez',
-    customerPhone: '4431234567',
-    address: 'Calle Hidalgo #45, Col. Centro',
-    customerPos: _posCliente1,
-    items: const ['2× Big Mac', '1× Papas Grandes', '1× Coca-Cola'],
-    total: 258.0,
-    distanceKm: 1.4,
-  ),
-  _Order(
-    id: 'o2',
-    restaurantName: 'Starbucks',
-    restaurantIcon: '☕',
-    restaurantPos: _posRestaurant2,
-    customerName: 'María López',
-    customerPhone: '4439876543',
-    address: 'Av. Morelos #88, Col. San Miguel',
-    customerPos: _posCliente2,
-    items: const ['1× Frappé Oreo', '1× Café Latte'],
-    total: 170.0,
-    distanceKm: 2.1,
-  ),
-];
+// Posiciones fijas por restaurante
+const _restaurantInfo = {
+  '1': (name: 'McDonalds',  icon: '🍔', pos: LatLng(19.9020, -100.4510)),
+  '2': (name: 'Starbucks',  icon: '☕', pos: LatLng(19.8980, -100.4460)),
+  '3': (name: 'Sushi Roll', icon: '🍣', pos: LatLng(19.8950, -100.4500)),
+};
+const _defaultClientPos = LatLng(19.8900, -100.4370);
 
 class _Order {
   final String id;
@@ -55,9 +29,8 @@ class _Order {
   final LatLng customerPos;
   final List<String> items;
   final double total;
-  final double distanceKm;
 
-  const _Order({
+  _Order({
     required this.id,
     required this.restaurantName,
     required this.restaurantIcon,
@@ -68,8 +41,38 @@ class _Order {
     required this.customerPos,
     required this.items,
     required this.total,
-    required this.distanceKm,
   });
+
+  factory _Order.fromMap(Map<String, dynamic> m) {
+    final rid = m['restaurant_id'] as String? ?? '1';
+    final info = _restaurantInfo[rid] ?? _restaurantInfo['1']!;
+
+    // Parsear delivery info del JSON en customer_name
+    Map<String, dynamic> delivery = {};
+    try { delivery = jsonDecode(m['customer_name'] as String? ?? '{}') as Map<String, dynamic>; } catch (_) {}
+
+    // Construir lista de items
+    final orderItems = (m['order_items'] as List<dynamic>? ?? []);
+    final itemStrings = orderItems.map((i) {
+      final qty = i['quantity'] as int? ?? 1;
+      final product = i['products'] as Map<String, dynamic>?;
+      final name = product?['name'] as String? ?? 'Producto';
+      return '$qty× $name';
+    }).toList();
+
+    return _Order(
+      id: m['id'] as String,
+      restaurantName: info.name,
+      restaurantIcon: info.icon,
+      restaurantPos: info.pos,
+      customerName: delivery['name'] as String? ?? 'Cliente',
+      customerPhone: delivery['phone'] as String? ?? '—',
+      address: delivery['address'] as String? ?? 'Dirección no especificada',
+      customerPos: _defaultClientPos,
+      items: itemStrings.isEmpty ? ['Pedido #${m['id'].toString().substring(0, 6)}'] : itemStrings,
+      total: (m['total'] as num).toDouble(),
+    );
+  }
 }
 
 class RepartidorScreen extends StatefulWidget {
@@ -92,12 +95,34 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   Timer? _broadcastTimer;
   final _mapCtrl = MapController();
 
-  final _pendingOrders = List<_Order>.from(_mockOrders);
+  final List<_Order> _pendingOrders = [];
+  bool _loadingOrders = true;
+  RealtimeChannel? _ordersChannel;
+  Timer? _pollTimer;
+  LatLng? _geocodedCustomerPos;
 
   @override
   void initState() {
     super.initState();
     _initGPS();
+    _loadOrders();
+    _ordersChannel = SupabaseService.subscribeToOrders(_loadOrders);
+    _pollTimer = Timer.periodic(const Duration(seconds: 8), (_) => _loadOrders());
+  }
+
+  Future<void> _loadOrders() async {
+    try {
+      final data = await SupabaseService.getActiveOrders();
+      if (!mounted) return;
+      setState(() {
+        _pendingOrders
+          ..clear()
+          ..addAll(data.map(_Order.fromMap).where((o) => o.id != _activeOrder?.id));
+        _loadingOrders = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loadingOrders = false);
+    }
   }
 
   Future<void> _initGPS() async {
@@ -127,6 +152,8 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   void dispose() {
     _gpsSub?.cancel();
     _broadcastTimer?.cancel();
+    _pollTimer?.cancel();
+    _ordersChannel?.unsubscribe();
     SupabaseService.stopLocationBroadcast();
     _mapCtrl.dispose();
     super.dispose();
@@ -135,17 +162,27 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   void _aceptarPedido(_Order order) {
     setState(() {
       _activeOrder = order;
-      _pendingOrders.remove(order);
+      _geocodedCustomerPos = null;
+      _pendingOrders.removeWhere((o) => o.id == order.id);
       _step = 0;
     });
+    SupabaseService.updateOrderStatus(order.id, 'accepted');
     SupabaseService.startLocationBroadcast(order.id);
+    _geocodeCustomer(order.address);
+  }
+
+  Future<void> _geocodeCustomer(String address) async {
+    final result = await LocationService.geocodeAddress(address);
+    if (!mounted || result == null) return;
+    setState(() => _geocodedCustomerPos = LatLng(result.lat, result.lng));
+    try { _mapCtrl.move(_geocodedCustomerPos!, 15.0); } catch (_) {}
   }
 
   void _avanzarStep() {
     if (_step < 3) {
       setState(() => _step++);
-      // Step 2 = En camino: empezar a transmitir GPS cada 5 segundos
       if (_step == 2) {
+        SupabaseService.updateOrderStatus(_activeOrder!.id, 'delivering');
         _broadcastTimer = Timer.periodic(const Duration(seconds: 5), (_) {
           if (_myPos != null) {
             SupabaseService.broadcastLocation(_myPos!.latitude, _myPos!.longitude);
@@ -153,9 +190,9 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         });
       }
     } else {
-      // Pedido entregado: detener transmisión
       _broadcastTimer?.cancel();
       _broadcastTimer = null;
+      SupabaseService.updateOrderStatus(_activeOrder!.id, 'delivered');
       SupabaseService.stopLocationBroadcast();
       setState(() {
         _entregasHoy++;
@@ -163,6 +200,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         _activeOrder = null;
         _step = 0;
       });
+      _loadOrders();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('¡Pedido entregado! Excelente trabajo 🎉'),
@@ -228,13 +266,15 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-            child: Text(
-              _pendingOrders.isEmpty
-                  ? 'Sin pedidos pendientes'
-                  : 'Pedidos disponibles (${_pendingOrders.length})',
-              style: const TextStyle(
-                  color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
-            ),
+            child: _loadingOrders
+                ? const LinearProgressIndicator()
+                : Text(
+                    _pendingOrders.isEmpty
+                        ? 'Sin pedidos pendientes'
+                        : 'Pedidos disponibles (${_pendingOrders.length})',
+                    style: const TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
           ),
         ),
 
@@ -368,7 +408,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                   Text(order.restaurantName,
                       style: const TextStyle(
                           color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
-                  Text('${order.items.length} producto${order.items.length != 1 ? 's' : ''}  •  ${order.distanceKm} km',
+                  Text('${order.items.length} producto${order.items.length != 1 ? 's' : ''}',
                       style: TextStyle(
                           color: Colors.white.withValues(alpha: 0.45), fontSize: 12)),
                 ]),
@@ -457,9 +497,10 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         ? LatLng(_myPos!.latitude, _myPos!.longitude)
         : null;
 
+    final clientPos = _geocodedCustomerPos ?? order.customerPos;
     final mapCenter = LatLng(
-      (order.restaurantPos.latitude + order.customerPos.latitude) / 2,
-      (order.restaurantPos.longitude + order.customerPos.longitude) / 2,
+      (order.restaurantPos.latitude + clientPos.latitude) / 2,
+      (order.restaurantPos.longitude + clientPos.longitude) / 2,
     );
 
     return Column(children: [
@@ -472,9 +513,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
             options: MapOptions(initialCenter: mapCenter, initialZoom: 14.0),
             children: [
               TileLayer(
-                urlTemplate:
-                    'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-                subdomains: const ['a', 'b', 'c', 'd'],
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.example.landing_test',
               ),
               MarkerLayer(markers: [
@@ -484,7 +523,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                   child: _Pin(icon: Icons.storefront, color: AppConstants.primaryColor),
                 ),
                 Marker(
-                  point: order.customerPos,
+                  point: clientPos,
                   width: 44, height: 44,
                   child: _Pin(icon: Icons.home, color: const Color(0xFF2196F3)),
                 ),

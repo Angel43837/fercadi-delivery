@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/restaurant.dart';
@@ -246,27 +247,71 @@ class SupabaseService {
     return channel;
   }
 
-  static Future<void> createOrder({
-    required String userId,
+  // ── Pedidos ───────────────────────────────────────────────────────────────
+
+  static Future<String> createOrder({
     required String restaurantId,
     required double total,
+    required String customerName,
+    required String customerPhone,
+    required String address,
+    required String paymentMethod,
     required List<Map<String, dynamic>> items,
   }) async {
-    if (useMock) return;
-    final order = await _client.from('orders').insert({
-      'user_id': userId,
+    final orderId = 'ord_${DateTime.now().millisecondsSinceEpoch}';
+    final deliveryJson = jsonEncode({
+      'name': customerName,
+      'phone': customerPhone,
+      'address': address,
+      'payment': paymentMethod,
+    });
+    await _client.from('orders').insert({
+      'id': orderId,
       'restaurant_id': restaurantId,
       'total': total,
       'status': 'pending',
-    }).select().single();
-
-    for (final item in items) {
-      await _client.from('order_items').insert({
-        'order_id': order['id'],
-        'product_id': item['product_id'],
-        'quantity': item['quantity'],
-        'price': item['price'],
-      });
+      'customer_name': deliveryJson,
+    });
+    if (items.isNotEmpty) {
+      await _client.from('order_items').insert(
+        items.map((i) => {'order_id': orderId, ...i}).toList(),
+      );
     }
+    return orderId;
+  }
+
+  static Future<List<Map<String, dynamic>>> getActiveOrders() async {
+    final data = await _client
+        .from('orders')
+        .select('*, order_items(quantity, price, products(id, name))')
+        .inFilter('status', ['pending', 'accepted', 'delivering'])
+        .order('created_at', ascending: false);
+    return (data as List).cast<Map<String, dynamic>>();
+  }
+
+  static Future<void> updateOrderStatus(String orderId, String status) async {
+    await _client.from('orders').update({'status': status}).eq('id', orderId);
+  }
+
+  static Future<String?> getOrderStatus(String orderId) async {
+    final data = await _client
+        .from('orders')
+        .select('status')
+        .eq('id', orderId)
+        .single();
+    return data['status'] as String?;
+  }
+
+  static RealtimeChannel subscribeToOrders(void Function() onUpdate) {
+    final channel = _client.channel('db_orders');
+    channel
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'orders',
+          callback: (_) => onUpdate(),
+        )
+        .subscribe();
+    return channel;
   }
 }

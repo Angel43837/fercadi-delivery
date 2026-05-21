@@ -1,9 +1,12 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants.dart';
 import '../providers/app_data_provider.dart';
 import '../services/supabase_service.dart';
@@ -46,6 +49,12 @@ class _DuenoScreenState extends State<DuenoScreen> {
   int _tab = 0;
   AppOrderStatus? _filterStatus;
 
+  // Pedidos reales de Supabase
+  List<Map<String, dynamic>> _realOrders = [];
+  final Set<String> _notifiedIds = {};
+  Timer? _orderPollTimer;
+  RealtimeChannel? _ordersChannel;
+
   final List<_Category> _categories = const [
     _Category(id: 'c1',  name: 'Hamburguesas', emoji: '🍔'),
     _Category(id: 'c2',  name: 'Papas',        emoji: '🍟'),
@@ -70,6 +79,73 @@ class _DuenoScreenState extends State<DuenoScreen> {
   void initState() {
     super.initState();
     if (!SupabaseService.useMock) _loadProductsFromSupabase();
+    _loadRealOrders();
+    _ordersChannel = SupabaseService.subscribeToOrders(_loadRealOrders);
+    _orderPollTimer = Timer.periodic(const Duration(seconds: 8), (_) => _loadRealOrders());
+  }
+
+  @override
+  void dispose() {
+    _orderPollTimer?.cancel();
+    _ordersChannel?.unsubscribe();
+    super.dispose();
+  }
+
+  Future<void> _loadRealOrders() async {
+    try {
+      final data = await SupabaseService.getActiveOrders();
+      if (!mounted) return;
+
+      // Detectar pedidos nuevos pendientes para notificar
+      final nuevos = data.where((o) {
+        final id = o['id'] as String;
+        final status = o['status'] as String? ?? '';
+        return status == 'pending' && !_notifiedIds.contains(id);
+      }).toList();
+
+      setState(() => _realOrders = data);
+
+      for (final order in nuevos) {
+        _notifiedIds.add(order['id'] as String);
+        _showNewOrderAlert(order);
+      }
+    } catch (_) {}
+  }
+
+  void _showNewOrderAlert(Map<String, dynamic> order) {
+    Map<String, dynamic> delivery = {};
+    try { delivery = jsonDecode(order['customer_name'] as String? ?? '{}') as Map<String, dynamic>; } catch (_) {}
+    final name = delivery['name'] as String? ?? 'Cliente';
+    final total = (order['total'] as num?)?.toDouble() ?? 0;
+
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppConstants.surfaceColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('🔔 ¡Nuevo pedido!',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+        content: Text(
+          '$name realizó un pedido por \$${total.toStringAsFixed(0)} MXN',
+          style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('Cerrar', style: TextStyle(color: Colors.white.withValues(alpha: 0.4))),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              setState(() => _tab = 1);
+            },
+            child: const Text('Ver pedido',
+                style: TextStyle(color: AppConstants.primaryColor, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _loadProductsFromSupabase() async {
@@ -231,31 +307,49 @@ class _DuenoScreenState extends State<DuenoScreen> {
 
   Widget _buildPedidos(AppDataProvider appData, List<AppOrder> orders) {
     final filtered = _filterStatus == null
-        ? orders
-        : orders.where((o) => o.status == _filterStatus).toList();
+        ? _realOrders
+        : _realOrders.where((o) {
+            final s = o['status'] as String? ?? '';
+            switch (_filterStatus) {
+              case AppOrderStatus.pendiente: return s == 'pending';
+              case AppOrderStatus.enCamino:  return s == 'delivering' || s == 'accepted';
+              case AppOrderStatus.entregado: return s == 'delivered';
+              default: return true;
+            }
+          }).toList();
 
     return Column(children: [
       SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
         child: Row(children: [
-          _FilterChip('Todos',     null,                       _filterStatus, (v) => setState(() => _filterStatus = v)),
+          _FilterChip('Todos',     null,                      _filterStatus, (v) => setState(() => _filterStatus = v)),
           _FilterChip('Pendiente', AppOrderStatus.pendiente,  _filterStatus, (v) => setState(() => _filterStatus = v)),
           _FilterChip('En camino', AppOrderStatus.enCamino,   _filterStatus, (v) => setState(() => _filterStatus = v)),
           _FilterChip('Entregado', AppOrderStatus.entregado,  _filterStatus, (v) => setState(() => _filterStatus = v)),
-          _FilterChip('Cancelado', AppOrderStatus.cancelado,  _filterStatus, (v) => setState(() => _filterStatus = v)),
         ]),
       ),
       Expanded(
         child: filtered.isEmpty
-            ? Center(child: Text('Sin pedidos', style: TextStyle(color: Colors.white.withValues(alpha: 0.3))))
+            ? Center(
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.receipt_long_outlined, size: 56,
+                      color: Colors.white.withValues(alpha: 0.15)),
+                  const SizedBox(height: 12),
+                  Text('Sin pedidos por ahora',
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 15)),
+                ]),
+              )
             : ListView.builder(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                 itemCount: filtered.length,
-                itemBuilder: (_, i) => _OrderCard(
+                itemBuilder: (_, i) => _RealOrderCard(
                   order: filtered[i],
-                  onStatusChanged: (newStatus) =>
-                      appData.updateOrderStatus(filtered[i].id, newStatus),
+                  onAccept: () async {
+                    await SupabaseService.updateOrderStatus(
+                        filtered[i]['id'] as String, 'accepted');
+                    _loadRealOrders();
+                  },
                 ),
               ),
       ),
@@ -748,6 +842,90 @@ class _ActionBtn extends StatelessWidget {
   }
 }
 
+class _RealOrderCard extends StatelessWidget {
+  final Map<String, dynamic> order;
+  final VoidCallback onAccept;
+  const _RealOrderCard({required this.order, required this.onAccept});
+
+  @override
+  Widget build(BuildContext context) {
+    final status = order['status'] as String? ?? 'pending';
+    Map<String, dynamic> delivery = {};
+    try { delivery = jsonDecode(order['customer_name'] as String? ?? '{}') as Map<String, dynamic>; } catch (_) {}
+
+    final name    = delivery['name']    as String? ?? 'Cliente';
+    final phone   = delivery['phone']   as String? ?? '—';
+    final address = delivery['address'] as String? ?? 'Sin dirección';
+    final total   = (order['total'] as num?)?.toDouble() ?? 0;
+    final items   = (order['order_items'] as List<dynamic>? ?? []);
+
+    final (statusLabel, statusColor) = switch (status) {
+      'pending'    => ('Pendiente',  const Color(0xFFFFB300)),
+      'accepted'   => ('Aceptado',   AppConstants.primaryColor),
+      'delivering' => ('En camino',  const Color(0xFF2196F3)),
+      'delivered'  => ('Entregado',  Colors.green),
+      _            => ('Desconocido', Colors.grey),
+    };
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppConstants.surfaceColor,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: statusColor.withValues(alpha: 0.35)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Text('#${(order['id'] as String).substring(4, 10)}',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 11)),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: statusColor.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(statusLabel,
+                style: TextStyle(color: statusColor, fontSize: 11, fontWeight: FontWeight.bold)),
+          ),
+        ]),
+        const SizedBox(height: 8),
+        Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+        const SizedBox(height: 2),
+        Text(phone, style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 12)),
+        const SizedBox(height: 2),
+        Text(address, style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 12)),
+        const SizedBox(height: 8),
+        ...items.map((i) {
+          final qty = i['quantity'] as int? ?? 1;
+          final product = i['products'] as Map<String, dynamic>?;
+          final pname = product?['name'] as String? ?? 'Producto';
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 3),
+            child: Row(children: [
+              Icon(Icons.circle, size: 5, color: Colors.white.withValues(alpha: 0.3)),
+              const SizedBox(width: 6),
+              Text('$qty× $pname',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12)),
+            ]),
+          );
+        }),
+        const SizedBox(height: 10),
+        Row(children: [
+          Text('\$${total.toStringAsFixed(0)} MXN',
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+          const Spacer(),
+          if (status == 'pending')
+            _ActionBtn(label: 'Aceptar pedido', color: Colors.green, onTap: onAccept),
+          if (status == 'accepted')
+            _ActionBtn(label: 'Preparando...', color: AppConstants.primaryColor, onTap: () {}),
+        ]),
+      ]),
+    );
+  }
+}
+
 class _ProductTile extends StatelessWidget {
   final _Product product;
   final bool isAvailable;
@@ -770,13 +948,11 @@ class _ProductTile extends StatelessWidget {
           borderRadius: BorderRadius.circular(10),
           child: product.imagePath != null
               ? ((kIsWeb || product.imagePath!.startsWith('http'))
-                  ? Image.network(product.imagePath!, width: 60, height: 60, fit: BoxFit.cover)
-                  : Image.file(File(product.imagePath!), width: 60, height: 60, fit: BoxFit.cover))
-              : Container(
-                  width: 60, height: 60,
-                  color: AppConstants.surface2Color,
-                  child: Icon(Icons.fastfood_outlined, color: Colors.white.withValues(alpha: 0.2), size: 26),
-                ),
+                  ? Image.network(product.imagePath!, width: 60, height: 60, fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(width: 60, height: 60, color: AppConstants.surface2Color, child: Icon(Icons.fastfood_outlined, color: Colors.white.withValues(alpha: 0.2), size: 26)))
+                  : Image.file(File(product.imagePath!), width: 60, height: 60, fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(width: 60, height: 60, color: AppConstants.surface2Color, child: Icon(Icons.fastfood_outlined, color: Colors.white.withValues(alpha: 0.2), size: 26))))
+              : Container(width: 60, height: 60, color: AppConstants.surface2Color, child: Icon(Icons.fastfood_outlined, color: Colors.white.withValues(alpha: 0.2), size: 26)),
         ),
         const SizedBox(width: 12),
         Expanded(

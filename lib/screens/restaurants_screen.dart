@@ -52,7 +52,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
   }
 
   Future<void> _initLocation() async {
-    if (SupabaseService.useMock) {
+    if (SupabaseService.useMock || kIsWeb) {
       setState(() {
         _locationResult = LocationResult(
             status: LocationStatus.enMaravatio, distanciaKm: 0.5);
@@ -61,12 +61,25 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
       _futureRestaurants = SupabaseService.getRestaurants();
       return;
     }
-    final result = await LocationService.verificarUbicacion();
-    setState(() {
-      _locationResult = result;
-      _checkingLocation = false;
-    });
-    if (result.status == LocationStatus.enMaravatio) {
+    try {
+      final result = await LocationService.verificarUbicacion()
+          .timeout(const Duration(seconds: 8));
+      if (!mounted) return;
+      setState(() {
+        _locationResult = result;
+        _checkingLocation = false;
+      });
+      if (result.status == LocationStatus.enMaravatio) {
+        _futureRestaurants = SupabaseService.getRestaurants();
+      }
+    } catch (_) {
+      // Timeout o error de GPS — dejar pasar para no bloquear al usuario
+      if (!mounted) return;
+      setState(() {
+        _locationResult =
+            LocationResult(status: LocationStatus.enMaravatio, distanciaKm: 0);
+        _checkingLocation = false;
+      });
       _futureRestaurants = SupabaseService.getRestaurants();
     }
   }

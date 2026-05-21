@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants.dart';
+import '../services/location_service.dart';
 import '../services/supabase_service.dart';
 
 // Coordenadas mock dentro de Maravatío, Mich.
@@ -33,70 +34,71 @@ class TrackingScreen extends StatefulWidget {
 
 class _TrackingScreenState extends State<TrackingScreen> {
   final MapController _mapCtrl = MapController();
-  Timer? _timer;
-  int _elapsed = 0;
-  static const int _maxSecs = 50;
+  Timer? _pollTimer;
 
   LatLng _motoPos = _kRestaurantPos;
-  bool _hasRealLocation = false;
+  LatLng _customerPos = _kCustomerPos;
   RealtimeChannel? _realtimeChannel;
 
-  // 0=Preparando, 1=En camino, 2=Llegando, 3=Entregado
+  // Estado real del pedido: pending, accepted, delivering, delivered
+  String _orderStatus = 'pending';
+
+  // 0=Preparando, 1=Repartidor viene, 2=En camino, 3=Entregado
   int get _step {
-    if (_hasRealLocation) return 1; // Si hay GPS real, siempre "en camino"
-    if (_elapsed < 15) return 0;
-    if (_elapsed < 40) return 1;
-    if (_elapsed < 50) return 2;
-    return 3;
+    switch (_orderStatus) {
+      case 'accepted':   return 1;
+      case 'delivering': return 2;
+      case 'delivered':  return 3;
+      default:           return 0;
+    }
   }
 
   static final _statusData = [
-    (icon: Icons.restaurant_outlined,  label: 'Preparando tu pedido',     color: const Color(0xFFFFB300)),
-    (icon: Icons.delivery_dining,      label: 'Repartidor en camino',      color: AppConstants.primaryColor),
-    (icon: Icons.location_on,          label: '¡Tu repartidor llegando!',  color: const Color(0xFF2196F3)),
-    (icon: Icons.check_circle_rounded, label: '¡Pedido entregado!',        color: Colors.green),
+    (icon: Icons.hourglass_top_rounded, label: 'Pedido recibido',           color: const Color(0xFFFFB300)),
+    (icon: Icons.restaurant_outlined,   label: 'Repartidor va al restaurante', color: AppConstants.primaryColor),
+    (icon: Icons.delivery_dining,       label: 'Repartidor en camino',      color: const Color(0xFF2196F3)),
+    (icon: Icons.check_circle_rounded,  label: '¡Pedido entregado!',        color: Colors.green),
   ];
 
   @override
   void initState() {
     super.initState();
-    // Suscribirse al GPS real del repartidor
     _realtimeChannel = SupabaseService.subscribeToLocation(
       widget.orderId,
       (lat, lng) {
         if (!mounted) return;
-        setState(() {
-          _hasRealLocation = true;
-          _motoPos = LatLng(lat, lng);
-        });
+        setState(() => _motoPos = LatLng(lat, lng));
         try { _mapCtrl.move(_motoPos, 15.0); } catch (_) {}
       },
     );
-    // Animación simulada como fallback si no hay GPS real
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted || _hasRealLocation) return;
-      setState(() {
-        if (_elapsed < _maxSecs) _elapsed++;
-        if (_elapsed >= 15) {
-          final t = ((_elapsed - 15) / (_maxSecs - 15)).clamp(0.0, 1.0);
-          _motoPos = LatLng(
-            _lerp(_kRestaurantPos.latitude, _kCustomerPos.latitude, t),
-            _lerp(_kRestaurantPos.longitude, _kCustomerPos.longitude, t),
-          );
-        }
-      });
-    });
+    _pollStatus();
+    _pollTimer = Timer.periodic(const Duration(seconds: 5), (_) => _pollStatus());
+    _geocodeAddress();
+  }
+
+  Future<void> _geocodeAddress() async {
+    if (widget.address.trim().isEmpty) return;
+    final result = await LocationService.geocodeAddress(widget.address);
+    if (!mounted || result == null) return;
+    setState(() => _customerPos = LatLng(result.lat, result.lng));
+    try { _mapCtrl.move(_customerPos, 15.0); } catch (_) {}
+  }
+
+  Future<void> _pollStatus() async {
+    try {
+      final s = await SupabaseService.getOrderStatus(widget.orderId) ?? 'pending';
+      if (!mounted || s == _orderStatus) return;
+      setState(() => _orderStatus = s);
+    } catch (_) {}
   }
 
   @override
   void dispose() {
-    _timer?.cancel();
+    _pollTimer?.cancel();
     _realtimeChannel?.unsubscribe();
     _mapCtrl.dispose();
     super.dispose();
   }
-
-  double _lerp(double a, double b, double t) => a + (b - a) * t;
 
   void _confirmarCancelacion() {
     showDialog(
@@ -118,7 +120,6 @@ class _TrackingScreenState extends State<TrackingScreen> {
           ),
           TextButton(
             onPressed: () {
-              _timer?.cancel();
               Navigator.pop(dialogCtx);
               context.go('/restaurants');
             },
@@ -131,9 +132,12 @@ class _TrackingScreenState extends State<TrackingScreen> {
   }
 
   String get _eta {
-    if (_step == 3) return 'Entregado';
-    final rem = (_maxSecs - _elapsed).clamp(0, _maxSecs);
-    return '~${(rem / 60).ceil()} min';
+    switch (_step) {
+      case 0: return 'Esperando confirmación';
+      case 1: return 'El repartidor va al restaurante';
+      case 2: return 'En camino a tu domicilio';
+      default: return 'Entregado';
+    }
   }
 
   List<Marker> get _markers {
@@ -145,7 +149,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
         child: _MapPin(icon: Icons.storefront, color: AppConstants.primaryColor),
       ),
       Marker(
-        point: _kCustomerPos,
+        point: _customerPos,
         width: 48,
         height: 48,
         child: _MapPin(icon: Icons.home, color: const Color(0xFF2196F3)),
@@ -217,7 +221,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
                           style: const TextStyle(
                               color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
                       const SizedBox(height: 2),
-                      Text('Tiempo estimado: $_eta',
+                      Text(_eta,
                           style: TextStyle(
                               color: Colors.white.withValues(alpha: 0.5), fontSize: 12)),
                     ],
@@ -293,7 +297,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
                 ClipRRect(
                   borderRadius: BorderRadius.circular(4),
                   child: LinearProgressIndicator(
-                    value: _elapsed / _maxSecs,
+                    value: _step / 3,
                     backgroundColor: AppConstants.surface2Color,
                     valueColor: AlwaysStoppedAnimation<Color>(
                       _step == 3 ? Colors.green : AppConstants.primaryColor,

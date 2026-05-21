@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../core/constants.dart';
 import '../models/cart_item.dart';
 import '../providers/cart_provider.dart';
+import '../services/supabase_service.dart';
 
 enum _Pay { cash, oxxo, card }
 
@@ -16,14 +17,17 @@ class CheckoutScreen extends StatefulWidget {
 
 class _CheckoutScreenState extends State<CheckoutScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _scrollCtrl = ScrollController();
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
   final _addressCtrl = TextEditingController();
   final _refCtrl = TextEditingController();
   _Pay _payment = _Pay.cash;
+  bool _loading = false;
 
   @override
   void dispose() {
+    _scrollCtrl.dispose();
     _nameCtrl.dispose();
     _phoneCtrl.dispose();
     _addressCtrl.dispose();
@@ -31,13 +35,50 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     super.dispose();
   }
 
-  void _confirm() {
-    if (!_formKey.currentState!.validate()) return;
+  Future<void> _confirm() async {
+    if (!_formKey.currentState!.validate()) {
+      // Scroll al inicio para que el usuario vea los errores
+      _scrollCtrl.animateTo(0, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+      return;
+    }
+    setState(() => _loading = true);
     final cart = context.read<CartProvider>();
+
+    String orderId = 'local';
+    try {
+      orderId = await SupabaseService.createOrder(
+        restaurantId: cart.restaurantId ?? '1',
+        total: cart.total,
+        customerName: _nameCtrl.text.trim(),
+        customerPhone: _phoneCtrl.text.trim(),
+        address: _addressCtrl.text.trim(),
+        paymentMethod: _payment.name,
+        items: cart.items.map((i) => {
+          'product_id': i.product.id,
+          'quantity': i.quantity,
+          'price': i.product.price,
+        }).toList(),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al enviar pedido: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+        setState(() => _loading = false);
+        return;
+      }
+    }
+
+    if (!mounted) return;
+    setState(() => _loading = false);
     final orderData = <String, dynamic>{
       'restaurantName': cart.restaurantName ?? 'Tu restaurante',
-      'address': _addressCtrl.text,
+      'address': _addressCtrl.text.trim(),
       'total': cart.total,
+      'orderId': orderId,
     };
     cart.clear();
     _showSuccess(orderData);
@@ -120,6 +161,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       body: Form(
         key: _formKey,
         child: ListView(
+          controller: _scrollCtrl,
           padding: const EdgeInsets.all(16),
           children: [
             // ── Resumen del pedido ───────────────────────────────────────────
@@ -246,7 +288,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           ],
         ),
       ),
-      bottomNavigationBar: _ConfirmBar(total: cart.total, onConfirm: _confirm),
+      bottomNavigationBar: _ConfirmBar(total: cart.total, onConfirm: _confirm, loading: _loading),
     );
   }
 }
@@ -464,7 +506,8 @@ class _OxxoIcon extends StatelessWidget {
 class _ConfirmBar extends StatelessWidget {
   final double total;
   final VoidCallback onConfirm;
-  const _ConfirmBar({required this.total, required this.onConfirm});
+  final bool loading;
+  const _ConfirmBar({required this.total, required this.onConfirm, this.loading = false});
 
   @override
   Widget build(BuildContext context) {
@@ -489,11 +532,22 @@ class _ConfirmBar extends StatelessWidget {
             const SizedBox(height: 10),
             SizedBox(
               width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: onConfirm,
-                icon: const Icon(Icons.check_circle_outline, size: 20),
-                label: const Text('CONFIRMAR PEDIDO', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+              child: ElevatedButton(
+                onPressed: loading ? null : onConfirm,
                 style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 15)),
+                child: loading
+                    ? const SizedBox(
+                        height: 22, width: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                      )
+                    : const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.check_circle_outline, size: 20),
+                          SizedBox(width: 8),
+                          Text('CONFIRMAR PEDIDO', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
               ),
             ),
           ],
