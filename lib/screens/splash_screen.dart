@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../core/constants.dart';
+import '../services/auth_service.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -35,7 +36,11 @@ class _SplashScreenState extends State<SplashScreen>
 
   Future<void> _navigate() async {
     await Future.delayed(const Duration(seconds: 3));
-    if (mounted) context.go('/login');
+    if (!mounted) return;
+    final session = await AuthService.getSession();
+    if (!mounted) return;
+    final route = session != null ? AuthService.roleToRoute(session.email) : '/login';
+    context.go(route);
   }
 
   @override

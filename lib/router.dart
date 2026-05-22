@@ -12,6 +12,7 @@ import 'screens/tracking_screen.dart';
 import 'screens/repartidor_screen.dart';
 import 'screens/admin_screen.dart';
 import 'screens/dueno_screen.dart';
+import 'screens/order_history_screen.dart';
 
 final appRouter = GoRouter(
   initialLocation: '/',
@@ -64,6 +65,10 @@ final appRouter = GoRouter(
       builder: (_, _) => const DuenoScreen(),
     ),
     GoRoute(
+      path: '/history',
+      builder: (_, _) => const OrderHistoryScreen(),
+    ),
+    GoRoute(
       path: '/tracking',
       builder: (context, state) {
         final extra = state.extra as Map<String, dynamic>;
@@ -72,6 +77,8 @@ final appRouter = GoRouter(
           address: extra['address'] as String,
           total: extra['total'] as double,
           orderId: extra['orderId'] as String? ?? 'o1',
+          lat: extra['lat'] as double?,
+          lng: extra['lng'] as double?,
         );
       },
     ),

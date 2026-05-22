@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants.dart';
 import '../services/supabase_service.dart';
+import '../services/auth_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -38,15 +39,10 @@ class _LoginScreenState extends State<LoginScreen> {
           email == 'repartidor@fercadi.com' || SupabaseService.useMock) {
         await Future.delayed(const Duration(milliseconds: 500));
         if (!mounted) return;
-        if (email == 'admin@fercadi.com') {
-          context.go('/admin');
-        } else if (email == 'repartidor@fercadi.com') {
-          context.go('/repartidor');
-        } else if (email == 'dueno@fercadi.com') {
-          context.go('/dueno');
-        } else {
-          context.go('/restaurants');
-        }
+        final route = AuthService.roleToRoute(email);
+        await AuthService.saveSession(email, route);
+        if (!mounted) return;
+        context.go(route);
         return;
       }
       if (_isSignUp) {
@@ -60,7 +56,9 @@ class _LoginScreenState extends State<LoginScreen> {
           email: _emailController.text.trim(),
           password: _passwordController.text,
         );
-        if (mounted) context.go('/restaurants');
+        await AuthService.saveSession(_emailController.text.trim(), '/restaurants');
+        if (!mounted) return;
+        context.go('/restaurants');
       }
     } catch (e) {
       _showMessage('Error: ${e.toString()}', isError: true);
@@ -168,7 +166,11 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 8),
               Center(
                 child: TextButton(
-                  onPressed: () => context.go('/restaurants'),
+                  onPressed: () async {
+                final router = GoRouter.of(context);
+                await AuthService.saveSession('demo@fercadi.com', '/restaurants');
+                router.go('/restaurants');
+              },
                   child: Text(
                     'Entrar como demo (cliente)',
                     style: TextStyle(color: Colors.white.withValues(alpha: 0.3)),

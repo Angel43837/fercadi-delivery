@@ -257,6 +257,8 @@ class SupabaseService {
     required String address,
     required String paymentMethod,
     required List<Map<String, dynamic>> items,
+    double? lat,
+    double? lng,
   }) async {
     final orderId = 'ord_${DateTime.now().millisecondsSinceEpoch}';
     final deliveryJson = jsonEncode({
@@ -264,6 +266,8 @@ class SupabaseService {
       'phone': customerPhone,
       'address': address,
       'payment': paymentMethod,
+      'lat': lat,
+      'lng': lng,
     });
     await _client.from('orders').insert({
       'id': orderId,

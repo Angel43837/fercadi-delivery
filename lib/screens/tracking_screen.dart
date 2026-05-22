@@ -19,6 +19,8 @@ class TrackingScreen extends StatefulWidget {
   final String address;
   final double total;
   final String orderId;
+  final double? lat;
+  final double? lng;
 
   const TrackingScreen({
     super.key,
@@ -26,6 +28,8 @@ class TrackingScreen extends StatefulWidget {
     required this.address,
     required this.total,
     this.orderId = 'o1',
+    this.lat,
+    this.lng,
   });
 
   @override
@@ -77,6 +81,11 @@ class _TrackingScreenState extends State<TrackingScreen> {
   }
 
   Future<void> _geocodeAddress() async {
+    if (widget.lat != null && widget.lng != null) {
+      setState(() => _customerPos = LatLng(widget.lat!, widget.lng!));
+      try { _mapCtrl.move(_customerPos, 15.0); } catch (_) {}
+      return;
+    }
     if (widget.address.trim().isEmpty) return;
     final result = await LocationService.geocodeAddress(widget.address);
     if (!mounted || result == null) return;

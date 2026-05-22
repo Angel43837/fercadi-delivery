@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import '../core/constants.dart';
 import '../models/cart_item.dart';
 import '../providers/cart_provider.dart';
 import '../services/supabase_service.dart';
+import 'map_picker_screen.dart';
+import '../services/order_history_service.dart';
 
 enum _Pay { cash, oxxo, card }
 
@@ -24,6 +27,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   final _refCtrl = TextEditingController();
   _Pay _payment = _Pay.cash;
   bool _loading = false;
+  LatLng? _selectedPos;
 
   @override
   void dispose() {
@@ -33,6 +37,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     _addressCtrl.dispose();
     _refCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _openMapPicker() async {
+    final result = await Navigator.push<LatLng>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MapPickerScreen(initial: _selectedPos),
+      ),
+    );
+    if (result != null) setState(() => _selectedPos = result);
   }
 
   Future<void> _confirm() async {
@@ -53,6 +67,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         customerPhone: _phoneCtrl.text.trim(),
         address: _addressCtrl.text.trim(),
         paymentMethod: _payment.name,
+        lat: _selectedPos?.latitude,
+        lng: _selectedPos?.longitude,
         items: cart.items.map((i) => {
           'product_id': i.product.id,
           'quantity': i.quantity,
@@ -79,7 +95,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       'address': _addressCtrl.text.trim(),
       'total': cart.total,
       'orderId': orderId,
+      if (_selectedPos != null) 'lat': _selectedPos!.latitude,
+      if (_selectedPos != null) 'lng': _selectedPos!.longitude,
     };
+    await OrderHistoryService.add(
+      orderId: orderId,
+      restaurantName: cart.restaurantName ?? 'Restaurante',
+      total: cart.total,
+      address: _addressCtrl.text.trim(),
+    );
     cart.clear();
     _showSuccess(orderData);
   }
@@ -234,6 +258,48 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               hint: 'Calle, número, colonia — Maravatío',
               icon: Icons.location_on_outlined,
               validator: (v) => (v == null || v.trim().isEmpty) ? 'Ingresa la dirección' : null,
+            ),
+            const SizedBox(height: 10),
+            GestureDetector(
+              onTap: _openMapPicker,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                decoration: BoxDecoration(
+                  color: AppConstants.surfaceColor,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: _selectedPos != null
+                        ? Colors.green.withValues(alpha: 0.6)
+                        : AppConstants.primaryColor.withValues(alpha: 0.4),
+                    width: 1.5,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      _selectedPos != null ? Icons.check_circle : Icons.map_outlined,
+                      color: _selectedPos != null ? Colors.green : AppConstants.primaryColor,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        _selectedPos != null
+                            ? 'Ubicación marcada en el mapa ✓'
+                            : 'Marcar mi casa en el mapa (recomendado)',
+                        style: TextStyle(
+                          color: _selectedPos != null
+                              ? Colors.green
+                              : Colors.white.withValues(alpha: 0.7),
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                    Icon(Icons.chevron_right,
+                        color: Colors.white.withValues(alpha: 0.3), size: 20),
+                  ],
+                ),
+              ),
             ),
             const SizedBox(height: 12),
             _FormField(

@@ -10,6 +10,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants.dart';
 import '../providers/app_data_provider.dart';
 import '../services/supabase_service.dart';
+import '../services/auth_service.dart';
 
 class _Product {
   final String id;
@@ -210,7 +211,11 @@ class _DuenoScreenState extends State<DuenoScreen> {
           IconButton(
             icon: Icon(Icons.logout, color: Colors.white.withValues(alpha: 0.5), size: 20),
             tooltip: 'Cerrar sesión',
-            onPressed: () => context.go('/login'),
+            onPressed: () async {
+              final router = GoRouter.of(context);
+              await AuthService.clearSession();
+              router.go('/login');
+            },
           ),
           GestureDetector(
             onTap: () => appData.setRestaurantOpen('1', !isOpen),
@@ -596,12 +601,17 @@ class _DuenoScreenState extends State<DuenoScreen> {
               width: double.infinity, height: 52,
               child: ElevatedButton(
                 onPressed: () async {
-                  if (nameCtrl.text.trim().isEmpty || priceCtrl.text.trim().isEmpty) return;
+                  final price = double.tryParse(priceCtrl.text.trim()) ?? 0;
+                  if (nameCtrl.text.trim().isEmpty || price <= 0) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('El nombre y precio son obligatorios (precio > 0)'), backgroundColor: Colors.redAccent),
+                    );
+                    return;
+                  }
                   final appData = context.read<AppDataProvider>();
                   final newId = existing?.id ?? 'ep${DateTime.now().millisecondsSinceEpoch}';
                   final name = nameCtrl.text.trim();
                   final desc = descCtrl.text.trim();
-                  final price = double.tryParse(priceCtrl.text.trim()) ?? existing?.price ?? 0;
 
                   if (existing == null) {
                     appData.addExtraProduct(SharedProduct(

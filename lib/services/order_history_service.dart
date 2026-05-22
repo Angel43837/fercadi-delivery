@@ -1,0 +1,55 @@
+import 'package:shared_preferences/shared_preferences.dart';
+
+class OrderHistoryService {
+  static const _key = 'order_history';
+
+  static Future<void> add({
+    required String orderId,
+    required String restaurantName,
+    required double total,
+    required String address,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList(_key) ?? [];
+    final entry = [
+      orderId,
+      restaurantName,
+      total.toString(),
+      address,
+      DateTime.now().toIso8601String(),
+    ].join('||');
+    list.insert(0, entry);
+    if (list.length > 30) list.removeLast();
+    await prefs.setStringList(_key, list);
+  }
+
+  static Future<List<HistoryEntry>> getAll() async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList(_key) ?? [];
+    return list.map((e) {
+      final p = e.split('||');
+      return HistoryEntry(
+        orderId:        p.isNotEmpty       ? p[0] : '',
+        restaurantName: p.length > 1       ? p[1] : '',
+        total:          p.length > 2       ? double.tryParse(p[2]) ?? 0 : 0,
+        address:        p.length > 3       ? p[3] : '',
+        date:           p.length > 4       ? DateTime.tryParse(p[4]) ?? DateTime.now() : DateTime.now(),
+      );
+    }).toList();
+  }
+}
+
+class HistoryEntry {
+  final String orderId;
+  final String restaurantName;
+  final double total;
+  final String address;
+  final DateTime date;
+  const HistoryEntry({
+    required this.orderId,
+    required this.restaurantName,
+    required this.total,
+    required this.address,
+    required this.date,
+  });
+}

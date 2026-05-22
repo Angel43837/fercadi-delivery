@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../core/constants.dart';
 import '../providers/app_data_provider.dart';
+import '../services/auth_service.dart';
 
 // Info estática de restaurantes
 const _restInfo = [
@@ -91,7 +92,11 @@ class _AdminScreenState extends State<AdminScreen> {
           IconButton(
             icon: Icon(Icons.logout, color: Colors.white.withValues(alpha: 0.5), size: 20),
             tooltip: 'Cerrar sesión',
-            onPressed: () => context.go('/login'),
+            onPressed: () async {
+              final router = GoRouter.of(context);
+              await AuthService.clearSession();
+              router.go('/login');
+            },
           ),
         ]),
       ),

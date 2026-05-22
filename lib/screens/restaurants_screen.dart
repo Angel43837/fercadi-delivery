@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../core/constants.dart';
+import '../services/auth_service.dart';
 import '../models/restaurant.dart';
 import '../models/category.dart';
 import '../models/product.dart';
@@ -137,20 +138,21 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
         backgroundColor: AppConstants.primaryColor,
         elevation: 0,
         centerTitle: true,
-        title: Padding(
-  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),  // Ajustá estos valores
-  child: SvgPicture.asset(
-    'assets/images/logo.svg',
-    width: MediaQuery.of(context).size.width * 0.175,
-    fit: BoxFit.contain,
-    colorFilter: const ColorFilter.mode(Colors.white, BlendMode.srcIn),
-  ),
-),
+        title: const SizedBox.shrink(),
         actions: [
+          IconButton(
+            icon: Icon(Icons.receipt_long_outlined, color: Colors.white.withValues(alpha: 0.8), size: 22),
+            tooltip: 'Mis pedidos',
+            onPressed: () => context.push('/history'),
+          ),
           IconButton(
             icon: Icon(Icons.logout, color: Colors.white.withValues(alpha: 0.8), size: 22),
             tooltip: 'Cerrar sesión',
-            onPressed: () => context.go('/login'),
+            onPressed: () async {
+              final router = GoRouter.of(context);
+              await AuthService.clearSession();
+              router.go('/login');
+            },
           ),
           Stack(clipBehavior: Clip.none, children: [
             IconButton(
@@ -375,7 +377,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                             : FontWeight.w600,
                         color: isSelected
                             ? Colors.white
-                            : color.withValues(alpha: 0.9))),
+                            : Colors.black)),
               ]),
             ),
           );

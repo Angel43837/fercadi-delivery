@@ -9,6 +9,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants.dart';
 import '../services/location_service.dart';
 import '../services/supabase_service.dart';
+import '../services/auth_service.dart';
 
 // Posiciones fijas por restaurante
 const _restaurantInfo = {
@@ -60,6 +61,12 @@ class _Order {
       return '$qty× $name';
     }).toList();
 
+    final rawLat = delivery['lat'];
+    final rawLng = delivery['lng'];
+    final customerPos = (rawLat != null && rawLng != null)
+        ? LatLng((rawLat as num).toDouble(), (rawLng as num).toDouble())
+        : _defaultClientPos;
+
     return _Order(
       id: m['id'] as String,
       restaurantName: info.name,
@@ -68,7 +75,7 @@ class _Order {
       customerName: delivery['name'] as String? ?? 'Cliente',
       customerPhone: delivery['phone'] as String? ?? '—',
       address: delivery['address'] as String? ?? 'Dirección no especificada',
-      customerPos: _defaultClientPos,
+      customerPos: customerPos,
       items: itemStrings.isEmpty ? ['Pedido #${m['id'].toString().substring(0, 6)}'] : itemStrings,
       total: (m['total'] as num).toDouble(),
     );
@@ -342,8 +349,12 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
             ),
             IconButton(
               icon: Icon(Icons.logout, color: Colors.white.withValues(alpha: 0.6), size: 20),
-              onPressed: () => context.go('/login'),
               tooltip: 'Salir',
+              onPressed: () async {
+                final router = GoRouter.of(context);
+                await AuthService.clearSession();
+                router.go('/login');
+              },
             ),
             // Toggle disponible
             GestureDetector(
