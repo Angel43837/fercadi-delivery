@@ -13,6 +13,7 @@ import 'screens/repartidor_screen.dart';
 import 'screens/admin_screen.dart';
 import 'screens/dueno_screen.dart';
 import 'screens/order_history_screen.dart';
+import 'screens/profile_screen.dart';
 
 final appRouter = GoRouter(
   initialLocation: '/',
@@ -67,6 +68,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/history',
       builder: (_, _) => const OrderHistoryScreen(),
+    ),
+    GoRoute(
+      path: '/profile',
+      builder: (_, _) => const ProfileScreen(),
     ),
     GoRoute(
       path: '/tracking',

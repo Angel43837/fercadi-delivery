@@ -7,6 +7,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants.dart';
 import '../services/location_service.dart';
+import '../services/order_history_service.dart';
 import '../services/supabase_service.dart';
 
 // Coordenadas mock dentro de Maravatío, Mich.
@@ -98,6 +99,9 @@ class _TrackingScreenState extends State<TrackingScreen> {
       final s = await SupabaseService.getOrderStatus(widget.orderId) ?? 'pending';
       if (!mounted || s == _orderStatus) return;
       setState(() => _orderStatus = s);
+      if (s == 'delivered') {
+        await OrderHistoryService.clearActiveOrder();
+      }
     } catch (_) {}
   }
 
@@ -315,6 +319,36 @@ class _TrackingScreenState extends State<TrackingScreen> {
                   ),
                 ),
                 const SizedBox(height: 14),
+                Row(
+                  children: List.generate(_statusData.length, (i) {
+                    final done   = i < _step;
+                    final active = i == _step;
+                    final sd     = _statusData[i];
+                    final color  = done ? Colors.green : active ? sd.color : Colors.white.withValues(alpha: 0.2);
+                    return Expanded(
+                      child: Column(children: [
+                        Container(
+                          width: 30, height: 30,
+                          decoration: BoxDecoration(
+                            color: (done || active) ? color.withValues(alpha: 0.15) : AppConstants.surface2Color,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: (done || active) ? color : Colors.transparent, width: 1.5),
+                          ),
+                          child: Icon(done ? Icons.check : sd.icon, color: color, size: 14),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          i == 0 ? 'Recibido' : i == 1 ? 'Preparando' : i == 2 ? 'En camino' : 'Entregado',
+                          style: TextStyle(
+                              fontSize: 9,
+                              color: (done || active) ? Colors.white.withValues(alpha: 0.7) : Colors.white.withValues(alpha: 0.2)),
+                          textAlign: TextAlign.center,
+                        ),
+                      ]),
+                    );
+                  }),
+                ),
+                const SizedBox(height: 10),
                 if (_step == 0) ...[
                   SizedBox(
                     width: double.infinity,

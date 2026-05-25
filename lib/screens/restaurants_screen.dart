@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -12,6 +13,7 @@ import '../models/product.dart';
 import '../providers/app_data_provider.dart';
 import '../providers/cart_provider.dart';
 import '../services/location_service.dart';
+import '../services/order_history_service.dart';
 import '../services/supabase_service.dart';
 
 class RestaurantsScreen extends StatefulWidget {
@@ -24,6 +26,8 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
   late Future<List<Restaurant>> _futureRestaurants;
   LocationResult? _locationResult;
   bool _checkingLocation = true;
+  String  _displayName = '';
+  String? _photoPath;
 
   // Restaurant accordion
   String? _expandedRestaurantId;
@@ -36,6 +40,11 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
   // Product accordion
   String? _expandedProductId;
   final Map<String, int> _productQty = {};
+
+  // Active order banner
+  Map<String, dynamic>? _activeOrder;
+  String _prevActiveStatus = '';
+  Timer? _activeOrderTimer;
 
   static const _catColors = [
     AppConstants.primaryColor,
@@ -50,6 +59,81 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
   void initState() {
     super.initState();
     _initLocation();
+    AuthService.getDisplayName().then((n) {
+      if (mounted) setState(() => _displayName = n);
+    });
+    AuthService.getProfilePhoto().then((p) {
+      if (mounted) setState(() => _photoPath = p);
+    });
+    _checkActiveOrder();
+    _activeOrderTimer = Timer.periodic(
+      const Duration(seconds: 8), (_) => _checkActiveOrder());
+  }
+
+  @override
+  void dispose() {
+    _activeOrderTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _checkActiveOrder() async {
+    final order = await OrderHistoryService.getActiveOrder();
+    if (!mounted) return;
+    if (order == null) {
+      if (_activeOrder != null) setState(() => _activeOrder = null);
+      return;
+    }
+    final orderId = order['orderId'] as String;
+    String status;
+    try {
+      status = await SupabaseService.getOrderStatus(orderId) ?? 'pending';
+    } catch (_) {
+      status = 'pending';
+    }
+    if (!mounted) return;
+    if (status == 'delivered' || status == 'cancelled') {
+      await OrderHistoryService.clearActiveOrder();
+      setState(() => _activeOrder = null);
+      return;
+    }
+    final prev = _prevActiveStatus;
+    _prevActiveStatus = status;
+    setState(() => _activeOrder = order);
+    if (prev.isNotEmpty && prev != status) {
+      if (status == 'delivering') {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Row(children: [
+            Icon(Icons.delivery_dining, color: Colors.white),
+            SizedBox(width: 8),
+            Text('¡Tu repartidor está en camino!'),
+          ]),
+          backgroundColor: const Color(0xFF2196F3),
+          duration: const Duration(seconds: 4),
+          behavior: SnackBarBehavior.floating,
+        ));
+      } else if (status == 'accepted') {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Row(children: [
+            Icon(Icons.restaurant, color: Colors.white),
+            SizedBox(width: 8),
+            Text('Tu pedido fue aceptado, está siendo preparado'),
+          ]),
+          backgroundColor: AppConstants.primaryColor,
+          duration: const Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    }
+  }
+
+  bool _likesInited = false;
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_likesInited) {
+      _likesInited = true;
+      context.read<AppDataProvider>().initProductLikes();
+    }
   }
 
   Future<void> _initLocation() async {
@@ -141,6 +225,16 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
         title: const SizedBox.shrink(),
         actions: [
           IconButton(
+            icon: Icon(Icons.person_outline, color: Colors.white.withValues(alpha: 0.8), size: 22),
+            tooltip: 'Mi perfil',
+            onPressed: () async {
+              await context.push('/profile');
+              final n = await AuthService.getDisplayName();
+              final p = await AuthService.getProfilePhoto();
+              if (mounted) setState(() { _displayName = n; _photoPath = p; });
+            },
+          ),
+          IconButton(
             icon: Icon(Icons.receipt_long_outlined, color: Colors.white.withValues(alpha: 0.8), size: 22),
             tooltip: 'Mis pedidos',
             onPressed: () => context.push('/history'),
@@ -179,7 +273,62 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
           ]),
         ],
       ),
-      body: _checkingLocation ? _buildChecking() : _buildBody(appData),
+      body: Stack(children: [
+        _checkingLocation ? _buildChecking() : _buildBody(appData),
+        if (_activeOrder != null) _buildActiveOrderBanner(),
+      ]),
+    );
+  }
+
+  Widget _buildActiveOrderBanner() {
+    final name = (_activeOrder!['restaurantName'] as String?) ?? 'Tu pedido';
+    return Positioned(
+      left: 16, right: 16, bottom: 16,
+      child: GestureDetector(
+        onTap: () => context.go('/tracking', extra: _activeOrder!),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+          decoration: BoxDecoration(
+            color: AppConstants.primaryColor,
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [
+              BoxShadow(
+                color: AppConstants.primaryColor.withValues(alpha: 0.45),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(children: [
+            const Icon(Icons.delivery_dining, color: Colors.white, size: 26),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Pedido en curso',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14)),
+                  Text(name,
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.75),
+                          fontSize: 12)),
+                ],
+              ),
+            ),
+            const Text('Ver seguimiento',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13)),
+            const SizedBox(width: 4),
+            const Icon(Icons.chevron_right, color: Colors.white, size: 20),
+          ]),
+        ),
+      ),
     );
   }
 
@@ -213,14 +362,43 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
             if (i == 0) {
               return Padding(
                 padding: const EdgeInsets.only(bottom: 20),
-                child: Center(
-                  child: SvgPicture.asset(
-                    'assets/images/logo.svg',
-                    width: MediaQuery.of(context).size.width * 0.42,
-                    fit: BoxFit.contain,
-                    colorFilter: const ColorFilter.mode(Colors.white, BlendMode.srcIn),
+                child: Column(children: [
+                  Center(
+                    child: SvgPicture.asset(
+                      'assets/images/logo.svg',
+                      width: MediaQuery.of(context).size.width * 0.42,
+                      fit: BoxFit.contain,
+                      colorFilter: const ColorFilter.mode(Colors.white, BlendMode.srcIn),
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 28),
+                  if (_displayName.isNotEmpty)
+                    Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                      if (_photoPath != null)
+                        Container(
+                          width: 32, height: 32,
+                          margin: const EdgeInsets.only(right: 8),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: AppConstants.surfaceColor,
+                            border: Border.all(color: AppConstants.primaryColor, width: 1.5),
+                          ),
+                          child: ClipOval(child: _photoPath!.startsWith('http')
+                            ? Image.network(_photoPath!, fit: BoxFit.cover, width: 32, height: 32,
+                                errorBuilder: (_, e, s) => const Icon(Icons.person, color: Colors.white, size: 18))
+                            : Image.file(File(_photoPath!), fit: BoxFit.cover, width: 32, height: 32,
+                                errorBuilder: (_, e, s) => const Icon(Icons.person, color: Colors.white, size: 18))),
+                        ),
+                      Text(
+                        'Hola, $_displayName 👋',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.75),
+                          fontSize: 15,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ]),
+                ]),
               );
             }
             return _buildRestaurantTile(restaurants[i - 1], appData);
@@ -271,7 +449,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                         color: Colors.white)),
               ),
               GestureDetector(
-                onTap: () => context.read<AppDataProvider>().toggleLike(r.id),
+                onTap: () => context.read<AppDataProvider>().toggleLike(r.id).ignore(),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -375,9 +553,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                         fontWeight: isSelected
                             ? FontWeight.bold
                             : FontWeight.w600,
-                        color: isSelected
-                            ? Colors.white
-                            : Colors.black)),
+                        color: Colors.white)),
               ]),
             ),
           );
@@ -482,6 +658,32 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                         fontWeight: FontWeight.bold,
                         color: AppConstants.primaryColor)),
                     ]),
+              ),
+              Consumer<AppDataProvider>(
+                builder: (_, appData, _) {
+                  final liked = appData.isProductLikedByUser(p.id);
+                  final likes = appData.getProductLikes(p.id);
+                  return GestureDetector(
+                    onTap: () => appData.toggleProductLike(p.id),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(
+                          liked ? Icons.thumb_up : Icons.thumb_up_outlined,
+                          color: liked ? AppConstants.primaryColor : Colors.black.withValues(alpha: 0.25),
+                          size: 18,
+                        ),
+                        if (likes > 0) ...[
+                          const SizedBox(width: 3),
+                          Text('$likes',
+                              style: TextStyle(
+                                  color: liked ? AppConstants.primaryColor : Colors.black.withValues(alpha: 0.35),
+                                  fontSize: 11)),
+                        ],
+                      ]),
+                    ),
+                  );
+                },
               ),
               AnimatedRotation(
                 turns: isExpanded ? 0.5 : 0,

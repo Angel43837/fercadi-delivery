@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../services/supabase_service.dart';
+import '../services/auth_service.dart';
 
 enum AppOrderStatus { pendiente, enCamino, entregado, cancelado }
 
@@ -58,22 +61,123 @@ class SharedProduct {
 }
 
 class AppDataProvider extends ChangeNotifier {
-  // ── Likes ────────────────────────────────────────────────────────────────────
-  final Map<String, int> _likes = {'1': 90, '2': 96, '3': 84};
+  // ── Likes de restaurantes (realtime Supabase) ────────────────────────────────
+  final Map<String, int> _likes = {};
   final Set<String> _likedByUser = {};
+  RealtimeChannel? _restaurantLikesChannel;
 
   int getLikes(String restaurantId) => _likes[restaurantId] ?? 0;
   bool isLikedByUser(String restaurantId) => _likedByUser.contains(restaurantId);
 
-  void toggleLike(String restaurantId) {
-    if (_likedByUser.contains(restaurantId)) {
+  Future<void> initRestaurantLikes() async {
+    try {
+      final counts = await SupabaseService.getRestaurantLikeCounts();
+      final liked  = await SupabaseService.getUserLikedRestaurants(_userEmail);
+      _likes
+        ..clear()
+        ..addAll(counts);
+      _likedByUser
+        ..clear()
+        ..addAll(liked);
+      notifyListeners();
+      _restaurantLikesChannel?.unsubscribe();
+      _restaurantLikesChannel = SupabaseService.subscribeToRestaurantLikes(_refreshRestaurantLikes);
+    } catch (_) {}
+  }
+
+  Future<void> _refreshRestaurantLikes() async {
+    try {
+      final counts = await SupabaseService.getRestaurantLikeCounts();
+      final liked  = await SupabaseService.getUserLikedRestaurants(_userEmail);
+      _likes
+        ..clear()
+        ..addAll(counts);
+      _likedByUser
+        ..clear()
+        ..addAll(liked);
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  Future<void> toggleLike(String restaurantId) async {
+    final wasLiked = _likedByUser.contains(restaurantId);
+    if (wasLiked) {
       _likedByUser.remove(restaurantId);
-      _likes[restaurantId] = (_likes[restaurantId] ?? 0) - 1;
+      _likes[restaurantId] = ((_likes[restaurantId] ?? 1) - 1).clamp(0, 9999);
     } else {
       _likedByUser.add(restaurantId);
       _likes[restaurantId] = (_likes[restaurantId] ?? 0) + 1;
     }
     notifyListeners();
+    await SupabaseService.toggleRestaurantLike(restaurantId, _userEmail);
+  }
+
+  // ── Likes de platillos (realtime Supabase) ───────────────────────────────────
+  final Map<String, int> _productLikes      = {};
+  final Set<String>      _productLikedByUser = {};
+  RealtimeChannel?       _likesChannel;
+  String                 _userEmail = '';
+
+  int  getProductLikes(String productId)    => _productLikes[productId] ?? 0;
+  bool isProductLikedByUser(String productId) => _productLikedByUser.contains(productId);
+
+  Future<void> initProductLikes() async {
+    try {
+      final session = await AuthService.getSession();
+      _userEmail = session?.email ?? '';
+
+      final counts = await SupabaseService.getProductLikeCounts();
+      final liked  = await SupabaseService.getUserLikedProducts(_userEmail);
+      _productLikes
+        ..clear()
+        ..addAll(counts);
+      _productLikedByUser
+        ..clear()
+        ..addAll(liked);
+      notifyListeners();
+
+      _likesChannel?.unsubscribe();
+      _likesChannel = SupabaseService.subscribeToProductLikes(_refreshLikes);
+
+      await initRestaurantLikes();
+    } catch (_) {}
+  }
+
+  Future<void> _refreshLikes() async {
+    try {
+      final counts = await SupabaseService.getProductLikeCounts();
+      final liked  = await SupabaseService.getUserLikedProducts(_userEmail);
+      _productLikes
+        ..clear()
+        ..addAll(counts);
+      _productLikedByUser
+        ..clear()
+        ..addAll(liked);
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  Future<void> toggleProductLike(String productId) async {
+    // Optimistic update
+    final wasLiked = _productLikedByUser.contains(productId);
+    if (wasLiked) {
+      _productLikedByUser.remove(productId);
+      _productLikes[productId] = ((_productLikes[productId] ?? 1) - 1).clamp(0, 9999);
+    } else {
+      _productLikedByUser.add(productId);
+      _productLikes[productId] = (_productLikes[productId] ?? 0) + 1;
+    }
+    notifyListeners();
+
+    // Persistir en Supabase (el realtime actualizará todos los dispositivos)
+    await SupabaseService.toggleProductLike(productId, _userEmail);
+  }
+
+  @override
+  void dispose() {
+    _likesChannel?.unsubscribe();
+    _restaurantLikesChannel?.unsubscribe();
+    super.dispose();
   }
 
   // ── isOpen ───────────────────────────────────────────────────────────────────

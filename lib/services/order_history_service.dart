@@ -1,7 +1,50 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
 class OrderHistoryService {
-  static const _key = 'order_history';
+  static const _key        = 'order_history';
+  static const _activeKey  = 'active_order';
+
+  // ── Pedido activo (para volver a tracking después de salir) ─────────────────
+
+  static Future<void> saveActiveOrder({
+    required String orderId,
+    required String restaurantName,
+    required double total,
+    required String address,
+    double? lat,
+    double? lng,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_activeKey, [
+      orderId,
+      restaurantName,
+      total.toString(),
+      address,
+      (lat ?? '').toString(),
+      (lng ?? '').toString(),
+    ].join('||'));
+  }
+
+  static Future<Map<String, dynamic>?> getActiveOrder() async {
+    final prefs = await SharedPreferences.getInstance();
+    final s = prefs.getString(_activeKey);
+    if (s == null || s.isEmpty) return null;
+    final p = s.split('||');
+    if (p.isEmpty) return null;
+    return {
+      'orderId':        p[0],
+      'restaurantName': p.length > 1 ? p[1] : '',
+      'total':          p.length > 2 ? double.tryParse(p[2]) ?? 0.0 : 0.0,
+      'address':        p.length > 3 ? p[3] : '',
+      'lat':            p.length > 4 && p[4].isNotEmpty ? double.tryParse(p[4]) : null,
+      'lng':            p.length > 5 && p[5].isNotEmpty ? double.tryParse(p[5]) : null,
+    };
+  }
+
+  static Future<void> clearActiveOrder() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_activeKey);
+  }
 
   static Future<void> add({
     required String orderId,

@@ -14,6 +14,7 @@ void main() async {
       url: AppConstants.supabaseUrl,
       anonKey: AppConstants.supabaseAnonKey,
     );
+    SupabaseService.ensureStorageBuckets();
   }
   runApp(const FercadiApp());
 }

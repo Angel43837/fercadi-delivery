@@ -1,0 +1,579 @@
+import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
+import '../core/constants.dart';
+import '../services/auth_service.dart';
+import '../services/supabase_service.dart';
+
+const _avatarColors = [
+  AppConstants.primaryColor,
+  Color(0xFFFF6D00),
+  Color(0xFF00BFA5),
+  Color(0xFF7C4DFF),
+  Color(0xFF2196F3),
+  Color(0xFFFFB300),
+  Colors.green,
+  Colors.redAccent,
+];
+
+const _paymentOptions = [
+  (value: 'cash',  label: 'Efectivo',  subtitle: 'Pago al repartidor', icon: Icons.money),
+  (value: 'oxxo',  label: 'OXXO Pay',  subtitle: 'Referencia en OXXO', icon: Icons.store),
+  (value: 'card',  label: 'Tarjeta',   subtitle: 'Crédito o débito',   icon: Icons.credit_card),
+];
+
+class ProfileScreen extends StatefulWidget {
+  const ProfileScreen({super.key});
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  final _nameCtrl    = TextEditingController();
+  final _cardNumCtrl = TextEditingController();
+  final _cardExpCtrl = TextEditingController();
+  final _cardNameCtrl= TextEditingController();
+  final _clabeCtrl   = TextEditingController();
+  String  _payment    = 'cash';
+  int     _colorIndex = 0;
+  bool    _loading    = true;
+  String  _email      = '';
+  String  _role       = '';
+  String? _photoPath;
+  bool    _showCvv    = false;
+  final   _cvvCtrl    = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final name    = await AuthService.getDisplayName();
+    final payment = await AuthService.getPreferredPayment();
+    final color   = await AuthService.getAvatarColorIndex();
+    final session = await AuthService.getSession();
+    final photo   = await AuthService.getProfilePhoto();
+    final card    = await AuthService.getCard();
+    final clabe   = await AuthService.getCLABE();
+    if (!mounted) return;
+    setState(() {
+      _nameCtrl.text  = name;
+      _payment        = payment;
+      _colorIndex     = color;
+      _email          = session?.email ?? '';
+      _role           = session?.role  ?? '';
+      _photoPath      = photo;
+      _clabeCtrl.text = clabe;
+      if (card != null) {
+        _cardNumCtrl.text  = _formatCardDisplay(card.number);
+        _cardExpCtrl.text  = card.expiry;
+        _cardNameCtrl.text = card.name;
+      }
+      _loading = false;
+    });
+  }
+
+  Future<void> _save() async {
+    await AuthService.saveDisplayName(_nameCtrl.text);
+    await AuthService.savePreferredPayment(_payment);
+    await AuthService.saveAvatarColorIndex(_colorIndex);
+    await AuthService.saveProfilePhoto(_photoPath);
+    await AuthService.saveCLABE(_clabeCtrl.text);
+
+    final rawNum = _cardNumCtrl.text.replaceAll(' ', '');
+    if (rawNum.length >= 15) {
+      await AuthService.saveCard(rawNum, _cardExpCtrl.text, _cardNameCtrl.text);
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Perfil guardado'),
+        backgroundColor: AppConstants.primaryColor,
+        duration: Duration(seconds: 2),
+      ),
+    );
+    context.pop();
+  }
+
+  Future<void> _pickPhoto(ImageSource source) async {
+    final picker = ImagePicker();
+    final xfile  = await picker.pickImage(source: source, imageQuality: 80, maxWidth: 400);
+    if (xfile == null) return;
+
+    final userId = _email.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
+
+    if (kIsWeb) {
+      // En web: leer bytes directamente y subir a Supabase
+      final bytes = await xfile.readAsBytes();
+      final remoteUrl = await SupabaseService.uploadProfilePhotoBytes(bytes, userId);
+      if (!mounted) return;
+      setState(() => _photoPath = remoteUrl);
+    } else {
+      // En móvil: copiar a almacenamiento local permanente
+      final appDir   = await getApplicationDocumentsDirectory();
+      final destPath = p.join(appDir.path, 'profile_photo.jpg');
+      await File(xfile.path).copy(destPath);
+      final remoteUrl = await SupabaseService.uploadProfilePhoto(destPath, userId);
+      if (!mounted) return;
+      setState(() => _photoPath = remoteUrl ?? destPath);
+    }
+  }
+
+  void _showPhotoPicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppConstants.surfaceColor,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const SizedBox(height: 8),
+          Container(width: 36, height: 4,
+              decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(2))),
+          const SizedBox(height: 16),
+          ListTile(
+            leading: const Icon(Icons.camera_alt, color: AppConstants.primaryColor),
+            title: const Text('Tomar foto', style: TextStyle(color: Colors.white)),
+            onTap: () { Navigator.pop(context); _pickPhoto(ImageSource.camera); },
+          ),
+          ListTile(
+            leading: const Icon(Icons.photo_library, color: AppConstants.primaryColor),
+            title: const Text('Elegir de galería', style: TextStyle(color: Colors.white)),
+            onTap: () { Navigator.pop(context); _pickPhoto(ImageSource.gallery); },
+          ),
+          if (_photoPath != null)
+            ListTile(
+              leading: Icon(Icons.delete_outline, color: Colors.redAccent.withValues(alpha: 0.8)),
+              title: Text('Quitar foto', style: TextStyle(color: Colors.redAccent.withValues(alpha: 0.8))),
+              onTap: () { Navigator.pop(context); setState(() => _photoPath = null); },
+            ),
+          const SizedBox(height: 8),
+        ]),
+      ),
+    );
+  }
+
+  String _formatCardDisplay(String raw) {
+    final digits = raw.replaceAll(' ', '');
+    final buf = StringBuffer();
+    for (int i = 0; i < digits.length && i < 16; i++) {
+      if (i > 0 && i % 4 == 0) buf.write(' ');
+      buf.write(digits[i]);
+    }
+    return buf.toString();
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _cardNumCtrl.dispose();
+    _cardExpCtrl.dispose();
+    _cardNameCtrl.dispose();
+    _cvvCtrl.dispose();
+    _clabeCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Scaffold(
+        backgroundColor: AppConstants.bgColor,
+        body: Center(child: CircularProgressIndicator(color: AppConstants.primaryColor)),
+      );
+    }
+
+    final avatarColor = _avatarColors[_colorIndex % _avatarColors.length];
+    final initials = _nameCtrl.text.trim().isEmpty
+        ? '?'
+        : _nameCtrl.text.trim().split(' ').map((w) => w.isNotEmpty ? w[0] : '').take(2).join().toUpperCase();
+
+    return Scaffold(
+      backgroundColor: AppConstants.bgColor,
+      appBar: AppBar(
+        backgroundColor: AppConstants.surfaceColor,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => context.pop(),
+        ),
+        title: const Text('Mi perfil', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        actions: [
+          TextButton(
+            onPressed: _save,
+            child: const Text('Guardar', style: TextStyle(color: AppConstants.primaryColor, fontWeight: FontWeight.bold, fontSize: 15)),
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+
+          // ── Avatar / Foto ───────────────────────────────────────────────────
+          Center(
+            child: Column(children: [
+              GestureDetector(
+                onTap: _showPhotoPicker,
+                child: Stack(
+                  alignment: Alignment.bottomRight,
+                  children: [
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      width: 96, height: 96,
+                      decoration: BoxDecoration(
+                        color: avatarColor,
+                        shape: BoxShape.circle,
+                        boxShadow: [BoxShadow(color: avatarColor.withValues(alpha: 0.4), blurRadius: 20, spreadRadius: 2)],
+                      ),
+                      child: _photoPath != null
+                          ? ClipOval(child: _ProfileImage(path: _photoPath!, size: 96))
+                          : Center(
+                              child: Text(initials, style: const TextStyle(color: Colors.white, fontSize: 36, fontWeight: FontWeight.bold)),
+                            ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: const BoxDecoration(
+                        color: AppConstants.primaryColor,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.camera_alt, color: Colors.white, size: 14),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text('Toca para cambiar foto',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 11)),
+              const SizedBox(height: 12),
+              if (_photoPath == null) ...[
+                Text('Elige un color para tu avatar',
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 12)),
+                const SizedBox(height: 10),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(_avatarColors.length, (i) {
+                    final selected = i == _colorIndex;
+                    return GestureDetector(
+                      onTap: () => setState(() => _colorIndex = i),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        margin: const EdgeInsets.symmetric(horizontal: 5),
+                        width: selected ? 34 : 28, height: selected ? 34 : 28,
+                        decoration: BoxDecoration(
+                          color: _avatarColors[i],
+                          shape: BoxShape.circle,
+                          border: selected ? Border.all(color: Colors.white, width: 2.5) : null,
+                        ),
+                      ),
+                    );
+                  }),
+                ),
+              ],
+            ]),
+          ),
+          const SizedBox(height: 28),
+
+          // ── Nombre ──────────────────────────────────────────────────────────
+          _SectionLabel('Nombre'),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _nameCtrl,
+            style: const TextStyle(color: Colors.white, fontSize: 16),
+            onChanged: (_) => setState(() {}),
+            decoration: _inputDeco('Tu nombre', Icons.person_outline),
+          ),
+          const SizedBox(height: 6),
+          Text(_email, style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 12)),
+          const SizedBox(height: 28),
+
+          // ── Método de pago ───────────────────────────────────────────────────
+          _SectionLabel('Método de pago preferido'),
+          const SizedBox(height: 8),
+          Container(
+            decoration: BoxDecoration(color: AppConstants.surfaceColor, borderRadius: BorderRadius.circular(16)),
+            child: Column(
+              children: List.generate(_paymentOptions.length, (i) {
+                final opt      = _paymentOptions[i];
+                final selected = _payment == opt.value;
+                final isLast   = i == _paymentOptions.length - 1;
+                return Column(children: [
+                  InkWell(
+                    borderRadius: BorderRadius.vertical(
+                      top:    i == 0  ? const Radius.circular(16) : Radius.zero,
+                      bottom: isLast  ? const Radius.circular(16) : Radius.zero,
+                    ),
+                    onTap: () => setState(() => _payment = opt.value),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      child: Row(children: [
+                        Icon(opt.icon,
+                            color: selected ? AppConstants.primaryColor : Colors.white.withValues(alpha: 0.4), size: 24),
+                        const SizedBox(width: 14),
+                        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text(opt.label, style: TextStyle(
+                              color: selected ? AppConstants.primaryColor : Colors.white,
+                              fontWeight: FontWeight.w600, fontSize: 15)),
+                          Text(opt.subtitle, style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 12)),
+                        ])),
+                        Container(
+                          width: 22, height: 22,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                                color: selected ? AppConstants.primaryColor : Colors.white.withValues(alpha: 0.3), width: 2),
+                          ),
+                          child: selected
+                              ? Center(child: Container(width: 11, height: 11,
+                                  decoration: const BoxDecoration(shape: BoxShape.circle, color: AppConstants.primaryColor)))
+                              : null,
+                        ),
+                      ]),
+                    ),
+                  ),
+                  if (!isLast)
+                    Divider(height: 1, color: Colors.white.withValues(alpha: 0.06), indent: 16, endIndent: 16),
+                ]);
+              }),
+            ),
+          ),
+          const SizedBox(height: 28),
+
+          // ── CLABE interbancaria (solo repartidor) ────────────────────────────
+          if (_role == 'repartidor') ...[
+            _SectionLabel('Cuenta bancaria para recibir pagos'),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _clabeCtrl,
+              style: const TextStyle(color: Colors.white, fontSize: 16, letterSpacing: 1.5),
+              keyboardType: TextInputType.number,
+              maxLength: 18,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: _inputDeco('CLABE interbancaria (18 dígitos)', Icons.account_balance_outlined).copyWith(counterText: ''),
+            ),
+            const SizedBox(height: 28),
+          ],
+
+          // ── Tarjeta de banco ─────────────────────────────────────────────────
+          _SectionLabel('Tarjeta de banco'),
+          const SizedBox(height: 12),
+          _CardPreview(
+            number:  _cardNumCtrl.text,
+            expiry:  _cardExpCtrl.text,
+            name:    _cardNameCtrl.text,
+            color:   avatarColor,
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _cardNumCtrl,
+            style: const TextStyle(color: Colors.white, fontSize: 16, letterSpacing: 2),
+            keyboardType: TextInputType.number,
+            maxLength: 19,
+            inputFormatters: [_CardNumberFormatter()],
+            onChanged: (_) => setState(() {}),
+            decoration: _inputDeco('Número de tarjeta', Icons.credit_card).copyWith(counterText: ''),
+          ),
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(
+              child: TextField(
+                controller: _cardExpCtrl,
+                style: const TextStyle(color: Colors.white, fontSize: 16),
+                keyboardType: TextInputType.number,
+                maxLength: 5,
+                inputFormatters: [_ExpiryFormatter()],
+                onChanged: (_) => setState(() {}),
+                decoration: _inputDeco('MM/AA', Icons.calendar_today_outlined).copyWith(counterText: ''),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: _cvvCtrl,
+                style: const TextStyle(color: Colors.white, fontSize: 16),
+                keyboardType: TextInputType.number,
+                maxLength: 4,
+                obscureText: !_showCvv,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                decoration: _inputDeco('CVV', Icons.lock_outline).copyWith(
+                  counterText: '',
+                  suffixIcon: IconButton(
+                    icon: Icon(_showCvv ? Icons.visibility_off : Icons.visibility,
+                        color: Colors.white.withValues(alpha: 0.35), size: 18),
+                    onPressed: () => setState(() => _showCvv = !_showCvv),
+                  ),
+                ),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _cardNameCtrl,
+            style: const TextStyle(color: Colors.white, fontSize: 16),
+            textCapitalization: TextCapitalization.characters,
+            onChanged: (_) => setState(() {}),
+            decoration: _inputDeco('Nombre en la tarjeta', Icons.person_outline),
+          ),
+          const SizedBox(height: 40),
+        ],
+      ),
+    );
+  }
+
+  InputDecoration _inputDeco(String hint, IconData icon) => InputDecoration(
+    hintText: hint,
+    hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.3)),
+    prefixIcon: Icon(icon, color: AppConstants.primaryColor, size: 20),
+    filled: true,
+    fillColor: AppConstants.surfaceColor,
+    border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+    focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: AppConstants.primaryColor, width: 1.5)),
+  );
+}
+
+// ── Card Preview ─────────────────────────────────────────────────────────────
+
+class _CardPreview extends StatelessWidget {
+  final String number, expiry, name;
+  final Color color;
+  const _CardPreview({required this.number, required this.expiry, required this.name, required this.color});
+
+  String _masked(String raw) {
+    final digits = raw.replaceAll(' ', '');
+    if (digits.isEmpty) return '•••• •••• •••• ••••';
+    final buf = StringBuffer();
+    for (int i = 0; i < 16; i++) {
+      if (i > 0 && i % 4 == 0) buf.write(' ');
+      buf.write(i < digits.length ? digits[i] : '•');
+    }
+    return buf.toString();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 180,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        gradient: LinearGradient(
+          colors: [color, color.withValues(alpha: 0.6)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: [BoxShadow(color: color.withValues(alpha: 0.4), blurRadius: 20, offset: const Offset(0, 8))],
+      ),
+      child: Stack(
+        children: [
+          // Círculos decorativos
+          Positioned(top: -20, right: -20,
+            child: Container(width: 120, height: 120,
+                decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withValues(alpha: 0.06)))),
+          Positioned(bottom: -30, right: 30,
+            child: Container(width: 80, height: 80,
+                decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withValues(alpha: 0.06)))),
+          Padding(
+            padding: const EdgeInsets.all(22),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  const Icon(Icons.credit_card, color: Colors.white, size: 28),
+                  const Spacer(),
+                  Text('BANCO', style: TextStyle(color: Colors.white.withValues(alpha: 0.7),
+                      fontWeight: FontWeight.bold, fontSize: 13, letterSpacing: 2)),
+                ]),
+                const Spacer(),
+                Text(_masked(number),
+                    style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold,
+                        letterSpacing: 3, fontFamily: 'monospace')),
+                const SizedBox(height: 16),
+                Row(children: [
+                  Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('TITULAR', style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 9, letterSpacing: 1)),
+                    Text(name.isEmpty ? '••••••••••' : name.toUpperCase(),
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+                  ]),
+                  const Spacer(),
+                  Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('VENCE', style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 9, letterSpacing: 1)),
+                    Text(expiry.isEmpty ? '••/••' : expiry,
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+                  ]),
+                ]),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Formatters ────────────────────────────────────────────────────────────────
+
+class _CardNumberFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
+    final digits = newValue.text.replaceAll(' ', '');
+    final buf = StringBuffer();
+    for (int i = 0; i < digits.length && i < 16; i++) {
+      if (i > 0 && i % 4 == 0) buf.write(' ');
+      buf.write(digits[i]);
+    }
+    final text = buf.toString();
+    return TextEditingValue(text: text, selection: TextSelection.collapsed(offset: text.length));
+  }
+}
+
+class _ExpiryFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
+    final digits = newValue.text.replaceAll('/', '');
+    if (digits.length > 4) return oldValue;
+    String text = digits;
+    if (digits.length >= 3) {
+      text = '${digits.substring(0, 2)}/${digits.substring(2)}';
+    } else if (digits.length == 2 && oldValue.text.length < newValue.text.length) {
+      text = '$digits/';
+    }
+    return TextEditingValue(text: text, selection: TextSelection.collapsed(offset: text.length));
+  }
+}
+
+// ── Widgets pequeños ──────────────────────────────────────────────────────────
+
+class _ProfileImage extends StatelessWidget {
+  final String path;
+  final double size;
+  const _ProfileImage({required this.path, required this.size});
+
+  @override
+  Widget build(BuildContext context) {
+    if (path.startsWith('http')) {
+      return Image.network(path, fit: BoxFit.cover, width: size, height: size,
+          errorBuilder: (_, e, s) => const Icon(Icons.person, color: Colors.white));
+    }
+    return Image.file(File(path), fit: BoxFit.cover, width: size, height: size,
+        errorBuilder: (_, e, s) => const Icon(Icons.person, color: Colors.white));
+  }
+}
+
+class _SectionLabel extends StatelessWidget {
+  final String text;
+  const _SectionLabel(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(text,
+        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15));
+  }
+}

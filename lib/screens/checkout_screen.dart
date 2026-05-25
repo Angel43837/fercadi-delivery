@@ -104,6 +104,14 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       total: cart.total,
       address: _addressCtrl.text.trim(),
     );
+    await OrderHistoryService.saveActiveOrder(
+      orderId: orderId,
+      restaurantName: cart.restaurantName ?? 'Restaurante',
+      total: cart.total,
+      address: _addressCtrl.text.trim(),
+      lat: _selectedPos?.latitude,
+      lng: _selectedPos?.longitude,
+    );
     cart.clear();
     _showSuccess(orderData);
   }

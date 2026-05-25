@@ -1,9 +1,12 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../core/constants.dart';
 import '../providers/app_data_provider.dart';
 import '../services/auth_service.dart';
+import '../services/supabase_service.dart';
 
 // Info estática de restaurantes
 const _restInfo = [
@@ -23,11 +26,32 @@ class AdminScreen extends StatefulWidget {
 class _AdminScreenState extends State<AdminScreen> {
   int _tab = 0;
   AppOrderStatus? _filterStatus;
+  List<Map<String, dynamic>> _realOrders = [];
+  Timer? _pollTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOrders();
+    _pollTimer = Timer.periodic(const Duration(seconds: 10), (_) => _loadOrders());
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadOrders() async {
+    try {
+      final data = await SupabaseService.getActiveOrders();
+      if (mounted) setState(() => _realOrders = data);
+    } catch (_) {}
+  }
 
   @override
   Widget build(BuildContext context) {
     final appData = context.watch<AppDataProvider>();
-    final orders  = appData.allOrders;
     return Scaffold(
       backgroundColor: AppConstants.bgColor,
       body: Column(children: [
@@ -36,9 +60,10 @@ class _AdminScreenState extends State<AdminScreen> {
           child: IndexedStack(
             index: _tab,
             children: [
-              _buildDashboard(appData, orders),
-              _buildPedidos(appData, orders),
-              _buildRestaurantes(appData, orders),
+              _buildDashboard(appData),
+              _buildPedidos(),
+              _buildRestaurantes(appData),
+              _buildUsuarios(),
             ],
           ),
         ),
@@ -105,10 +130,13 @@ class _AdminScreenState extends State<AdminScreen> {
 
   // ── Dashboard ────────────────────────────────────────────────────────────────
 
-  Widget _buildDashboard(AppDataProvider appData, List<AppOrder> orders) {
-    final ventasHoy  = orders.where((o) => o.status == AppOrderStatus.entregado).fold<double>(0, (s, o) => s + o.total);
-    final pedidosHoy = orders.length;
-    final entregados = orders.where((o) => o.status == AppOrderStatus.entregado).length;
+  Widget _buildDashboard(AppDataProvider appData) {
+    final ventasHoy  = _realOrders.where((o) => o['status'] == 'delivered').fold<double>(0, (s, o) => s + ((o['total'] as num?)?.toDouble() ?? 0));
+    final pedidosHoy = _realOrders.length;
+    final entregados = _realOrders.where((o) => o['status'] == 'delivered').length;
+    final pendientes = _realOrders.where((o) => o['status'] == 'pending').length;
+    final enCamino   = _realOrders.where((o) => o['status'] == 'delivering' || o['status'] == 'accepted').length;
+    final cancelados = _realOrders.where((o) => o['status'] == 'cancelled').length;
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -121,10 +149,10 @@ class _AdminScreenState extends State<AdminScreen> {
           mainAxisSpacing: 12,
           childAspectRatio: 1.5,
           children: [
-            _StatCard(label: 'Ventas hoy',   value: '\$${ventasHoy.toStringAsFixed(0)}', suffix: 'MXN',        icon: Icons.attach_money,       color: Colors.green),
-            _StatCard(label: 'Pedidos hoy',  value: '$pedidosHoy',                        suffix: 'total',       icon: Icons.receipt_long,       color: AppConstants.primaryColor),
+            _StatCard(label: 'Ventas hoy',   value: '\$${ventasHoy.toStringAsFixed(0)}', suffix: 'MXN',        icon: Icons.attach_money,        color: Colors.green),
+            _StatCard(label: 'Pedidos hoy',  value: '$pedidosHoy',                        suffix: 'total',       icon: Icons.receipt_long,        color: AppConstants.primaryColor),
             _StatCard(label: 'Entregados',   value: '$entregados',                        suffix: 'completados', icon: Icons.check_circle_outline, color: const Color(0xFF00BFA5)),
-            _StatCard(label: 'Repartidores', value: '2',                                  suffix: 'activos',     icon: Icons.delivery_dining,    color: const Color(0xFFFFB300)),
+            _StatCard(label: 'Restaurantes', value: '${_restInfo.length}',                suffix: 'registrados', icon: Icons.storefront,           color: const Color(0xFFFFB300)),
           ],
         ),
         const SizedBox(height: 20),
@@ -132,16 +160,24 @@ class _AdminScreenState extends State<AdminScreen> {
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(color: AppConstants.surfaceColor, borderRadius: BorderRadius.circular(16)),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('Estado de pedidos hoy',
+            const Text('Estado de pedidos',
                 style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
             const SizedBox(height: 14),
-            _StatusBar(orders: orders),
+            if (pedidosHoy > 0) ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: Row(children: [
+                if (pendientes > 0) Expanded(flex: pendientes, child: Container(height: 10, color: const Color(0xFFFFB300))),
+                if (enCamino   > 0) Expanded(flex: enCamino,   child: Container(height: 10, color: AppConstants.primaryColor)),
+                if (entregados > 0) Expanded(flex: entregados, child: Container(height: 10, color: Colors.green)),
+                if (cancelados > 0) Expanded(flex: cancelados, child: Container(height: 10, color: Colors.red)),
+              ]),
+            ),
             const SizedBox(height: 12),
             Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-              _StatusLegend('Pendiente', const Color(0xFFFFB300),   orders.where((o) => o.status == AppOrderStatus.pendiente).length),
-              _StatusLegend('En camino', AppConstants.primaryColor, orders.where((o) => o.status == AppOrderStatus.enCamino).length),
-              _StatusLegend('Entregado', Colors.green,              orders.where((o) => o.status == AppOrderStatus.entregado).length),
-              _StatusLegend('Cancelado', Colors.red,                orders.where((o) => o.status == AppOrderStatus.cancelado).length),
+              _StatusLegend('Pendiente', const Color(0xFFFFB300),   pendientes),
+              _StatusLegend('En camino', AppConstants.primaryColor, enCamino),
+              _StatusLegend('Entregado', Colors.green,              entregados),
+              _StatusLegend('Cancelado', Colors.red,                cancelados),
             ]),
           ]),
         ),
@@ -155,17 +191,26 @@ class _AdminScreenState extends State<AdminScreen> {
           ),
         ]),
         const SizedBox(height: 8),
-        ...orders.take(4).map((o) => _OrderRow(order: o)),
+        ..._realOrders.take(4).map((o) => _RealOrderMiniRow(order: o)),
       ],
     );
   }
 
   // ── Pedidos ──────────────────────────────────────────────────────────────────
 
-  Widget _buildPedidos(AppDataProvider appData, List<AppOrder> orders) {
+  Widget _buildPedidos() {
     final filtered = _filterStatus == null
-        ? orders
-        : orders.where((o) => o.status == _filterStatus).toList();
+        ? _realOrders
+        : _realOrders.where((o) {
+            final s = o['status'] as String? ?? '';
+            switch (_filterStatus) {
+              case AppOrderStatus.pendiente: return s == 'pending';
+              case AppOrderStatus.enCamino:  return s == 'delivering' || s == 'accepted';
+              case AppOrderStatus.entregado: return s == 'delivered';
+              case AppOrderStatus.cancelado: return s == 'cancelled';
+              default: return true;
+            }
+          }).toList();
 
     return Column(children: [
       SingleChildScrollView(
@@ -185,7 +230,7 @@ class _AdminScreenState extends State<AdminScreen> {
             : ListView.builder(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                 itemCount: filtered.length,
-                itemBuilder: (_, i) => _OrderCard(order: filtered[i]),
+                itemBuilder: (_, i) => _RealOrderCard(order: filtered[i]),
               ),
       ),
     ]);
@@ -193,15 +238,15 @@ class _AdminScreenState extends State<AdminScreen> {
 
   // ── Restaurantes ─────────────────────────────────────────────────────────────
 
-  Widget _buildRestaurantes(AppDataProvider appData, List<AppOrder> orders) {
+  Widget _buildRestaurantes(AppDataProvider appData) {
     return ListView.builder(
       padding: const EdgeInsets.all(16),
       itemCount: _restInfo.length,
       itemBuilder: (_, i) {
-        final r          = _restInfo[i];
-        final isOpen     = appData.isRestaurantOpen(r.id);
-        final likes      = appData.getLikes(r.id);
-        final ordersToday = orders.where((o) => o.restaurantId == r.id).length;
+        final r           = _restInfo[i];
+        final isOpen      = appData.isRestaurantOpen(r.id);
+        final likes       = appData.getLikes(r.id);
+        final ordersToday = _realOrders.where((o) => o['restaurant_id'] == r.id).length;
 
         return Container(
           margin: const EdgeInsets.only(bottom: 12),
@@ -257,6 +302,67 @@ class _AdminScreenState extends State<AdminScreen> {
     );
   }
 
+  // ── Usuarios ─────────────────────────────────────────────────────────────────
+
+  static const _mockRepartidores = [
+    (name: 'Carlos Mendoza',  moto: 'Honda CB125 • MV-123-AB', entregas: 42, color: Color(0xFF00BFA5)),
+    (name: 'Luis Hernández',  moto: 'Yamaha FZ150 • MV-456-CD', entregas: 31, color: Color(0xFF7C4DFF)),
+    (name: 'Miguel Torres',   moto: 'Italika DS125 • MV-789-EF', entregas: 18, color: Color(0xFFFF6D00)),
+  ];
+
+  Widget _buildUsuarios() {
+    // Extraer clientes únicos de los pedidos reales
+    final Map<String, Map<String, dynamic>> clientMap = {};
+    for (final o in _realOrders) {
+      Map<String, dynamic> delivery = {};
+      try { delivery = jsonDecode(o['customer_name'] as String? ?? '{}') as Map<String, dynamic>; } catch (_) {}
+      final phone = delivery['phone'] as String? ?? '—';
+      if (!clientMap.containsKey(phone)) {
+        clientMap[phone] = {
+          'name':   delivery['name']    as String? ?? 'Cliente',
+          'phone':  phone,
+          'orders': 0,
+          'total':  0.0,
+        };
+      }
+      clientMap[phone]!['orders'] = (clientMap[phone]!['orders'] as int) + 1;
+      clientMap[phone]!['total']  = (clientMap[phone]!['total'] as double) + ((o['total'] as num?)?.toDouble() ?? 0);
+    }
+    final clients = clientMap.values.toList();
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        // Clientes
+        _SectionTitle(icon: Icons.people_outline, label: 'Clientes registrados (${clients.length})'),
+        const SizedBox(height: 10),
+        if (clients.isEmpty)
+          _EmptyHint('Sin pedidos registrados aún')
+        else
+          ...clients.map((c) => _UserTile(
+            name:     c['name'] as String,
+            subtitle: c['phone'] as String,
+            trailing: '${c['orders']} pedido${(c['orders'] as int) != 1 ? 's' : ''} • \$${(c['total'] as double).toStringAsFixed(0)}',
+            color:    AppConstants.primaryColor,
+            icon:     Icons.person_outline,
+          )),
+        const SizedBox(height: 24),
+
+        // Repartidores
+        _SectionTitle(icon: Icons.delivery_dining, label: 'Repartidores (${_mockRepartidores.length})'),
+        const SizedBox(height: 10),
+        ..._mockRepartidores.map((r) => _UserTile(
+          name:     r.name,
+          subtitle: r.moto,
+          trailing: '${r.entregas} entregas',
+          color:    r.color,
+          icon:     Icons.delivery_dining,
+        )),
+        const SizedBox(height: 16),
+      ],
+    );
+  }
+
   // ── Bottom Nav ───────────────────────────────────────────────────────────────
 
   Widget _buildBottomNav() {
@@ -268,9 +374,10 @@ class _AdminScreenState extends State<AdminScreen> {
       child: SafeArea(
         top: false,
         child: Row(children: [
-          _NavItem(icon: Icons.dashboard_outlined,    label: 'Resumen',      index: 0, current: _tab, onTap: (i) => setState(() => _tab = i)),
-          _NavItem(icon: Icons.receipt_long_outlined,  label: 'Pedidos',      index: 1, current: _tab, onTap: (i) => setState(() => _tab = i)),
-          _NavItem(icon: Icons.storefront_outlined,    label: 'Restaurantes', index: 2, current: _tab, onTap: (i) => setState(() => _tab = i)),
+          _NavItem(icon: Icons.dashboard_outlined,   label: 'Resumen',      index: 0, current: _tab, onTap: (i) => setState(() => _tab = i)),
+          _NavItem(icon: Icons.receipt_long_outlined, label: 'Pedidos',      index: 1, current: _tab, onTap: (i) => setState(() => _tab = i)),
+          _NavItem(icon: Icons.storefront_outlined,   label: 'Restaurantes', index: 2, current: _tab, onTap: (i) => setState(() => _tab = i)),
+          _NavItem(icon: Icons.people_outline,        label: 'Usuarios',     index: 3, current: _tab, onTap: (i) => setState(() => _tab = i)),
         ]),
       ),
     );
@@ -300,24 +407,135 @@ class _StatCard extends StatelessWidget {
   }
 }
 
-class _StatusBar extends StatelessWidget {
-  final List<AppOrder> orders;
-  const _StatusBar({required this.orders});
+class _RealOrderMiniRow extends StatelessWidget {
+  final Map<String, dynamic> order;
+  const _RealOrderMiniRow({required this.order});
 
   @override
   Widget build(BuildContext context) {
-    if (orders.isEmpty) return const SizedBox();
-    final pending  = orders.where((o) => o.status == AppOrderStatus.pendiente).length;
-    final transit  = orders.where((o) => o.status == AppOrderStatus.enCamino).length;
-    final done     = orders.where((o) => o.status == AppOrderStatus.entregado).length;
-    final canceled = orders.where((o) => o.status == AppOrderStatus.cancelado).length;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(6),
+    final status = order['status'] as String? ?? 'pending';
+    Map<String, dynamic> delivery = {};
+    try { delivery = jsonDecode(order['customer_name'] as String? ?? '{}') as Map<String, dynamic>; } catch (_) {}
+    final name  = delivery['name'] as String? ?? 'Cliente';
+    final total = (order['total'] as num?)?.toDouble() ?? 0;
+    final items = (order['order_items'] as List<dynamic>? ?? []);
+    final itemNames = items.map((i) {
+      final qty     = i['quantity'] as int? ?? 1;
+      final product = i['products'] as Map<String, dynamic>?;
+      return '$qty× ${product?['name'] ?? 'Producto'}';
+    }).join(', ');
+
+    final (statusLabel, statusColor) = switch (status) {
+      'pending'    => ('Pendiente',   const Color(0xFFFFB300)),
+      'accepted'   => ('Aceptado',    AppConstants.primaryColor),
+      'delivering' => ('En camino',   const Color(0xFF2196F3)),
+      'delivered'  => ('Entregado',   Colors.green),
+      'cancelled'  => ('Cancelado',   Colors.red),
+      _            => ('Desconocido', Colors.grey),
+    };
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(color: AppConstants.surfaceColor, borderRadius: BorderRadius.circular(12)),
       child: Row(children: [
-        if (pending  > 0) Expanded(flex: pending,  child: Container(height: 10, color: const Color(0xFFFFB300))),
-        if (transit  > 0) Expanded(flex: transit,  child: Container(height: 10, color: AppConstants.primaryColor)),
-        if (done     > 0) Expanded(flex: done,     child: Container(height: 10, color: Colors.green)),
-        if (canceled > 0) Expanded(flex: canceled, child: Container(height: 10, color: Colors.red)),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+            Text(itemNames.isEmpty ? 'Sin productos' : itemNames,
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11),
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+          ]),
+        ),
+        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          Text('\$${total.toStringAsFixed(0)}',
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+          Container(
+            margin: const EdgeInsets.only(top: 3),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+                color: statusColor.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(10)),
+            child: Text(statusLabel,
+                style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.w600)),
+          ),
+        ]),
+      ]),
+    );
+  }
+}
+
+class _RealOrderCard extends StatelessWidget {
+  final Map<String, dynamic> order;
+  const _RealOrderCard({required this.order});
+
+  @override
+  Widget build(BuildContext context) {
+    final status = order['status'] as String? ?? 'pending';
+    Map<String, dynamic> delivery = {};
+    try { delivery = jsonDecode(order['customer_name'] as String? ?? '{}') as Map<String, dynamic>; } catch (_) {}
+
+    final name    = delivery['name']    as String? ?? 'Cliente';
+    final phone   = delivery['phone']   as String? ?? '—';
+    final address = delivery['address'] as String? ?? 'Sin dirección';
+    final total   = (order['total'] as num?)?.toDouble() ?? 0;
+    final items   = (order['order_items'] as List<dynamic>? ?? []);
+
+    final (statusLabel, statusColor) = switch (status) {
+      'pending'    => ('Pendiente',   const Color(0xFFFFB300)),
+      'accepted'   => ('Aceptado',    AppConstants.primaryColor),
+      'delivering' => ('En camino',   const Color(0xFF2196F3)),
+      'delivered'  => ('Entregado',   Colors.green),
+      'cancelled'  => ('Cancelado',   Colors.red),
+      _            => ('Desconocido', Colors.grey),
+    };
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppConstants.surfaceColor,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: statusColor.withValues(alpha: 0.35)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Text('#${(order['id'] as String? ?? '------').substring(0, 6).toUpperCase()}',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 11)),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: statusColor.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(statusLabel,
+                style: TextStyle(color: statusColor, fontSize: 11, fontWeight: FontWeight.bold)),
+          ),
+        ]),
+        const SizedBox(height: 8),
+        Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+        const SizedBox(height: 2),
+        Text(phone,   style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 12)),
+        const SizedBox(height: 2),
+        Text(address, style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 12)),
+        const SizedBox(height: 8),
+        ...items.map((i) {
+          final qty     = i['quantity'] as int? ?? 1;
+          final product = i['products'] as Map<String, dynamic>?;
+          final pname   = product?['name'] as String? ?? 'Producto';
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 3),
+            child: Row(children: [
+              Icon(Icons.circle, size: 5, color: Colors.white.withValues(alpha: 0.3)),
+              const SizedBox(width: 6),
+              Text('$qty× $pname',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12)),
+            ]),
+          );
+        }),
+        const SizedBox(height: 10),
+        Text('\$${total.toStringAsFixed(0)} MXN',
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
       ]),
     );
   }
@@ -338,81 +556,62 @@ class _StatusLegend extends StatelessWidget {
   }
 }
 
-class _OrderRow extends StatelessWidget {
-  final AppOrder order;
-  const _OrderRow({required this.order});
+class _SectionTitle extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  const _SectionTitle({required this.icon, required this.label});
 
   @override
   Widget build(BuildContext context) {
-    final st = appOrderStatusStyle(order.status);
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(color: AppConstants.surfaceColor, borderRadius: BorderRadius.circular(12)),
-      child: Row(children: [
-        Text(order.restaurantIcon, style: const TextStyle(fontSize: 20)),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(order.restaurantName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
-            Text(order.customer, style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11)),
-          ]),
-        ),
-        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Text('\$${order.total.toStringAsFixed(0)}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-          Container(
-            margin: const EdgeInsets.only(top: 3),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            decoration: BoxDecoration(color: st.color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(10)),
-            child: Text(st.label, style: TextStyle(color: st.color, fontSize: 10, fontWeight: FontWeight.w600)),
-          ),
-        ]),
-      ]),
+    return Row(children: [
+      Icon(icon, color: AppConstants.primaryColor, size: 18),
+      const SizedBox(width: 8),
+      Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+    ]);
+  }
+}
+
+class _EmptyHint extends StatelessWidget {
+  final String text;
+  const _EmptyHint(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 20),
+      child: Center(
+        child: Text(text, style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 13)),
+      ),
     );
   }
 }
 
-class _OrderCard extends StatelessWidget {
-  final AppOrder order;
-  const _OrderCard({required this.order});
+class _UserTile extends StatelessWidget {
+  final String name, subtitle, trailing;
+  final Color color;
+  final IconData icon;
+  const _UserTile({required this.name, required this.subtitle, required this.trailing, required this.color, required this.icon});
 
   @override
   Widget build(BuildContext context) {
-    final st = appOrderStatusStyle(order.status);
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppConstants.surfaceColor,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: st.color.withValues(alpha: 0.25)),
-      ),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(color: AppConstants.surfaceColor, borderRadius: BorderRadius.circular(12)),
       child: Row(children: [
-        Text(order.restaurantIcon, style: const TextStyle(fontSize: 28)),
+        Container(
+          width: 40, height: 40,
+          decoration: BoxDecoration(color: color.withValues(alpha: 0.15), shape: BoxShape.circle),
+          child: Icon(icon, color: color, size: 20),
+        ),
         const SizedBox(width: 12),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Text('#${order.id}', style: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 11)),
-              const SizedBox(width: 6),
-              Text(order.time, style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 11)),
-            ]),
-            const SizedBox(height: 2),
-            Text(order.restaurantName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-            Text('${order.customer}  •  ${order.itemsCount} producto${order.itemsCount != 1 ? 's' : ''}',
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 12)),
+            Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+            Text(subtitle, style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11)),
           ]),
         ),
-        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Text('\$${order.total.toStringAsFixed(0)} MXN',
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-          const SizedBox(height: 4),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(color: st.color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(10)),
-            child: Text(st.label, style: TextStyle(color: st.color, fontSize: 11, fontWeight: FontWeight.bold)),
-          ),
-        ]),
+        Text(trailing, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600)),
       ]),
     );
   }

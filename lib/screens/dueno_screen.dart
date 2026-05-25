@@ -168,9 +168,8 @@ class _DuenoScreenState extends State<DuenoScreen> {
   @override
   Widget build(BuildContext context) {
     final appData = context.watch<AppDataProvider>();
-    final orders = appData.ordersForRestaurant('1');
     final isOpen = appData.isRestaurantOpen('1');
-    final pendingCount = orders.where((o) => o.status == AppOrderStatus.pendiente).length;
+    final pendingCount = _realOrders.where((o) => o['status'] == 'pending').length;
 
     return Scaffold(
       backgroundColor: AppConstants.bgColor,
@@ -180,8 +179,8 @@ class _DuenoScreenState extends State<DuenoScreen> {
           child: IndexedStack(
             index: _tab,
             children: [
-              _buildDashboard(orders),
-              _buildPedidos(appData, orders),
+              _buildDashboard(),
+              _buildPedidos(),
               _buildMenu(appData),
             ],
           ),
@@ -253,12 +252,15 @@ class _DuenoScreenState extends State<DuenoScreen> {
     );
   }
 
-  Widget _buildDashboard(List<AppOrder> orders) {
-    final ventasHoy = orders
-        .where((o) => o.status == AppOrderStatus.entregado)
-        .fold<double>(0, (s, o) => s + o.total);
-    final entregados = orders.where((o) => o.status == AppOrderStatus.entregado).length;
-    final pendientes = orders.where((o) => o.status == AppOrderStatus.pendiente).length;
+  Widget _buildDashboard() {
+    final ventasHoy = _realOrders
+        .where((o) => o['status'] == 'delivered')
+        .fold<double>(0, (s, o) => s + ((o['total'] as num?)?.toDouble() ?? 0));
+    final entregados = _realOrders.where((o) => o['status'] == 'delivered').length;
+    final pendientes = _realOrders.where((o) => o['status'] == 'pending').length;
+    final enCamino   = _realOrders.where((o) => o['status'] == 'delivering' || o['status'] == 'accepted').length;
+    final cancelados = _realOrders.where((o) => o['status'] == 'cancelled').length;
+    final total = _realOrders.length;
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -272,7 +274,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
           childAspectRatio: 1.5,
           children: [
             _StatCard(label: 'Ventas hoy',   value: '\$${ventasHoy.toStringAsFixed(0)}', suffix: 'MXN',        icon: Icons.attach_money,       color: Colors.green),
-            _StatCard(label: 'Pedidos hoy',  value: '${orders.length}',                  suffix: 'total',       icon: Icons.receipt_long,        color: AppConstants.primaryColor),
+            _StatCard(label: 'Pedidos hoy',  value: '$total',                             suffix: 'total',       icon: Icons.receipt_long,        color: AppConstants.primaryColor),
             _StatCard(label: 'Entregados',   value: '$entregados',                        suffix: 'completados', icon: Icons.check_circle_outline, color: const Color(0xFF00BFA5)),
             _StatCard(label: 'Pendientes',   value: '$pendientes',                        suffix: 'en espera',   icon: Icons.hourglass_bottom,    color: const Color(0xFFFFB300)),
           ],
@@ -285,13 +287,21 @@ class _DuenoScreenState extends State<DuenoScreen> {
             const Text('Estado de pedidos',
                 style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
             const SizedBox(height: 14),
-            _StatusBar(orders: orders),
+            if (total > 0) ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: Row(children: [
+                if (pendientes > 0) Expanded(flex: pendientes, child: Container(height: 10, color: const Color(0xFFFFB300))),
+                if (enCamino   > 0) Expanded(flex: enCamino,   child: Container(height: 10, color: AppConstants.primaryColor)),
+                if (entregados > 0) Expanded(flex: entregados, child: Container(height: 10, color: Colors.green)),
+                if (cancelados > 0) Expanded(flex: cancelados, child: Container(height: 10, color: Colors.red)),
+              ]),
+            ),
             const SizedBox(height: 12),
             Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-              _StatusLegend('Pendiente', const Color(0xFFFFB300),   orders.where((o) => o.status == AppOrderStatus.pendiente).length),
-              _StatusLegend('En camino', AppConstants.primaryColor, orders.where((o) => o.status == AppOrderStatus.enCamino).length),
-              _StatusLegend('Entregado', Colors.green,              orders.where((o) => o.status == AppOrderStatus.entregado).length),
-              _StatusLegend('Cancelado', Colors.red,                orders.where((o) => o.status == AppOrderStatus.cancelado).length),
+              _StatusLegend('Pendiente', const Color(0xFFFFB300),   pendientes),
+              _StatusLegend('En camino', AppConstants.primaryColor, enCamino),
+              _StatusLegend('Entregado', Colors.green,              entregados),
+              _StatusLegend('Cancelado', Colors.red,                cancelados),
             ]),
           ]),
         ),
@@ -305,12 +315,12 @@ class _DuenoScreenState extends State<DuenoScreen> {
           ),
         ]),
         const SizedBox(height: 8),
-        ...orders.take(4).map((o) => _OrderRow(order: o)),
+        ..._realOrders.take(4).map((o) => _RealOrderMiniRow(order: o)),
       ],
     );
   }
 
-  Widget _buildPedidos(AppDataProvider appData, List<AppOrder> orders) {
+  Widget _buildPedidos() {
     final filtered = _filterStatus == null
         ? _realOrders
         : _realOrders.where((o) {
@@ -353,6 +363,11 @@ class _DuenoScreenState extends State<DuenoScreen> {
                   onAccept: () async {
                     await SupabaseService.updateOrderStatus(
                         filtered[i]['id'] as String, 'accepted');
+                    _loadRealOrders();
+                  },
+                  onCancel: () async {
+                    await SupabaseService.updateOrderStatus(
+                        filtered[i]['id'] as String, 'cancelled');
                     _loadRealOrders();
                   },
                 ),
@@ -852,10 +867,68 @@ class _ActionBtn extends StatelessWidget {
   }
 }
 
+class _RealOrderMiniRow extends StatelessWidget {
+  final Map<String, dynamic> order;
+  const _RealOrderMiniRow({required this.order});
+
+  @override
+  Widget build(BuildContext context) {
+    final status = order['status'] as String? ?? 'pending';
+    Map<String, dynamic> delivery = {};
+    try { delivery = jsonDecode(order['customer_name'] as String? ?? '{}') as Map<String, dynamic>; } catch (_) {}
+    final name  = delivery['name'] as String? ?? 'Cliente';
+    final total = (order['total'] as num?)?.toDouble() ?? 0;
+    final items = (order['order_items'] as List<dynamic>? ?? []);
+    final itemNames = items.map((i) {
+      final qty = i['quantity'] as int? ?? 1;
+      final product = i['products'] as Map<String, dynamic>?;
+      return '$qty× ${product?['name'] ?? 'Producto'}';
+    }).join(', ');
+
+    final (statusLabel, statusColor) = switch (status) {
+      'pending'    => ('Pendiente',   const Color(0xFFFFB300)),
+      'accepted'   => ('Aceptado',    AppConstants.primaryColor),
+      'delivering' => ('En camino',   const Color(0xFF2196F3)),
+      'delivered'  => ('Entregado',   Colors.green),
+      'cancelled'  => ('Cancelado',   Colors.red),
+      _            => ('Desconocido', Colors.grey),
+    };
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(color: AppConstants.surfaceColor, borderRadius: BorderRadius.circular(12)),
+      child: Row(children: [
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+            Text(itemNames.isEmpty ? 'Sin productos' : itemNames,
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11),
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+          ]),
+        ),
+        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          Text('\$${total.toStringAsFixed(0)}',
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+          Container(
+            margin: const EdgeInsets.only(top: 3),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+                color: statusColor.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(10)),
+            child: Text(statusLabel,
+                style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.w600)),
+          ),
+        ]),
+      ]),
+    );
+  }
+}
+
 class _RealOrderCard extends StatelessWidget {
   final Map<String, dynamic> order;
   final VoidCallback onAccept;
-  const _RealOrderCard({required this.order, required this.onAccept});
+  final VoidCallback? onCancel;
+  const _RealOrderCard({required this.order, required this.onAccept, this.onCancel});
 
   @override
   Widget build(BuildContext context) {
@@ -926,10 +999,18 @@ class _RealOrderCard extends StatelessWidget {
           Text('\$${total.toStringAsFixed(0)} MXN',
               style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
           const Spacer(),
-          if (status == 'pending')
+          if (status == 'pending') ...[
+            if (onCancel != null)
+              _ActionBtn(label: 'Rechazar', color: Colors.redAccent, onTap: onCancel!),
+            const SizedBox(width: 8),
             _ActionBtn(label: 'Aceptar pedido', color: Colors.green, onTap: onAccept),
+          ],
           if (status == 'accepted')
-            _ActionBtn(label: 'Preparando...', color: AppConstants.primaryColor, onTap: () {}),
+            _ActionBtn(label: 'En preparación ✓', color: AppConstants.primaryColor, onTap: () {}),
+          if (status == 'delivering')
+            _ActionBtn(label: 'En camino 🛵', color: const Color(0xFF2196F3), onTap: () {}),
+          if (status == 'delivered')
+            _ActionBtn(label: 'Entregado ✓', color: Colors.green, onTap: () {}),
         ]),
       ]),
     );

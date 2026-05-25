@@ -1,6 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
+import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../core/constants.dart';
 import '../models/restaurant.dart';
 import '../models/category.dart';
 import '../models/product.dart';
@@ -10,6 +13,26 @@ class SupabaseService {
 
   // Cambia a false cuando configures Supabase con tus credenciales reales
   static const bool useMock = false;
+
+  // ── Crear buckets de Storage automáticamente ─────────────────────────────────
+
+  static Future<void> ensureStorageBuckets() async {
+    if (useMock) return;
+    final key = AppConstants.supabaseServiceRoleKey;
+    if (key.isEmpty) return; // Sin service key no podemos crear buckets
+    for (final bucket in ['product-images', 'profile-photos']) {
+      try {
+        await http.post(
+          Uri.parse('${AppConstants.supabaseUrl}/storage/v1/bucket'),
+          headers: {
+            'Authorization': 'Bearer $key',
+            'Content-Type': 'application/json',
+          },
+          body: '{"id":"$bucket","name":"$bucket","public":true}',
+        );
+      } catch (_) {}
+    }
+  }
 
   // ── Mock data ──────────────────────────────────────────────────────────────
 
@@ -166,9 +189,9 @@ class SupabaseService {
   static Future<String?> uploadProductImage(String localPath) async {
     if (useMock) return null;
     try {
-      final file = File(localPath);
-      final bytes = await file.readAsBytes();
-      final ext = localPath.split('.').last.toLowerCase();
+      final file     = File(localPath);
+      final bytes    = await file.readAsBytes();
+      final ext      = localPath.split('.').last.toLowerCase();
       final fileName = '${DateTime.now().millisecondsSinceEpoch}.$ext';
       await _client.storage.from('product-images').uploadBinary(
         fileName, bytes,
@@ -178,6 +201,159 @@ class SupabaseService {
     } catch (_) {
       return null;
     }
+  }
+
+  static Future<String?> uploadProfilePhotoBytes(Uint8List bytes, String userId) async {
+    if (useMock) return null;
+    try {
+      final fileName = 'profile_$userId.jpg';
+      await _client.storage.from('profile-photos').uploadBinary(
+        fileName, bytes,
+        fileOptions: const FileOptions(contentType: 'image/jpeg', upsert: true),
+      );
+      return _client.storage.from('profile-photos').getPublicUrl(fileName);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<String?> uploadProfilePhoto(String localPath, String userId) async {
+    if (useMock) return null;
+    try {
+      final file     = File(localPath);
+      final bytes    = await file.readAsBytes();
+      final ext      = localPath.split('.').last.toLowerCase();
+      final fileName = 'profile_$userId.$ext';
+      await _client.storage.from('profile-photos').uploadBinary(
+        fileName, bytes,
+        fileOptions: FileOptions(contentType: 'image/$ext', upsert: true),
+      );
+      return _client.storage.from('profile-photos').getPublicUrl(fileName);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ── Likes de productos (realtime) ────────────────────────────────────────────
+
+  static Future<Map<String, int>> getProductLikeCounts() async {
+    if (useMock) return {};
+    try {
+      final data = await _client.from('product_likes').select('product_id');
+      final counts = <String, int>{};
+      for (final row in data as List) {
+        final id = row['product_id'] as String;
+        counts[id] = (counts[id] ?? 0) + 1;
+      }
+      return counts;
+    } catch (_) { return {}; }
+  }
+
+  static Future<Set<String>> getUserLikedProducts(String email) async {
+    if (useMock || email.isEmpty) return {};
+    try {
+      final data = await _client
+          .from('product_likes')
+          .select('product_id')
+          .eq('user_email', email);
+      return {for (final r in data as List) r['product_id'] as String};
+    } catch (_) { return {}; }
+  }
+
+  static Future<void> toggleProductLike(String productId, String email) async {
+    if (useMock || email.isEmpty) return;
+    try {
+      final existing = await _client
+          .from('product_likes')
+          .select()
+          .eq('product_id', productId)
+          .eq('user_email', email)
+          .maybeSingle();
+      if (existing == null) {
+        await _client.from('product_likes').insert({
+          'product_id': productId,
+          'user_email': email,
+        });
+      } else {
+        await _client.from('product_likes')
+            .delete()
+            .eq('product_id', productId)
+            .eq('user_email', email);
+      }
+    } catch (_) {}
+  }
+
+  static RealtimeChannel subscribeToProductLikes(void Function() onUpdate) {
+    return _client
+        .channel('product_likes_changes')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'product_likes',
+          callback: (_) => onUpdate(),
+        )
+        .subscribe();
+  }
+
+  // ── Likes de restaurantes (realtime) ─────────────────────────────────────────
+
+  static Future<Map<String, int>> getRestaurantLikeCounts() async {
+    if (useMock) return {};
+    try {
+      final data = await _client.from('restaurant_likes').select('restaurant_id');
+      final counts = <String, int>{};
+      for (final row in data as List) {
+        final id = row['restaurant_id'] as String;
+        counts[id] = (counts[id] ?? 0) + 1;
+      }
+      return counts;
+    } catch (_) { return {}; }
+  }
+
+  static Future<Set<String>> getUserLikedRestaurants(String email) async {
+    if (useMock || email.isEmpty) return {};
+    try {
+      final data = await _client
+          .from('restaurant_likes')
+          .select('restaurant_id')
+          .eq('user_email', email);
+      return {for (final r in data as List) r['restaurant_id'] as String};
+    } catch (_) { return {}; }
+  }
+
+  static Future<void> toggleRestaurantLike(String restaurantId, String email) async {
+    if (useMock || email.isEmpty) return;
+    try {
+      final existing = await _client
+          .from('restaurant_likes')
+          .select()
+          .eq('restaurant_id', restaurantId)
+          .eq('user_email', email)
+          .maybeSingle();
+      if (existing == null) {
+        await _client.from('restaurant_likes').insert({
+          'restaurant_id': restaurantId,
+          'user_email': email,
+        });
+      } else {
+        await _client.from('restaurant_likes')
+            .delete()
+            .eq('restaurant_id', restaurantId)
+            .eq('user_email', email);
+      }
+    } catch (_) {}
+  }
+
+  static RealtimeChannel subscribeToRestaurantLikes(void Function() onUpdate) {
+    return _client
+        .channel('restaurant_likes_changes')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'restaurant_likes',
+          callback: (_) => onUpdate(),
+        )
+        .subscribe();
   }
 
   static Future<void> saveProduct({
@@ -288,7 +464,16 @@ class SupabaseService {
     final data = await _client
         .from('orders')
         .select('*, order_items(quantity, price, products(id, name))')
-        .inFilter('status', ['pending', 'accepted', 'delivering'])
+        .inFilter('status', ['pending', 'accepted', 'delivering', 'delivered', 'cancelled'])
+        .order('created_at', ascending: false);
+    return (data as List).cast<Map<String, dynamic>>();
+  }
+
+  static Future<List<Map<String, dynamic>>> getOrdersForRepartidor() async {
+    final data = await _client
+        .from('orders')
+        .select('*, order_items(quantity, price, products(id, name))')
+        .inFilter('status', ['pending', 'accepted'])
         .order('created_at', ascending: false);
     return (data as List).cast<Map<String, dynamic>>();
   }

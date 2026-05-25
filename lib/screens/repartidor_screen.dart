@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
@@ -28,6 +29,7 @@ class _Order {
   final String customerPhone;
   final String address;
   final LatLng customerPos;
+  final bool hasExactCoords;
   final List<String> items;
   final double total;
 
@@ -40,6 +42,7 @@ class _Order {
     required this.customerPhone,
     required this.address,
     required this.customerPos,
+    required this.hasExactCoords,
     required this.items,
     required this.total,
   });
@@ -63,7 +66,8 @@ class _Order {
 
     final rawLat = delivery['lat'];
     final rawLng = delivery['lng'];
-    final customerPos = (rawLat != null && rawLng != null)
+    final hasCoords = rawLat != null && rawLng != null;
+    final customerPos = hasCoords
         ? LatLng((rawLat as num).toDouble(), (rawLng as num).toDouble())
         : _defaultClientPos;
 
@@ -76,6 +80,7 @@ class _Order {
       customerPhone: delivery['phone'] as String? ?? '—',
       address: delivery['address'] as String? ?? 'Dirección no especificada',
       customerPos: customerPos,
+      hasExactCoords: hasCoords,
       items: itemStrings.isEmpty ? ['Pedido #${m['id'].toString().substring(0, 6)}'] : itemStrings,
       total: (m['total'] as num).toDouble(),
     );
@@ -90,11 +95,13 @@ class RepartidorScreen extends StatefulWidget {
 }
 
 class _RepartidorScreenState extends State<RepartidorScreen> {
-  bool _disponible = true;
+  bool    _disponible   = true;
   _Order? _activeOrder;
-  int _step = 0; // 0=ir al restaurante, 1=en restaurante, 2=en camino, 3=entregado
-  int _entregasHoy = 0;
-  double _gananciaHoy = 0;
+  int     _step         = 0; // 0=ir al restaurante, 1=en restaurante, 2=en camino, 3=entregado
+  int     _entregasHoy  = 0;
+  double  _gananciaHoy  = 0;
+  String  _displayName  = 'Repartidor';
+  String? _photoPath;
 
   // GPS
   Position? _myPos;
@@ -115,11 +122,13 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     _loadOrders();
     _ordersChannel = SupabaseService.subscribeToOrders(_loadOrders);
     _pollTimer = Timer.periodic(const Duration(seconds: 8), (_) => _loadOrders());
+    AuthService.getDisplayName().then((n) { if (mounted) setState(() => _displayName = n); });
+    AuthService.getProfilePhoto().then((p) { if (mounted) setState(() => _photoPath = p); });
   }
 
   Future<void> _loadOrders() async {
     try {
-      final data = await SupabaseService.getActiveOrders();
+      final data = await SupabaseService.getOrdersForRepartidor();
       if (!mounted) return;
       setState(() {
         _pendingOrders
@@ -169,13 +178,13 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   void _aceptarPedido(_Order order) {
     setState(() {
       _activeOrder = order;
-      _geocodedCustomerPos = null;
+      _geocodedCustomerPos = order.hasExactCoords ? order.customerPos : null;
       _pendingOrders.removeWhere((o) => o.id == order.id);
       _step = 0;
     });
-    SupabaseService.updateOrderStatus(order.id, 'accepted');
+    SupabaseService.updateOrderStatus(order.id, 'delivering');
     SupabaseService.startLocationBroadcast(order.id);
-    _geocodeCustomer(order.address);
+    if (!order.hasExactCoords) _geocodeCustomer(order.address);
   }
 
   Future<void> _geocodeCustomer(String address) async {
@@ -326,25 +335,43 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         child: Column(children: [
           const SizedBox(height: 8),
           Row(children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: AppConstants.primaryColor.withValues(alpha: 0.15),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.delivery_dining,
-                  color: AppConstants.primaryColor, size: 28),
+            GestureDetector(
+              onTap: () async {
+                await context.push('/profile');
+                final n = await AuthService.getDisplayName();
+                final p = await AuthService.getProfilePhoto();
+                if (mounted) setState(() { _displayName = n; _photoPath = p; });
+              },
+              child: Stack(alignment: Alignment.bottomRight, children: [
+                Container(
+                  width: 48, height: 48,
+                  decoration: BoxDecoration(
+                    color: AppConstants.primaryColor.withValues(alpha: 0.15),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: AppConstants.primaryColor.withValues(alpha: 0.4), width: 1.5),
+                  ),
+                  child: _photoPath != null
+                      ? ClipOval(child: _photoPath!.startsWith('http')
+                          ? Image.network(_photoPath!, fit: BoxFit.cover, width: 48, height: 48,
+                              errorBuilder: (_, e, s) => const Icon(Icons.delivery_dining, color: AppConstants.primaryColor, size: 26))
+                          : Image.file(File(_photoPath!), fit: BoxFit.cover, width: 48, height: 48,
+                              errorBuilder: (_, e, s) => const Icon(Icons.delivery_dining, color: AppConstants.primaryColor, size: 26)))
+                      : const Icon(Icons.delivery_dining, color: AppConstants.primaryColor, size: 26),
+                ),
+                Container(
+                  padding: const EdgeInsets.all(3),
+                  decoration: const BoxDecoration(color: AppConstants.primaryColor, shape: BoxShape.circle),
+                  child: const Icon(Icons.camera_alt, color: Colors.white, size: 10),
+                ),
+              ]),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('Hola, Repartidor',
-                    style: TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.bold, fontSize: 17)),
+                Text('Hola, $_displayName',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 17)),
                 Text('Maravatío, Mich.',
-                    style:
-                        TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 13)),
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 13)),
               ]),
             ),
             IconButton(
@@ -509,10 +536,14 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         : null;
 
     final clientPos = _geocodedCustomerPos ?? order.customerPos;
-    final mapCenter = LatLng(
-      (order.restaurantPos.latitude + clientPos.latitude) / 2,
-      (order.restaurantPos.longitude + clientPos.longitude) / 2,
-    );
+    // Solo mostrar la ubicación del cliente cuando el repartidor ya va en camino
+    final showClientPos = _step >= 2;
+    final mapCenter = showClientPos
+        ? LatLng(
+            (order.restaurantPos.latitude + clientPos.latitude) / 2,
+            (order.restaurantPos.longitude + clientPos.longitude) / 2,
+          )
+        : order.restaurantPos;
 
     return Column(children: [
       // ── Mapa ──────────────────────────────────────────────────────────────
@@ -533,11 +564,12 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                   width: 44, height: 44,
                   child: _Pin(icon: Icons.storefront, color: AppConstants.primaryColor),
                 ),
-                Marker(
-                  point: clientPos,
-                  width: 44, height: 44,
-                  child: _Pin(icon: Icons.home, color: const Color(0xFF2196F3)),
-                ),
+                if (showClientPos)
+                  Marker(
+                    point: clientPos,
+                    width: 44, height: 44,
+                    child: _Pin(icon: Icons.home, color: const Color(0xFF2196F3)),
+                  ),
                 if (myLatLng != null)
                   Marker(
                     point: myLatLng,

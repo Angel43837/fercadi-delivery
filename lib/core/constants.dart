@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 class AppConstants {
   static const String supabaseUrl = 'https://mmjzyqvjdwhzefbaiums.supabase.co';
   static const String supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1tanp5cXZqZHdoemVmYmFpdW1zIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4NzMyMzAsImV4cCI6MjA5NDQ0OTIzMH0.5RC11kFCcKtPCeHFarByZDc9zzVBBvsZPYlI5Ed-PNM';
+  // Service role key — Settings > API > service_role en tu dashboard de Supabase
+  static const String supabaseServiceRoleKey = '';
 
   // Colores principales
   static const Color primaryColor  = Color(0xFFFF5722); // Naranja principal
