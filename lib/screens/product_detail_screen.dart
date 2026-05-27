@@ -131,7 +131,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                       const SizedBox(height: 16),
                       Text(
                         widget.product.description!,
-                        style: TextStyle(color: Colors.black.withOpacity(0.65), fontSize: 15, height: 1.5),
+                        style: TextStyle(color: Colors.black.withValues(alpha: 0.65), fontSize: 15, height: 1.5),
                       ),
                     ],
                     const SizedBox(height: 20),
@@ -170,7 +170,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         decoration: BoxDecoration(
           color: AppConstants.primaryColor,
           boxShadow: [
-            BoxShadow(color: Colors.black.withOpacity(0.18), blurRadius: 10, offset: const Offset(0, -4)),
+            BoxShadow(color: Colors.black.withValues(alpha: 0.18), blurRadius: 10, offset: const Offset(0, -4)),
           ],
         ),
         child: SafeArea(

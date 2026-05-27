@@ -7,6 +7,7 @@ import '../models/cart_item.dart';
 import '../providers/cart_provider.dart';
 import '../services/supabase_service.dart';
 import 'map_picker_screen.dart';
+import '../services/auth_service.dart';
 import '../services/order_history_service.dart';
 
 enum _Pay { cash, oxxo, card }
@@ -28,6 +29,30 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   _Pay _payment = _Pay.cash;
   bool _loading = false;
   LatLng? _selectedPos;
+  List<Map<String, dynamic>> _savedAddresses = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedAddresses();
+  }
+
+  Future<void> _loadSavedAddresses() async {
+    final addresses = await AuthService.getSavedAddresses();
+    if (!mounted) return;
+    setState(() {
+      _savedAddresses = addresses;
+      if (addresses.isNotEmpty && _addressCtrl.text.isEmpty) {
+        final def = addresses.first;
+        _addressCtrl.text = def['address'] as String? ?? '';
+        final lat = def['lat'];
+        final lng = def['lng'];
+        if (lat != null && lng != null) {
+          _selectedPos = LatLng((lat as num).toDouble(), (lng as num).toDouble());
+        }
+      }
+    });
+  }
 
   @override
   void dispose() {
@@ -103,6 +128,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       restaurantName: cart.restaurantName ?? 'Restaurante',
       total: cart.total,
       address: _addressCtrl.text.trim(),
+    );
+    await AuthService.saveAddress(
+      label: 'Reciente',
+      address: _addressCtrl.text.trim(),
+      lat: _selectedPos?.latitude,
+      lng: _selectedPos?.longitude,
     );
     await OrderHistoryService.saveActiveOrder(
       orderId: orderId,
@@ -267,6 +298,73 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               icon: Icons.location_on_outlined,
               validator: (v) => (v == null || v.trim().isEmpty) ? 'Ingresa la dirección' : null,
             ),
+            if (_savedAddresses.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: _savedAddresses.map((a) {
+                    final label = a['label'] as String? ?? 'Dirección';
+                    final addr  = a['address'] as String? ?? '';
+                    final isSelected = _addressCtrl.text == addr;
+                    return GestureDetector(
+                      onTap: () {
+                        final lat = a['lat'];
+                        final lng = a['lng'];
+                        setState(() {
+                          _addressCtrl.text = addr;
+                          _selectedPos = (lat != null && lng != null)
+                              ? LatLng((lat as num).toDouble(), (lng as num).toDouble())
+                              : null;
+                        });
+                      },
+                      child: Container(
+                        margin: const EdgeInsets.only(right: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: isSelected
+                              ? AppConstants.primaryColor.withValues(alpha: 0.15)
+                              : AppConstants.surfaceColor,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: isSelected
+                                ? AppConstants.primaryColor
+                                : Colors.white.withValues(alpha: 0.15),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              label == 'Casa'
+                                  ? Icons.home_outlined
+                                  : label == 'Trabajo'
+                                      ? Icons.work_outline
+                                      : Icons.location_on_outlined,
+                              size: 14,
+                              color: isSelected
+                                  ? AppConstants.primaryColor
+                                  : Colors.white.withValues(alpha: 0.5),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(label,
+                                style: TextStyle(
+                                  color: isSelected
+                                      ? AppConstants.primaryColor
+                                      : Colors.white.withValues(alpha: 0.6),
+                                  fontSize: 12,
+                                  fontWeight: isSelected
+                                      ? FontWeight.w600
+                                      : FontWeight.normal,
+                                )),
+                          ],
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
             const SizedBox(height: 10),
             GestureDetector(
               onTap: _openMapPicker,
@@ -460,13 +558,18 @@ class _FormField extends StatelessWidget {
           borderRadius: BorderRadius.circular(14),
           borderSide: const BorderSide(color: AppConstants.primaryColor, width: 1.5),
         ),
+        errorStyle: const TextStyle(
+          color: Colors.redAccent,
+          fontWeight: FontWeight.bold,
+          fontSize: 12,
+        ),
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: Colors.redAccent, width: 1.5),
+          borderSide: const BorderSide(color: Colors.redAccent, width: 2),
         ),
         focusedErrorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: Colors.redAccent, width: 1.5),
+          borderSide: const BorderSide(color: Colors.redAccent, width: 2),
         ),
       ),
     );

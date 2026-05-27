@@ -5,8 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:latlong2/latlong.dart';
 import '../core/constants.dart';
 import '../services/auth_service.dart';
+import 'map_picker_screen.dart';
 import '../models/restaurant.dart';
 import '../models/category.dart';
 import '../models/product.dart';
@@ -68,12 +70,77 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
     _checkActiveOrder();
     _activeOrderTimer = Timer.periodic(
       const Duration(seconds: 8), (_) => _checkActiveOrder());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _promptLocationIfNeeded());
   }
 
   @override
   void dispose() {
     _activeOrderTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _promptLocationIfNeeded() async {
+    final addresses = await AuthService.getSavedAddresses();
+    if (!mounted || addresses.isNotEmpty) return;
+    await Future.delayed(const Duration(milliseconds: 600));
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppConstants.surfaceColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        contentPadding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+            width: 72, height: 72,
+            decoration: BoxDecoration(
+              color: AppConstants.primaryColor.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.location_on, color: AppConstants.primaryColor, size: 38),
+          ),
+          const SizedBox(height: 18),
+          const Text('¿Dónde te entregamos?',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+          const SizedBox(height: 10),
+          Text('Marca tu casa o lugar favorito en el mapa para que tus pedidos lleguen directo ahí.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13, height: 1.5)),
+          const SizedBox(height: 24),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () async {
+                Navigator.pop(ctx);
+                final result = await Navigator.push<LatLng>(
+                  context,
+                  MaterialPageRoute(builder: (_) => const MapPickerScreen()),
+                );
+                if (result == null || !mounted) return;
+                final addr = await LocationService.reverseGeocode(result.latitude, result.longitude);
+                await AuthService.saveAddress(
+                  label: 'Mi casa',
+                  address: addr ?? '${result.latitude.toStringAsFixed(4)}, ${result.longitude.toStringAsFixed(4)}',
+                  lat: result.latitude,
+                  lng: result.longitude,
+                );
+              },
+              icon: const Icon(Icons.map_outlined, size: 20),
+              label: const Text('Ubicar mi casa en el mapa', style: TextStyle(fontWeight: FontWeight.bold)),
+              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('Ahora no',
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 13)),
+          ),
+        ]),
+      ),
+    );
   }
 
   Future<void> _checkActiveOrder() async {
@@ -156,6 +223,21 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
       });
       if (result.status == LocationStatus.enMaravatio) {
         _futureRestaurants = SupabaseService.getRestaurants();
+        if (result.position != null) {
+          LocationService.reverseGeocode(
+            result.position!.latitude,
+            result.position!.longitude,
+          ).then((addr) {
+            if (addr != null) {
+              AuthService.saveAddress(
+                label: 'Mi ubicación',
+                address: addr,
+                lat: result.position!.latitude,
+                lng: result.position!.longitude,
+              );
+            }
+          });
+        }
       }
     } catch (_) {
       // Timeout o error de GPS — dejar pasar para no bloquear al usuario
@@ -201,14 +283,6 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
       _expandedProductId =
           _expandedProductId == productId ? null : productId;
     });
-  }
-
-  String _locationLabel() {
-    if (_checkingLocation) return 'Detectando ubicación...';
-    return switch (_locationResult?.status) {
-      LocationStatus.enMaravatio => 'Maravatío, Mich.',
-      _ => 'Ubicación no disponible',
-    };
   }
 
   @override
@@ -424,7 +498,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
         borderRadius: BorderRadius.circular(8),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.25),
+            color: Colors.black.withValues(alpha: 0.25),
             offset: const Offset(0, 8),
             blurRadius: 18,
           ),
@@ -608,7 +682,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.08),
+            color: Colors.black.withValues(alpha: 0.08),
             offset: const Offset(0, 6),
             blurRadius: 12,
           ),
@@ -650,7 +724,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                       style: TextStyle(
                         fontSize: 11,
                         color:
-                          Colors.black.withOpacity(0.45))),
+                          Colors.black.withValues(alpha: 0.45))),
                       const SizedBox(height: 4),
                     Text('\$${p.price.toStringAsFixed(0)} MXN',
                       style: TextStyle(

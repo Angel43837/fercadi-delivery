@@ -7,10 +7,13 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:latlong2/latlong.dart';
 import '../core/constants.dart';
 import '../providers/app_data_provider.dart';
-import '../services/supabase_service.dart';
 import '../services/auth_service.dart';
+import '../services/location_service.dart';
+import '../services/supabase_service.dart';
+import 'map_picker_screen.dart';
 
 class _Product {
   final String id;
@@ -56,6 +59,19 @@ class _DuenoScreenState extends State<DuenoScreen> {
   Timer? _orderPollTimer;
   RealtimeChannel? _ordersChannel;
 
+  // Configuración del restaurante
+  String _restName    = '';
+  String _restDesc    = '';
+  String _restPhone   = '';
+  String _restAddress = '';
+  String _restPhoto   = '';
+  String _restEmoji   = '🍴';
+  LatLng? _restLatLng;
+
+  final _restNameCtrl    = TextEditingController();
+  final _restDescCtrl    = TextEditingController();
+  final _restPhoneCtrl   = TextEditingController();
+
   final List<_Category> _categories = const [
     _Category(id: 'c1',  name: 'Hamburguesas', emoji: '🍔'),
     _Category(id: 'c2',  name: 'Papas',        emoji: '🍟'),
@@ -83,12 +99,32 @@ class _DuenoScreenState extends State<DuenoScreen> {
     _loadRealOrders();
     _ordersChannel = SupabaseService.subscribeToOrders(_loadRealOrders);
     _orderPollTimer = Timer.periodic(const Duration(seconds: 8), (_) => _loadRealOrders());
+    _loadRestaurantSettings();
+  }
+
+  Future<void> _loadRestaurantSettings() async {
+    final s = await AuthService.getRestaurantSettings();
+    if (!mounted) return;
+    setState(() {
+      _restName    = s['name']!;
+      _restDesc    = s['desc']!;
+      _restPhone   = s['phone']!;
+      _restAddress = s['address']!;
+      _restPhoto   = s['photo']!;
+      _restEmoji   = s['emoji']!.isNotEmpty ? s['emoji']! : '🍴';
+    });
+    _restNameCtrl.text  = _restName;
+    _restDescCtrl.text  = _restDesc;
+    _restPhoneCtrl.text = _restPhone;
   }
 
   @override
   void dispose() {
     _orderPollTimer?.cancel();
     _ordersChannel?.unsubscribe();
+    _restNameCtrl.dispose();
+    _restDescCtrl.dispose();
+    _restPhoneCtrl.dispose();
     super.dispose();
   }
 
@@ -182,6 +218,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
               _buildDashboard(),
               _buildPedidos(),
               _buildMenu(appData),
+              _buildPerfilRestaurante(),
             ],
           ),
         ),
@@ -197,12 +234,19 @@ class _DuenoScreenState extends State<DuenoScreen> {
       child: SafeArea(
         bottom: false,
         child: Row(children: [
-          const Text('🍔', style: TextStyle(fontSize: 32)),
+          GestureDetector(
+            onTap: () => setState(() => _tab = 3),
+            child: _restPhoto.isNotEmpty
+                ? ClipOval(child: Image.network(_restPhoto, width: 40, height: 40, fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => Text(_restEmoji, style: const TextStyle(fontSize: 32))))
+                : Text(_restEmoji.isNotEmpty ? _restEmoji : '🍴', style: const TextStyle(fontSize: 32)),
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('McDonalds',
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+              Text(
+                _restName.isNotEmpty ? _restName : 'Mi Restaurante',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
               Text('Panel del restaurante',
                   style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 12)),
             ]),
@@ -676,6 +720,183 @@ class _DuenoScreenState extends State<DuenoScreen> {
     );
   }
 
+  Widget _buildPerfilRestaurante() {
+    const emojis = ['🍴', '🍔', '🌮', '🍕', '🍣', '🥗', '🍜', '🥩', '☕', '🧁'];
+
+    Future<void> pickPhoto() async {
+      final picker = ImagePicker();
+      final xfile = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80, maxWidth: 400);
+      if (xfile == null) return;
+      final bytes = await xfile.readAsBytes();
+      final url = await SupabaseService.uploadProfilePhotoBytes(bytes, 'restaurant_1');
+      if (url == null) return;
+      await AuthService.saveRestaurantSettings(photo: url);
+      if (mounted) setState(() => _restPhoto = url);
+    }
+
+    Future<void> pickAddress() async {
+      final result = await Navigator.push<LatLng>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => MapPickerScreen(initial: _restLatLng),
+        ),
+      );
+      if (result == null || !mounted) return;
+      final addr = await LocationService.reverseGeocode(result.latitude, result.longitude);
+      setState(() {
+        _restLatLng  = result;
+        _restAddress = addr ?? '${result.latitude.toStringAsFixed(4)}, ${result.longitude.toStringAsFixed(4)}';
+      });
+    }
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 40),
+      children: [
+        // ── Foto del restaurante ────────────────────────────────────────────
+        Center(
+          child: GestureDetector(
+            onTap: pickPhoto,
+            child: Stack(
+              children: [
+                Container(
+                  width: 110, height: 110,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: AppConstants.surfaceColor,
+                    border: Border.all(color: AppConstants.primaryColor, width: 2.5),
+                  ),
+                  clipBehavior: Clip.hardEdge,
+                  child: _restPhoto.isNotEmpty
+                      ? Image.network(_restPhoto, fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) => Center(child: Text(_restEmoji, style: const TextStyle(fontSize: 50))))
+                      : Center(child: Text(_restEmoji, style: const TextStyle(fontSize: 50))),
+                ),
+                Positioned(
+                  bottom: 0, right: 0,
+                  child: Container(
+                    width: 32, height: 32,
+                    decoration: const BoxDecoration(
+                      color: AppConstants.primaryColor,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.camera_alt, color: Colors.white, size: 16),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // ── Selector de emoji ───────────────────────────────────────────────
+        Center(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: emojis.map((e) => GestureDetector(
+                onTap: () {
+                  AuthService.saveRestaurantSettings(emoji: e);
+                  setState(() => _restEmoji = e);
+                },
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  width: 42, height: 42,
+                  decoration: BoxDecoration(
+                    color: _restEmoji == e
+                        ? AppConstants.primaryColor.withValues(alpha: 0.2)
+                        : AppConstants.surfaceColor,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: _restEmoji == e
+                          ? AppConstants.primaryColor
+                          : Colors.white.withValues(alpha: 0.1),
+                    ),
+                  ),
+                  child: Center(child: Text(e, style: const TextStyle(fontSize: 20))),
+                ),
+              )).toList(),
+            ),
+          ),
+        ),
+        const SizedBox(height: 28),
+
+        // ── Campos de texto ─────────────────────────────────────────────────
+        _FormField(controller: _restNameCtrl,  label: 'Nombre del restaurante', icon: Icons.storefront_outlined),
+        const SizedBox(height: 12),
+        _FormField(controller: _restDescCtrl,  label: 'Descripción',            icon: Icons.notes_outlined, maxLines: 3),
+        const SizedBox(height: 12),
+        _FormField(controller: _restPhoneCtrl, label: 'Teléfono de contacto',   icon: Icons.phone_outlined, keyboardType: TextInputType.phone),
+        const SizedBox(height: 12),
+
+        // ── Dirección: toca para abrir el mapa ─────────────────────────────
+        GestureDetector(
+          onTap: pickAddress,
+          child: AbsorbPointer(
+            child: Container(
+              decoration: BoxDecoration(
+                color: AppConstants.surfaceColor,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: TextField(
+                controller: TextEditingController(text: _restAddress),
+                readOnly: true,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'Dirección del local',
+                  labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
+                  prefixIcon: const Icon(Icons.location_on_outlined, color: AppConstants.primaryColor),
+                  suffixIcon: const Icon(Icons.map_outlined, color: AppConstants.primaryColor, size: 20),
+                  filled: true,
+                  fillColor: AppConstants.surfaceColor,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide.none,
+                  ),
+                  hintText: 'Toca para ubicar en el mapa',
+                  hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 13),
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 28),
+
+        SizedBox(
+          width: double.infinity, height: 52,
+          child: ElevatedButton.icon(
+            onPressed: () async {
+              await AuthService.saveRestaurantSettings(
+                name:    _restNameCtrl.text.trim(),
+                desc:    _restDescCtrl.text.trim(),
+                phone:   _restPhoneCtrl.text.trim(),
+                address: _restAddress,
+                emoji:   _restEmoji,
+              );
+              if (!mounted) return;
+              setState(() {
+                _restName  = _restNameCtrl.text.trim();
+                _restDesc  = _restDescCtrl.text.trim();
+                _restPhone = _restPhoneCtrl.text.trim();
+              });
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('¡Cambios guardados!'),
+                  backgroundColor: Colors.green,
+                  behavior: SnackBarBehavior.floating,
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            },
+            icon: const Icon(Icons.save_outlined),
+            label: const Text('GUARDAR CAMBIOS', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildBottomNav(int pendingCount) {
     return Container(
       decoration: BoxDecoration(
@@ -685,9 +906,10 @@ class _DuenoScreenState extends State<DuenoScreen> {
       child: SafeArea(
         top: false,
         child: Row(children: [
-          _NavItem(icon: Icons.dashboard_outlined,    label: 'Resumen', index: 0, current: _tab, onTap: (i) => setState(() => _tab = i)),
-          _NavItem(icon: Icons.receipt_long_outlined,  label: 'Pedidos', index: 1, current: _tab, onTap: (i) => setState(() => _tab = i), badge: pendingCount),
-          _NavItem(icon: Icons.menu_book_outlined,    label: 'Menú',    index: 2, current: _tab, onTap: (i) => setState(() => _tab = i)),
+          _NavItem(icon: Icons.dashboard_outlined,     label: 'Resumen',      index: 0, current: _tab, onTap: (i) => setState(() => _tab = i)),
+          _NavItem(icon: Icons.receipt_long_outlined,  label: 'Pedidos',      index: 1, current: _tab, onTap: (i) => setState(() => _tab = i), badge: pendingCount),
+          _NavItem(icon: Icons.menu_book_outlined,     label: 'Menú',         index: 2, current: _tab, onTap: (i) => setState(() => _tab = i)),
+          _NavItem(icon: Icons.storefront_outlined,    label: 'Restaurante',  index: 3, current: _tab, onTap: (i) => setState(() => _tab = i)),
         ]),
       ),
     );
@@ -717,30 +939,6 @@ class _StatCard extends StatelessWidget {
   }
 }
 
-class _StatusBar extends StatelessWidget {
-  final List<AppOrder> orders;
-  const _StatusBar({required this.orders});
-
-  @override
-  Widget build(BuildContext context) {
-    final total = orders.length;
-    if (total == 0) return const SizedBox();
-    final pending  = orders.where((o) => o.status == AppOrderStatus.pendiente).length;
-    final transit  = orders.where((o) => o.status == AppOrderStatus.enCamino).length;
-    final done     = orders.where((o) => o.status == AppOrderStatus.entregado).length;
-    final canceled = orders.where((o) => o.status == AppOrderStatus.cancelado).length;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(6),
-      child: Row(children: [
-        if (pending  > 0) Expanded(flex: pending,  child: Container(height: 10, color: const Color(0xFFFFB300))),
-        if (transit  > 0) Expanded(flex: transit,  child: Container(height: 10, color: AppConstants.primaryColor)),
-        if (done     > 0) Expanded(flex: done,     child: Container(height: 10, color: Colors.green)),
-        if (canceled > 0) Expanded(flex: canceled, child: Container(height: 10, color: Colors.red)),
-      ]),
-    );
-  }
-}
-
 class _StatusLegend extends StatelessWidget {
   final String label;
   final Color color;
@@ -753,94 +951,6 @@ class _StatusLegend extends StatelessWidget {
       Text('$count', style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 18)),
       Text(label, style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 10)),
     ]);
-  }
-}
-
-class _OrderRow extends StatelessWidget {
-  final AppOrder order;
-  const _OrderRow({required this.order});
-
-  @override
-  Widget build(BuildContext context) {
-    final st = appOrderStatusStyle(order.status);
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(color: AppConstants.surfaceColor, borderRadius: BorderRadius.circular(12)),
-      child: Row(children: [
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(order.customer, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
-            Text(order.items.join(', '),
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11),
-                maxLines: 1, overflow: TextOverflow.ellipsis),
-          ]),
-        ),
-        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Text('\$${order.total.toStringAsFixed(0)}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-          Container(
-            margin: const EdgeInsets.only(top: 3),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            decoration: BoxDecoration(color: st.color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(10)),
-            child: Text(st.label, style: TextStyle(color: st.color, fontSize: 10, fontWeight: FontWeight.w600)),
-          ),
-        ]),
-      ]),
-    );
-  }
-}
-
-class _OrderCard extends StatelessWidget {
-  final AppOrder order;
-  final ValueChanged<AppOrderStatus> onStatusChanged;
-  const _OrderCard({required this.order, required this.onStatusChanged});
-
-  @override
-  Widget build(BuildContext context) {
-    final st = appOrderStatusStyle(order.status);
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppConstants.surfaceColor,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: st.color.withValues(alpha: 0.25)),
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Text('#${order.id}', style: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 11)),
-          const SizedBox(width: 8),
-          Text(order.time, style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 11)),
-          const Spacer(),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(color: st.color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(10)),
-            child: Text(st.label, style: TextStyle(color: st.color, fontSize: 11, fontWeight: FontWeight.bold)),
-          ),
-        ]),
-        const SizedBox(height: 8),
-        Text(order.customer, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-        const SizedBox(height: 4),
-        ...order.items.map((item) => Padding(
-          padding: const EdgeInsets.only(bottom: 2),
-          child: Row(children: [
-            Icon(Icons.circle, size: 5, color: Colors.white.withValues(alpha: 0.3)),
-            const SizedBox(width: 6),
-            Text(item, style: TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 12)),
-          ]),
-        )),
-        const SizedBox(height: 10),
-        Row(children: [
-          Text('\$${order.total.toStringAsFixed(0)} MXN',
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
-          const Spacer(),
-          if (order.status == AppOrderStatus.pendiente)
-            _ActionBtn(label: 'Aceptar pedido',   color: AppConstants.primaryColor, onTap: () => onStatusChanged(AppOrderStatus.enCamino)),
-          if (order.status == AppOrderStatus.enCamino)
-            _ActionBtn(label: 'Marcar entregado', color: Colors.green,              onTap: () => onStatusChanged(AppOrderStatus.entregado)),
-        ]),
-      ]),
-    );
   }
 }
 
@@ -1040,9 +1150,9 @@ class _ProductTile extends StatelessWidget {
           child: product.imagePath != null
               ? ((kIsWeb || product.imagePath!.startsWith('http'))
                   ? Image.network(product.imagePath!, width: 60, height: 60, fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(width: 60, height: 60, color: AppConstants.surface2Color, child: Icon(Icons.fastfood_outlined, color: Colors.white.withValues(alpha: 0.2), size: 26)))
+                      errorBuilder: (_, _, _) => Container(width: 60, height: 60, color: AppConstants.surface2Color, child: Icon(Icons.fastfood_outlined, color: Colors.white.withValues(alpha: 0.2), size: 26)))
                   : Image.file(File(product.imagePath!), width: 60, height: 60, fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(width: 60, height: 60, color: AppConstants.surface2Color, child: Icon(Icons.fastfood_outlined, color: Colors.white.withValues(alpha: 0.2), size: 26))))
+                      errorBuilder: (_, _, _) => Container(width: 60, height: 60, color: AppConstants.surface2Color, child: Icon(Icons.fastfood_outlined, color: Colors.white.withValues(alpha: 0.2), size: 26))))
               : Container(width: 60, height: 60, color: AppConstants.surface2Color, child: Icon(Icons.fastfood_outlined, color: Colors.white.withValues(alpha: 0.2), size: 26)),
         ),
         const SizedBox(width: 12),

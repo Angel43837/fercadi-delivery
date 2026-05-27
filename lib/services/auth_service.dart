@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class AuthService {
   static const _keyRole         = 'session_role';
@@ -10,7 +12,14 @@ class AuthService {
   static const _keyCardNumber   = 'card_number';
   static const _keyCardExpiry   = 'card_expiry';
   static const _keyCardName     = 'card_name';
-  static const _keyCLABE        = 'bank_clabe';
+  static const _keyCLABE          = 'bank_clabe';
+  static const _keySavedAddresses  = 'saved_addresses';
+  static const _keyRestName        = 'restaurant_name';
+  static const _keyRestDesc        = 'restaurant_description';
+  static const _keyRestPhone       = 'restaurant_phone';
+  static const _keyRestAddress     = 'restaurant_address';
+  static const _keyRestPhoto       = 'restaurant_photo';
+  static const _keyRestEmoji       = 'restaurant_emoji';
 
   // ── Sesión ───────────────────────────────────────────────────────────────────
 
@@ -130,6 +139,99 @@ class AuthService {
   static Future<void> saveCLABE(String clabe) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyCLABE, clabe.trim());
+  }
+
+  // ── Direcciones guardadas ────────────────────────────────────────────────────
+
+  static Future<List<Map<String, dynamic>>> getSavedAddresses() async {
+    // Primero intenta cargar desde Supabase user metadata (persiste entre sesiones)
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user != null) {
+        final raw = user.userMetadata?['saved_addresses'] as String?;
+        if (raw != null && raw.isNotEmpty) {
+          final list = (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
+          // Sincroniza localmente para acceso offline
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString(_keySavedAddresses, raw);
+          return list;
+        }
+      }
+    } catch (_) {}
+
+    // Fallback: SharedPreferences (funciona para usuarios demo/roles especiales)
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_keySavedAddresses);
+    if (raw == null) return [];
+    try {
+      return (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<void> saveAddress({
+    required String label,
+    required String address,
+    double? lat,
+    double? lng,
+  }) async {
+    final list = await getSavedAddresses();
+    list.removeWhere((a) => a['label'] == label);
+    list.insert(0, {'label': label, 'address': address, 'lat': lat, 'lng': lng});
+    if (list.length > 5) list.removeLast();
+
+    final encoded = jsonEncode(list);
+
+    // Guarda localmente
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keySavedAddresses, encoded);
+
+    // Guarda en Supabase (persiste aunque se borre el navegador)
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user != null) {
+        await Supabase.instance.client.auth.updateUser(
+          UserAttributes(data: {'saved_addresses': encoded}),
+        );
+      }
+    } catch (_) {}
+  }
+
+  static Future<Map<String, dynamic>?> getDefaultAddress() async {
+    final list = await getSavedAddresses();
+    return list.isNotEmpty ? list.first : null;
+  }
+
+  // ── Configuración del restaurante (dueño) ────────────────────────────────────
+
+  static Future<Map<String, String>> getRestaurantSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    return {
+      'name':    prefs.getString(_keyRestName)    ?? '',
+      'desc':    prefs.getString(_keyRestDesc)    ?? '',
+      'phone':   prefs.getString(_keyRestPhone)   ?? '',
+      'address': prefs.getString(_keyRestAddress) ?? '',
+      'photo':   prefs.getString(_keyRestPhoto)   ?? '',
+      'emoji':   prefs.getString(_keyRestEmoji)   ?? '🍴',
+    };
+  }
+
+  static Future<void> saveRestaurantSettings({
+    String? name,
+    String? desc,
+    String? phone,
+    String? address,
+    String? photo,
+    String? emoji,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (name    != null) await prefs.setString(_keyRestName,    name);
+    if (desc    != null) await prefs.setString(_keyRestDesc,    desc);
+    if (phone   != null) await prefs.setString(_keyRestPhone,   phone);
+    if (address != null) await prefs.setString(_keyRestAddress, address);
+    if (photo   != null) await prefs.setString(_keyRestPhoto,   photo);
+    if (emoji   != null) await prefs.setString(_keyRestEmoji,   emoji);
   }
 
   static String _capitalize(String s) =>

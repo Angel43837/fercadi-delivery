@@ -50,6 +50,31 @@ class LocationService {
   // Bounding box de Maravatío: minLon,maxLat,maxLon,minLat
   static const _viewbox = '-100.50,19.95,-100.40,19.85';
 
+  static Future<String?> reverseGeocode(double lat, double lng) async {
+    try {
+      final uri = Uri.parse(
+          'https://nominatim.openstreetmap.org/reverse?lat=$lat&lon=$lng&format=json');
+      final client = HttpClient();
+      final req = await client.getUrl(uri)
+        ..headers.set('User-Agent', 'FercadiDeliveryApp/1.0 (contact@fercadi.com)');
+      final res = await req.close();
+      final body = await res.transform(utf8.decoder).join();
+      client.close();
+      final data = jsonDecode(body) as Map<String, dynamic>;
+      final addr = data['address'] as Map<String, dynamic>?;
+      if (addr == null) return data['display_name'] as String?;
+      final parts = <String>[];
+      final road = addr['road'] ?? addr['pedestrian'] ?? addr['street'];
+      final house = addr['house_number'];
+      if (road != null) parts.add(house != null ? '$road $house' : road as String);
+      final suburb = addr['suburb'] ?? addr['neighbourhood'] ?? addr['quarter'];
+      if (suburb != null) parts.add(suburb as String);
+      return parts.isNotEmpty ? parts.join(', ') : data['display_name'] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<({double lat, double lng})?> geocodeAddress(String address) async {
     // Intentar varias formas de la query, de más específica a más genérica
     final queries = _buildQueries(address);

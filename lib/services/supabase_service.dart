@@ -7,6 +7,7 @@ import '../core/constants.dart';
 import '../models/restaurant.dart';
 import '../models/category.dart';
 import '../models/product.dart';
+import 'auth_service.dart';
 
 class SupabaseService {
   static final _client = Supabase.instance.client;
@@ -122,9 +123,34 @@ class SupabaseService {
   // ── Métodos públicos ───────────────────────────────────────────────────────
 
   static Future<List<Restaurant>> getRestaurants() async {
-    if (useMock) return _mockRestaurants;
-    final data = await _client.from('restaurants').select().eq('is_open', true);
-    return (data as List).map((e) => Restaurant.fromJson(e)).toList();
+    List<Restaurant> list;
+    if (useMock) {
+      list = List.from(_mockRestaurants);
+    } else {
+      final data = await _client.from('restaurants').select().eq('is_open', true);
+      list = (data as List).map((e) => Restaurant.fromJson(e)).toList();
+    }
+
+    // Aplica la configuración guardada del dueño al primer restaurante
+    if (list.isNotEmpty) {
+      final s = await AuthService.getRestaurantSettings();
+      if (s['name']!.isNotEmpty) {
+        final r = list[0];
+        list[0] = Restaurant(
+          id: r.id,
+          name: s['name']!,
+          description: s['desc']!.isNotEmpty ? s['desc']! : r.description,
+          address: s['address']!.isNotEmpty ? s['address']! : r.address,
+          imageUrl: s['photo']!.isNotEmpty ? s['photo']! : r.imageUrl,
+          lat: r.lat,
+          lng: r.lng,
+          rating: r.rating,
+          isOpen: r.isOpen,
+        );
+      }
+    }
+
+    return list;
   }
 
   static Future<List<Category>> getCategories(String restaurantId) async {
