@@ -182,7 +182,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
       _pendingOrders.removeWhere((o) => o.id == order.id);
       _step = 0;
     });
-    SupabaseService.updateOrderStatus(order.id, 'delivering');
+    SupabaseService.updateOrderStatus(order.id, 'accepted');
     SupabaseService.startLocationBroadcast(order.id);
     if (!order.hasExactCoords) _geocodeCustomer(order.address);
   }
