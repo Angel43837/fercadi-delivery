@@ -7,6 +7,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../core/constants.dart';
 import '../services/location_service.dart';
 import '../services/supabase_service.dart';
@@ -153,8 +154,8 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         ).listen((pos) {
           if (!mounted) return;
           setState(() => _myPos = pos);
-          // Mover cámara cuando está en camino (step 2)
-          if (_step == 2) {
+          // Siempre seguir al repartidor cuando tiene pedido activo
+          if (_activeOrder != null) {
             try {
               _mapCtrl.move(LatLng(pos.latitude, pos.longitude), 15.5);
             } catch (_) {}
@@ -538,12 +539,13 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     final clientPos = _geocodedCustomerPos ?? order.customerPos;
     // Solo mostrar la ubicación del cliente cuando el repartidor ya va en camino
     final showClientPos = _step >= 2;
-    final mapCenter = showClientPos
+    // Centro del mapa: posición real del driver > restaurante como fallback
+    final mapCenter = myLatLng ?? (showClientPos
         ? LatLng(
             (order.restaurantPos.latitude + clientPos.latitude) / 2,
             (order.restaurantPos.longitude + clientPos.longitude) / 2,
           )
-        : order.restaurantPos;
+        : order.restaurantPos);
 
     return Column(children: [
       // ── Mapa ──────────────────────────────────────────────────────────────
@@ -602,23 +604,51 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                 ),
               ),
             ),
-          // Status badge sobre el mapa
+          // Status badge + botón navegación
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.all(12),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                decoration: BoxDecoration(
-                  color: AppConstants.surfaceColor.withValues(alpha: 0.95),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(sd.icon, color: sd.color, size: 18),
-                  const SizedBox(width: 8),
-                  Text(sd.label,
-                      style: TextStyle(
-                          color: sd.color, fontWeight: FontWeight.bold, fontSize: 13)),
-                ]),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: AppConstants.surfaceColor.withValues(alpha: 0.95),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(sd.icon, color: sd.color, size: 18),
+                      const SizedBox(width: 8),
+                      Text(sd.label,
+                          style: TextStyle(
+                              color: sd.color, fontWeight: FontWeight.bold, fontSize: 13)),
+                    ]),
+                  ),
+                  // Botón Cómo llegar — abre Google Maps con navegación
+                  GestureDetector(
+                    onTap: () {
+                      final dest = _step >= 2 ? clientPos : order.restaurantPos;
+                      final url = Uri.parse(
+                        'https://www.google.com/maps/dir/?api=1&destination=${dest.latitude},${dest.longitude}&travelmode=driving',
+                      );
+                      launchUrl(url, mode: LaunchMode.externalApplication);
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF2196F3).withValues(alpha: 0.95),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.navigation, color: Colors.white, size: 16),
+                        SizedBox(width: 6),
+                        Text('Cómo llegar',
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+                      ]),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
