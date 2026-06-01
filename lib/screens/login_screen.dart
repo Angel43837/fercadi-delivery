@@ -35,7 +35,7 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       final email = _emailController.text.trim().toLowerCase();
       // Correos de roles especiales — siempre funcionan sin Supabase Auth
-      if (email == 'admin@fercadi.com' || email == 'dueno@fercadi.com' ||
+      if (email == 'dueno@fercadi.com' ||
           email == 'repartidor@fercadi.com' || SupabaseService.useMock) {
         await Future.delayed(const Duration(milliseconds: 500));
         if (!mounted) return;
@@ -52,13 +52,23 @@ class _LoginScreenState extends State<LoginScreen> {
         );
         _showMessage('Cuenta creada. Revisa tu correo para confirmar.');
       } else {
-        await Supabase.instance.client.auth.signInWithPassword(
+        final res = await Supabase.instance.client.auth.signInWithPassword(
           email: _emailController.text.trim(),
           password: _passwordController.text,
         );
-        await AuthService.saveSession(_emailController.text.trim(), '/restaurants');
+        // Detectar rol guardado en metadata de Supabase
+        final role = res.user?.userMetadata?['role'] as String?;
+        if (role == 'admin') {
+          await Supabase.instance.client.auth.signOut();
+          _showMessage('Usa la app de Administrador para acceder.', isError: true);
+          return;
+        }
+        final route = role == 'repartidor' ? '/repartidor'
+            : role == 'dueno'      ? '/dueno'
+            : '/restaurants';
+        await AuthService.saveSession(_emailController.text.trim(), route);
         if (!mounted) return;
-        context.go('/restaurants');
+        context.go(route);
       }
     } catch (e) {
       _showMessage('Error: ${e.toString()}', isError: true);

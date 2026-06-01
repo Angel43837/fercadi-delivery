@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:latlong2/latlong.dart';
@@ -59,6 +60,9 @@ class _DuenoScreenState extends State<DuenoScreen> {
   Timer? _orderPollTimer;
   RealtimeChannel? _ordersChannel;
 
+  // ID del restaurante de este dueño
+  String _restaurantId = '1';
+
   // Configuración del restaurante
   String _restName    = '';
   String _restDesc    = '';
@@ -95,6 +99,11 @@ class _DuenoScreenState extends State<DuenoScreen> {
   @override
   void initState() {
     super.initState();
+    _initRestaurant();
+  }
+
+  Future<void> _initRestaurant() async {
+    _restaurantId = await AuthService.getRestaurantId();
     if (!SupabaseService.useMock) _loadProductsFromSupabase();
     _loadRealOrders();
     _ordersChannel = SupabaseService.subscribeToOrders(_loadRealOrders);
@@ -186,7 +195,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
   }
 
   Future<void> _loadProductsFromSupabase() async {
-    final data = await SupabaseService.getProductsForRestaurant('1');
+    final data = await SupabaseService.getProductsForRestaurant(_restaurantId);
     if (!mounted) return;
     setState(() {
       _products = data.map((p) => _Product(
@@ -204,7 +213,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
   @override
   Widget build(BuildContext context) {
     final appData = context.watch<AppDataProvider>();
-    final isOpen = appData.isRestaurantOpen('1');
+    final isOpen = appData.isRestaurantOpen(_restaurantId);
     final pendingCount = _realOrders.where((o) => o['status'] == 'pending').length;
 
     return Scaffold(
@@ -261,7 +270,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
             },
           ),
           GestureDetector(
-            onTap: () => appData.setRestaurantOpen('1', !isOpen),
+            onTap: () => appData.setRestaurantOpen(_restaurantId, !isOpen),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -426,7 +435,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
         children: _categories.map((cat) {
           final preseeded = _products.where((p) => p.categoryId == cat.id).toList();
-          final extra = appData.extraProductsForCategory('1', cat.id);
+          final extra = appData.extraProductsForCategory(_restaurantId, cat.id);
           if (preseeded.isEmpty && extra.isEmpty) return const SizedBox();
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -499,11 +508,42 @@ class _DuenoScreenState extends State<DuenoScreen> {
     final picker = ImagePicker();
 
     Future<void> pickImage(ImageSource source, StateSetter setModal) async {
+      final messenger = ScaffoldMessenger.of(context);
       final xfile = await picker.pickImage(source: source, imageQuality: 80);
       if (xfile == null) return;
-      setModal(() => pickedImagePath = xfile.path); // preview local mientras sube
-      final uploaded = await SupabaseService.uploadProductImage(xfile.path);
-      if (uploaded != null) setModal(() => pickedImagePath = uploaded);
+      setModal(() => pickedImagePath = xfile.path);
+
+      // Leer bytes directamente del XFile (más confiable que File(path) en Android)
+      final bytes = await xfile.readAsBytes();
+      final uploaded = await SupabaseService.uploadProductImageBytes(bytes);
+      if (uploaded != null) {
+        setModal(() => pickedImagePath = uploaded);
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('Foto subida correctamente'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+        return;
+      }
+
+      // Fallback: copiar a directorio permanente (solo funciona en el mismo celular)
+      if (!kIsWeb) {
+        try {
+          final dir = await getApplicationDocumentsDirectory();
+          final fileName = 'product_${DateTime.now().millisecondsSinceEpoch}.jpg';
+          final permanent = await File(xfile.path).copy('${dir.path}/$fileName');
+          setModal(() => pickedImagePath = permanent.path);
+        } catch (_) {}
+      }
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('No se pudo subir a la nube. Verifica conexión.'),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 3),
+        ),
+      );
     }
 
     showModalBottomSheet(
@@ -676,14 +716,14 @@ class _DuenoScreenState extends State<DuenoScreen> {
                     appData.addExtraProduct(SharedProduct(
                       id: newId, name: name, description: desc,
                       price: price, isAvailable: available,
-                      categoryId: selectedCatId, restaurantId: '1',
+                      categoryId: selectedCatId, restaurantId: _restaurantId,
                       imagePath: pickedImagePath,
                     ));
                   } else if (isExtra) {
                     appData.updateExtraProduct(SharedProduct(
                       id: existing.id, name: name, description: desc,
                       price: price, isAvailable: available,
-                      categoryId: existing.categoryId, restaurantId: '1',
+                      categoryId: existing.categoryId, restaurantId: _restaurantId,
                       imagePath: pickedImagePath,
                     ));
                     appData.setProductAvailability(existing.id, available);
@@ -696,13 +736,16 @@ class _DuenoScreenState extends State<DuenoScreen> {
                     appData.setProductAvailability(existing.id, available);
                   }
 
-                  // Guardar en Supabase y recargar
+                  // Solo guardar URL pública en Supabase (no ruta local)
+                  final urlForDb = (pickedImagePath?.startsWith('http') == true)
+                      ? pickedImagePath
+                      : null;
                   await SupabaseService.saveProduct(
                     id: newId, name: name, description: desc,
                     price: price, isAvailable: available,
                     categoryId: selectedCatId,
-                    restaurantId: '1',
-                    imageUrl: pickedImagePath,
+                    restaurantId: _restaurantId,
+                    imageUrl: urlForDb,
                   );
                   if (!SupabaseService.useMock) await _loadProductsFromSupabase();
 

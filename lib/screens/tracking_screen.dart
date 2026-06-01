@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants.dart';
 import '../services/location_service.dart';
 import '../services/order_history_service.dart';
@@ -43,7 +42,6 @@ class _TrackingScreenState extends State<TrackingScreen> {
 
   LatLng _motoPos = _kRestaurantPos;
   LatLng _customerPos = _kCustomerPos;
-  RealtimeChannel? _realtimeChannel;
 
   // Estado real del pedido: pending, accepted, delivering, delivered
   String _orderStatus = 'pending';
@@ -68,17 +66,22 @@ class _TrackingScreenState extends State<TrackingScreen> {
   @override
   void initState() {
     super.initState();
-    _realtimeChannel = SupabaseService.subscribeToLocation(
-      widget.orderId,
-      (lat, lng) {
-        if (!mounted) return;
-        setState(() => _motoPos = LatLng(lat, lng));
-        try { _mapCtrl.move(_motoPos, 15.0); } catch (_) {}
-      },
-    );
     _pollStatus();
-    _pollTimer = Timer.periodic(const Duration(seconds: 5), (_) => _pollStatus());
+    _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+      _pollStatus();
+      _pollLocation();
+    });
     _geocodeAddress();
+  }
+
+  Future<void> _pollLocation() async {
+    final loc = await SupabaseService.getRepartidorLocation(widget.orderId);
+    if (!mounted || loc == null) return;
+    final pos = LatLng(loc.lat, loc.lng);
+    setState(() => _motoPos = pos);
+    if (_step >= 1) {
+      try { _mapCtrl.move(pos, 15.5); } catch (_) {}
+    }
   }
 
   Future<void> _geocodeAddress() async {
@@ -108,7 +111,6 @@ class _TrackingScreenState extends State<TrackingScreen> {
   @override
   void dispose() {
     _pollTimer?.cancel();
-    _realtimeChannel?.unsubscribe();
     _mapCtrl.dispose();
     super.dispose();
   }

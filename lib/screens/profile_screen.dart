@@ -2,13 +2,17 @@ import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import '../core/constants.dart';
 import '../services/auth_service.dart';
+import '../services/location_service.dart';
 import '../services/supabase_service.dart';
+import 'map_picker_screen.dart';
 
 const _avatarColors = [
   AppConstants.primaryColor,
@@ -48,6 +52,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool    _showCvv    = false;
   final   _cvvCtrl    = TextEditingController();
 
+  // Ubicación de entrega
+  String  _addrText    = '';
+  double? _addrLat;
+  double? _addrLng;
+  bool    _addrLoading = false;
+
   @override
   void initState() {
     super.initState();
@@ -62,6 +72,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final photo   = await AuthService.getProfilePhoto();
     final card    = await AuthService.getCard();
     final clabe   = await AuthService.getCLABE();
+    final defAddr = await AuthService.getDefaultAddress();
     if (!mounted) return;
     setState(() {
       _nameCtrl.text  = name;
@@ -76,8 +87,135 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _cardExpCtrl.text  = card.expiry;
         _cardNameCtrl.text = card.name;
       }
+      if (defAddr != null) {
+        _addrText = defAddr['address'] as String? ?? '';
+        _addrLat  = (defAddr['lat'] as num?)?.toDouble();
+        _addrLng  = (defAddr['lng'] as num?)?.toDouble();
+      }
       _loading = false;
     });
+  }
+
+  void _showLocationPicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppConstants.surfaceColor,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (_) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const SizedBox(height: 12),
+          Container(width: 36, height: 4,
+              decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(2))),
+          const SizedBox(height: 16),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 20),
+            child: Align(alignment: Alignment.centerLeft,
+              child: Text('Cambiar dirección de entrega',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16))),
+          ),
+          const SizedBox(height: 8),
+          ListTile(
+            leading: Container(padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(color: AppConstants.primaryColor.withValues(alpha: 0.12), shape: BoxShape.circle),
+              child: const Icon(Icons.my_location, color: AppConstants.primaryColor, size: 20)),
+            title: const Text('Usar mi ubicación actual', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+            subtitle: Text('El GPS detecta dónde estás', style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 12)),
+            onTap: () { Navigator.pop(context); _pickByGPS(); },
+          ),
+          ListTile(
+            leading: Container(padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(color: const Color(0xFF2196F3).withValues(alpha: 0.12), shape: BoxShape.circle),
+              child: const Icon(Icons.map_outlined, color: Color(0xFF2196F3), size: 20)),
+            title: const Text('Elegir en el mapa', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+            subtitle: Text('Mueve el pin a tu dirección', style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 12)),
+            onTap: () {
+              final initial = (_addrLat != null && _addrLng != null)
+                  ? LatLng(_addrLat!, _addrLng!)
+                  : null;
+              Navigator.pop(context);
+              _pickByMap(initial);
+            },
+          ),
+          ListTile(
+            leading: Container(padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(color: const Color(0xFF00BFA5).withValues(alpha: 0.12), shape: BoxShape.circle),
+              child: const Icon(Icons.edit_location_outlined, color: Color(0xFF00BFA5), size: 20)),
+            title: const Text('Escribir dirección', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+            subtitle: Text('Ingresa tu dirección manualmente', style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 12)),
+            onTap: () { Navigator.pop(context); _pickManual(); },
+          ),
+          const SizedBox(height: 8),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _pickByGPS() async {
+    setState(() => _addrLoading = true);
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(accuracy: LocationAccuracy.high))
+          .timeout(const Duration(seconds: 10));
+      if (!mounted) return;
+      await _pickByMap(LatLng(pos.latitude, pos.longitude));
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _addrLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo obtener tu ubicación GPS'),
+            backgroundColor: Colors.redAccent));
+    }
+  }
+
+  Future<void> _pickByMap(LatLng? initial) async {
+    final result = await Navigator.push<LatLng>(
+      context, MaterialPageRoute(builder: (_) => MapPickerScreen(initial: initial)));
+    if (result == null || !mounted) return;
+    setState(() => _addrLoading = true);
+    final addr = await LocationService.reverseGeocode(result.latitude, result.longitude);
+    if (!mounted) return;
+    final text = addr ?? '${result.latitude.toStringAsFixed(4)}, ${result.longitude.toStringAsFixed(4)}';
+    setState(() { _addrText = text; _addrLat = result.latitude; _addrLng = result.longitude; _addrLoading = false; });
+    await AuthService.saveAddress(label: 'Casa', address: text, lat: result.latitude, lng: result.longitude);
+  }
+
+  void _pickManual() {
+    final ctrl = TextEditingController(text: _addrText);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppConstants.surfaceColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Escribe tu dirección', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          style: const TextStyle(color: Colors.white),
+          decoration: InputDecoration(
+            hintText: 'Calle, número, colonia...',
+            hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.3)),
+            filled: true,
+            fillColor: AppConstants.surface2Color,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+            prefixIcon: const Icon(Icons.location_on_outlined, color: AppConstants.primaryColor, size: 20),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx),
+              child: Text('Cancelar', style: TextStyle(color: Colors.white.withValues(alpha: 0.5)))),
+          TextButton(
+            onPressed: () async {
+              final text = ctrl.text.trim();
+              if (text.isEmpty) return;
+              Navigator.pop(ctx);
+              setState(() { _addrText = text; _addrLat = null; _addrLng = null; });
+              await AuthService.saveAddress(label: 'Casa', address: text);
+            },
+            child: const Text('Guardar', style: TextStyle(color: AppConstants.primaryColor, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _save() async {
@@ -292,6 +430,50 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           const SizedBox(height: 6),
           Text(_email, style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 12)),
+          const SizedBox(height: 28),
+
+          // ── Dirección de entrega ─────────────────────────────────────────────
+          _SectionLabel('Dirección de entrega'),
+          const SizedBox(height: 8),
+          GestureDetector(
+            onTap: _showLocationPicker,
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppConstants.surfaceColor,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: _addrLoading
+                  ? const Center(child: SizedBox(width: 24, height: 24,
+                      child: CircularProgressIndicator(color: AppConstants.primaryColor, strokeWidth: 2)))
+                  : Row(children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: AppConstants.primaryColor.withValues(alpha: 0.12),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.location_on, color: AppConstants.primaryColor, size: 20),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text(
+                          _addrText.isEmpty ? 'Sin dirección guardada' : _addrText,
+                          style: TextStyle(
+                            color: _addrText.isEmpty ? Colors.white.withValues(alpha: 0.4) : Colors.white,
+                            fontSize: 14,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        const Text('Toca para cambiar',
+                            style: TextStyle(color: AppConstants.primaryColor, fontSize: 11)),
+                      ])),
+                      Icon(Icons.chevron_right, color: Colors.white.withValues(alpha: 0.3)),
+                    ]),
+            ),
+          ),
           const SizedBox(height: 28),
 
           // ── Método de pago ───────────────────────────────────────────────────

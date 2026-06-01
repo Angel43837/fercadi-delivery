@@ -10,10 +10,11 @@ import 'screens/cart_screen.dart';
 import 'screens/checkout_screen.dart';
 import 'screens/tracking_screen.dart';
 import 'screens/repartidor_screen.dart';
-import 'screens/admin_screen.dart';
 import 'screens/dueno_screen.dart';
 import 'screens/order_history_screen.dart';
 import 'screens/profile_screen.dart';
+import 'screens/registro_repartidor_screen.dart';
+import 'screens/registro_restaurante_screen.dart';
 
 final appRouter = GoRouter(
   initialLocation: '/',
@@ -58,10 +59,6 @@ final appRouter = GoRouter(
       builder: (_, _) => const RepartidorScreen(),
     ),
     GoRoute(
-      path: '/admin',
-      builder: (_, _) => const AdminScreen(),
-    ),
-    GoRoute(
       path: '/dueno',
       builder: (_, _) => const DuenoScreen(),
     ),
@@ -72,6 +69,14 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/profile',
       builder: (_, _) => const ProfileScreen(),
+    ),
+    GoRoute(
+      path: '/registro-repartidor',
+      builder: (_, _) => const RegistroRepartidorScreen(),
+    ),
+    GoRoute(
+      path: '/registro-restaurante',
+      builder: (_, _) => const RegistroRestauranteScreen(),
     ),
     GoRoute(
       path: '/tracking',

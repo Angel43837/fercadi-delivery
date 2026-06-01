@@ -215,13 +215,20 @@ class SupabaseService {
   static Future<String?> uploadProductImage(String localPath) async {
     if (useMock) return null;
     try {
-      final file     = File(localPath);
-      final bytes    = await file.readAsBytes();
-      final ext      = localPath.split('.').last.toLowerCase();
-      final fileName = '${DateTime.now().millisecondsSinceEpoch}.$ext';
+      final bytes = await File(localPath).readAsBytes();
+      return uploadProductImageBytes(bytes);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<String?> uploadProductImageBytes(Uint8List bytes) async {
+    if (useMock) return null;
+    try {
+      final fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
       await _client.storage.from('product-images').uploadBinary(
         fileName, bytes,
-        fileOptions: FileOptions(contentType: 'image/$ext', upsert: true),
+        fileOptions: const FileOptions(contentType: 'image/jpeg', upsert: true),
       );
       return _client.storage.from('product-images').getPublicUrl(fileName);
     } catch (_) {
@@ -410,43 +417,51 @@ class SupabaseService {
     await _client.from('products').update({'is_available': isAvailable}).eq('id', productId);
   }
 
-  // ── Tracking en tiempo real ────────────────────────────────────────────────
+  // ── Tracking por base de datos (más confiable que Realtime broadcast) ────────
 
-  static RealtimeChannel? _broadcastChannel;
+  static String? _activeOrderId;
 
   static Future<void> startLocationBroadcast(String orderId) async {
-    _broadcastChannel = _client.channel('tracking:$orderId');
-    _broadcastChannel!.subscribe();
+    _activeOrderId = orderId;
   }
 
-  static void broadcastLocation(double lat, double lng) {
-    _broadcastChannel?.sendBroadcastMessage(
-      event: 'location',
-      payload: {'lat': lat, 'lng': lng},
-    );
+  static Future<void> broadcastLocation(double lat, double lng) async {
+    if (_activeOrderId == null) return;
+    try {
+      await _client.from('orders').update({
+        'current_lat': lat,
+        'current_lng': lng,
+      }).eq('id', _activeOrderId!);
+    } catch (_) {}
   }
 
   static void stopLocationBroadcast() {
-    _broadcastChannel?.unsubscribe();
-    _broadcastChannel = null;
+    _activeOrderId = null;
   }
 
-  static RealtimeChannel subscribeToLocation(
+  // El cliente llama esto para obtener la ubicación del repartidor
+  static Future<({double lat, double lng})?> getRepartidorLocation(String orderId) async {
+    try {
+      final data = await _client
+          .from('orders')
+          .select('current_lat, current_lng')
+          .eq('id', orderId)
+          .single();
+      final lat = data['current_lat'];
+      final lng = data['current_lng'];
+      if (lat == null || lng == null) return null;
+      return (lat: (lat as num).toDouble(), lng: (lng as num).toDouble());
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Mantener compatibilidad — ya no usamos Realtime, el cliente hace polling
+  static RealtimeChannel? subscribeToLocation(
     String orderId,
     void Function(double lat, double lng) onUpdate,
   ) {
-    final channel = _client.channel('tracking:$orderId');
-    channel
-        .onBroadcast(
-          event: 'location',
-          callback: (payload) {
-            final lat = (payload['lat'] as num).toDouble();
-            final lng = (payload['lng'] as num).toDouble();
-            onUpdate(lat, lng);
-          },
-        )
-        .subscribe();
-    return channel;
+    return null;
   }
 
   // ── Pedidos ───────────────────────────────────────────────────────────────

@@ -154,11 +154,10 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         ).listen((pos) {
           if (!mounted) return;
           setState(() => _myPos = pos);
-          // Siempre seguir al repartidor cuando tiene pedido activo
           if (_activeOrder != null) {
-            try {
-              _mapCtrl.move(LatLng(pos.latitude, pos.longitude), 15.5);
-            } catch (_) {}
+            try { _mapCtrl.move(LatLng(pos.latitude, pos.longitude), 15.5); } catch (_) {}
+            // Transmitir ubicación al cliente en todos los pasos
+            SupabaseService.broadcastLocation(pos.latitude, pos.longitude);
           }
         });
       }
@@ -196,7 +195,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   }
 
   void _avanzarStep() {
-    if (_step < 3) {
+    if (_step < 2) {
       setState(() => _step++);
       if (_step == 2) {
         SupabaseService.updateOrderStatus(_activeOrder!.id, 'delivering');
@@ -207,6 +206,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         });
       }
     } else {
+      // step 2: "Marcar como entregado" completa el pedido de inmediato
       _broadcastTimer?.cancel();
       _broadcastTimer = null;
       SupabaseService.updateOrderStatus(_activeOrder!.id, 'delivered');

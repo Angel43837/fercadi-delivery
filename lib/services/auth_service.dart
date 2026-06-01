@@ -20,6 +20,7 @@ class AuthService {
   static const _keyRestAddress     = 'restaurant_address';
   static const _keyRestPhoto       = 'restaurant_photo';
   static const _keyRestEmoji       = 'restaurant_emoji';
+  static const _keyRestaurantId    = 'restaurant_id';
 
   // ── Sesión ───────────────────────────────────────────────────────────────────
 
@@ -201,6 +202,31 @@ class AuthService {
   static Future<Map<String, dynamic>?> getDefaultAddress() async {
     final list = await getSavedAddresses();
     return list.isNotEmpty ? list.first : null;
+  }
+
+  // ── ID del restaurante del dueño ─────────────────────────────────────────────
+
+  static Future<String> getRestaurantId() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user != null) {
+      final id = user.userMetadata?['restaurant_id'] as String?;
+      if (id != null && id.isNotEmpty) return id;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_keyRestaurantId) ?? '1';
+  }
+
+  static Future<void> saveRestaurantId(String id) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyRestaurantId, id);
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user != null) {
+        await Supabase.instance.client.auth.updateUser(
+          UserAttributes(data: {'restaurant_id': id}),
+        );
+      }
+    } catch (_) {}
   }
 
   // ── Configuración del restaurante (dueño) ────────────────────────────────────
