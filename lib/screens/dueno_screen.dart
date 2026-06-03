@@ -13,6 +13,7 @@ import '../core/constants.dart';
 import '../providers/app_data_provider.dart';
 import '../services/auth_service.dart';
 import '../services/location_service.dart';
+import '../services/notification_service.dart';
 import '../services/supabase_service.dart';
 import 'map_picker_screen.dart';
 
@@ -154,6 +155,12 @@ class _DuenoScreenState extends State<DuenoScreen> {
       for (final order in nuevos) {
         _notifiedIds.add(order['id'] as String);
         _showNewOrderAlert(order);
+        Map<String, dynamic> d = {};
+        try { d = jsonDecode(order['customer_name'] as String? ?? '{}') as Map<String, dynamic>; } catch (_) {}
+        NotificationService.nuevoPedido(
+          d['name'] as String? ?? 'Cliente',
+          (order['total'] as num?)?.toDouble() ?? 0,
+        );
       }
     } catch (_) {}
   }

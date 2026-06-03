@@ -501,6 +501,22 @@ class SupabaseService {
     return orderId;
   }
 
+  static Future<List<Map<String, dynamic>>> getRestaurantsAdmin() async {
+    if (useMock) {
+      return _mockRestaurants.map((r) => {
+        'id':          r.id,
+        'name':        r.name,
+        'description': r.description,
+        'address':     r.address,
+        'emoji_icon':  '🍽️',
+        'is_open':     true,
+        'rating':      r.rating,
+      }).toList();
+    }
+    final data = await _client.from('restaurants').select().order('name');
+    return (data as List).cast<Map<String, dynamic>>();
+  }
+
   static Future<List<Map<String, dynamic>>> getActiveOrders() async {
     final data = await _client
         .from('orders')

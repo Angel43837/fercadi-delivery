@@ -8,13 +8,6 @@ import '../providers/app_data_provider.dart';
 import '../services/auth_service.dart';
 import '../services/supabase_service.dart';
 
-// Info estática de restaurantes
-const _restInfo = [
-  (id: '1', name: 'McDonalds',  icon: '🍔', address: 'Av. Principal #123, Maravatío'),
-  (id: '2', name: 'Starbucks',  icon: '☕', address: 'Centro Histórico, Maravatío'),
-  (id: '3', name: 'Sushi Roll', icon: '🍣', address: 'Plaza Comercial, Maravatío'),
-];
-
 // ── Pantalla principal ───────────────────────────────────────────────────────
 
 class AdminScreen extends StatefulWidget {
@@ -27,13 +20,18 @@ class _AdminScreenState extends State<AdminScreen> {
   int _tab = 0;
   AppOrderStatus? _filterStatus;
   List<Map<String, dynamic>> _realOrders = [];
+  List<Map<String, dynamic>> _restaurants = [];
   Timer? _pollTimer;
 
   @override
   void initState() {
     super.initState();
     _loadOrders();
-    _pollTimer = Timer.periodic(const Duration(seconds: 10), (_) => _loadOrders());
+    _loadRestaurants();
+    _pollTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      _loadOrders();
+      _loadRestaurants();
+    });
   }
 
   @override
@@ -46,6 +44,13 @@ class _AdminScreenState extends State<AdminScreen> {
     try {
       final data = await SupabaseService.getActiveOrders();
       if (mounted) setState(() => _realOrders = data);
+    } catch (_) {}
+  }
+
+  Future<void> _loadRestaurants() async {
+    try {
+      final data = await SupabaseService.getRestaurantsAdmin();
+      if (mounted) setState(() => _restaurants = data);
     } catch (_) {}
   }
 
@@ -152,7 +157,7 @@ class _AdminScreenState extends State<AdminScreen> {
             _StatCard(label: 'Ventas hoy',   value: '\$${ventasHoy.toStringAsFixed(0)}', suffix: 'MXN',        icon: Icons.attach_money,        color: Colors.green),
             _StatCard(label: 'Pedidos hoy',  value: '$pedidosHoy',                        suffix: 'total',       icon: Icons.receipt_long,        color: AppConstants.primaryColor),
             _StatCard(label: 'Entregados',   value: '$entregados',                        suffix: 'completados', icon: Icons.check_circle_outline, color: const Color(0xFF00BFA5)),
-            _StatCard(label: 'Restaurantes', value: '${_restInfo.length}',                suffix: 'registrados', icon: Icons.storefront,           color: const Color(0xFFFFB300)),
+            _StatCard(label: 'Restaurantes', value: '${_restaurants.length}',             suffix: 'registrados', icon: Icons.storefront,           color: const Color(0xFFFFB300)),
           ],
         ),
         const SizedBox(height: 20),
@@ -239,14 +244,24 @@ class _AdminScreenState extends State<AdminScreen> {
   // ── Restaurantes ─────────────────────────────────────────────────────────────
 
   Widget _buildRestaurantes(AppDataProvider appData) {
+    if (_restaurants.isEmpty) {
+      return Center(
+        child: Text('Sin restaurantes registrados',
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.3))),
+      );
+    }
     return ListView.builder(
       padding: const EdgeInsets.all(16),
-      itemCount: _restInfo.length,
+      itemCount: _restaurants.length,
       itemBuilder: (_, i) {
-        final r           = _restInfo[i];
-        final isOpen      = appData.isRestaurantOpen(r.id);
-        final likes       = appData.getLikes(r.id);
-        final ordersToday = _realOrders.where((o) => o['restaurant_id'] == r.id).length;
+        final r           = _restaurants[i];
+        final id          = r['id']         as String? ?? '';
+        final icon        = r['emoji_icon'] as String? ?? '🍽️';
+        final name        = r['name']       as String? ?? 'Restaurante';
+        final address     = r['address']    as String? ?? '';
+        final isOpen      = appData.isRestaurantOpen(id);
+        final likes       = appData.getLikes(id);
+        final ordersToday = _realOrders.where((o) => o['restaurant_id'] == id).length;
 
         return Container(
           margin: const EdgeInsets.only(bottom: 12),
@@ -258,16 +273,16 @@ class _AdminScreenState extends State<AdminScreen> {
           ),
           child: Column(children: [
             Row(children: [
-              Text(r.icon, style: const TextStyle(fontSize: 30)),
+              Text(icon, style: const TextStyle(fontSize: 30)),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(r.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
-                  Text(r.address, style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 12)),
+                  Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+                  Text(address, style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 12)),
                 ]),
               ),
               GestureDetector(
-                onTap: () => appData.setRestaurantOpen(r.id, !isOpen),
+                onTap: () => appData.setRestaurantOpen(id, !isOpen),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),

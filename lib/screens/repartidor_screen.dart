@@ -10,6 +10,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../core/constants.dart';
 import '../services/location_service.dart';
+import '../services/notification_service.dart';
 import '../services/supabase_service.dart';
 import '../services/auth_service.dart';
 
@@ -111,6 +112,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   final _mapCtrl = MapController();
 
   final List<_Order> _pendingOrders = [];
+  final Set<String> _notifiedOrderIds = {};
   bool _loadingOrders = true;
   RealtimeChannel? _ordersChannel;
   Timer? _pollTimer;
@@ -131,10 +133,18 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     try {
       final data = await SupabaseService.getOrdersForRepartidor();
       if (!mounted) return;
+      final orders = data.map(_Order.fromMap).where((o) => o.id != _activeOrder?.id).toList();
+      // Notificar pedidos nuevos
+      for (final o in orders) {
+        if (!_notifiedOrderIds.contains(o.id)) {
+          _notifiedOrderIds.add(o.id);
+          if (_notifiedOrderIds.length > 1) {
+            NotificationService.pedidoDisponible(o.restaurantName, o.total);
+          }
+        }
+      }
       setState(() {
-        _pendingOrders
-          ..clear()
-          ..addAll(data.map(_Order.fromMap).where((o) => o.id != _activeOrder?.id));
+        _pendingOrders..clear()..addAll(orders);
         _loadingOrders = false;
       });
     } catch (_) {
