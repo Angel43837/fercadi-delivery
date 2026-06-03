@@ -15,6 +15,7 @@ import '../models/product.dart';
 import '../providers/app_data_provider.dart';
 import '../providers/cart_provider.dart';
 import '../services/location_service.dart';
+import '../services/notification_service.dart';
 import '../services/order_history_service.dart';
 import '../services/supabase_service.dart';
 
@@ -168,6 +169,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
     setState(() => _activeOrder = order);
     if (prev.isNotEmpty && prev != status) {
       if (status == 'delivering') {
+        NotificationService.repartidorEnCamino();
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: const Row(children: [
             Icon(Icons.delivery_dining, color: Colors.white),
@@ -179,6 +181,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
           behavior: SnackBarBehavior.floating,
         ));
       } else if (status == 'accepted') {
+        NotificationService.pedidoAceptado();
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: const Row(children: [
             Icon(Icons.restaurant, color: Colors.white),

@@ -57,4 +57,18 @@ class NotificationService {
         title: '✅ ¡Pedido entregado!',
         body: 'Tu pedido ha llegado. ¡Buen provecho!',
       );
+
+  static Future<void> pedidoAceptado() =>
+      show(
+        id: 4,
+        title: '🍳 ¡Pedido aceptado!',
+        body: 'Tu pedido está siendo preparado en el restaurante.',
+      );
+
+  static Future<void> repartidorEnCamino() =>
+      show(
+        id: 5,
+        title: '🛵 ¡Repartidor en camino!',
+        body: 'Tu pedido ya viene. ¡Prepárate para recibirlo!',
+      );
 }

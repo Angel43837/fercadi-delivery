@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 import '../core/constants.dart';
 import '../services/location_service.dart';
+import '../services/notification_service.dart';
 import '../services/order_history_service.dart';
 import '../services/supabase_service.dart';
 
@@ -101,6 +102,9 @@ class _TrackingScreenState extends State<TrackingScreen> {
     try {
       final s = await SupabaseService.getOrderStatus(widget.orderId) ?? 'pending';
       if (!mounted || s == _orderStatus) return;
+      if (s == 'accepted')   NotificationService.pedidoAceptado();
+      if (s == 'delivering') NotificationService.repartidorEnCamino();
+      if (s == 'delivered')  NotificationService.pedidoEntregado();
       setState(() => _orderStatus = s);
       if (s == 'delivered') {
         await OrderHistoryService.clearActiveOrder();

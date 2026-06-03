@@ -476,6 +476,7 @@ class SupabaseService {
     required List<Map<String, dynamic>> items,
     double? lat,
     double? lng,
+    String? clientFcmToken,
   }) async {
     final orderId = 'ord_${DateTime.now().millisecondsSinceEpoch}';
     final deliveryJson = jsonEncode({
@@ -487,11 +488,12 @@ class SupabaseService {
       'lng': lng,
     });
     await _client.from('orders').insert({
-      'id': orderId,
-      'restaurant_id': restaurantId,
-      'total': total,
-      'status': 'pending',
-      'customer_name': deliveryJson,
+      'id':               orderId,
+      'restaurant_id':    restaurantId,
+      'total':            total,
+      'status':           'pending',
+      'customer_name':    deliveryJson,
+      'client_fcm_token': clientFcmToken,
     });
     if (items.isNotEmpty) {
       await _client.from('order_items').insert(
@@ -537,6 +539,31 @@ class SupabaseService {
 
   static Future<void> updateOrderStatus(String orderId, String status) async {
     await _client.from('orders').update({'status': status}).eq('id', orderId);
+    _sendFcmForStatus(orderId, status);
+  }
+
+  static void _sendFcmForStatus(String orderId, String status) async {
+    try {
+      final data = await _client
+          .from('orders')
+          .select('client_fcm_token')
+          .eq('id', orderId)
+          .single();
+      final token = data['client_fcm_token'] as String?;
+      if (token == null || token.isEmpty) return;
+      final (title, body) = switch (status) {
+        'accepted'   => ('🍳 ¡Pedido aceptado!',      'Tu pedido está siendo preparado.'),
+        'delivering' => ('🛵 ¡Repartidor en camino!', 'Tu pedido ya viene para acá.'),
+        'delivered'  => ('✅ ¡Pedido entregado!',      '¡Buen provecho!'),
+        _            => ('', ''),
+      };
+      if (title.isEmpty) return;
+      await _client.functions.invoke('send-order-notification', body: {
+        'token': token,
+        'title': title,
+        'body':  body,
+      });
+    } catch (_) {}
   }
 
   static Future<String?> getOrderStatus(String orderId) async {

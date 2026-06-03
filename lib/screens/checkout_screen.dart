@@ -8,6 +8,7 @@ import '../providers/cart_provider.dart';
 import '../services/supabase_service.dart';
 import 'map_picker_screen.dart';
 import '../services/auth_service.dart';
+import '../services/fcm_service.dart';
 import '../services/order_history_service.dart';
 
 enum _Pay { cash, oxxo, card }
@@ -94,6 +95,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         paymentMethod: _payment.name,
         lat: _selectedPos?.latitude,
         lng: _selectedPos?.longitude,
+        clientFcmToken: FcmService.token,
         items: cart.items.map((i) => {
           'product_id': i.product.id,
           'quantity': i.quantity,

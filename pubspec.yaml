@@ -35,9 +35,9 @@ dev_dependencies:
 flutter_launcher_icons:
   android: true
   ios: false
-  image_path: "assets/images/logo.png"
-  adaptive_icon_background: "#E91E8C"
-  adaptive_icon_foreground: "assets/images/logo.png"
+  image_path: "assets/images/moto_icon_full.png"
+  adaptive_icon_background: "#FF6D00"
+  adaptive_icon_foreground: "assets/images/moto_icon.png"
   min_sdk_android: 21
 
 flutter:

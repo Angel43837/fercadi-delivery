@@ -6,9 +6,11 @@ import 'providers/cart_provider.dart';
 import 'providers/app_data_provider.dart';
 import 'router.dart';
 import 'services/supabase_service.dart';
+import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await NotificationService.init();
   if (!SupabaseService.useMock) {
     await Supabase.initialize(
       url: AppConstants.supabaseUrl,
