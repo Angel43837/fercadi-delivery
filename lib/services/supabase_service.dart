@@ -9,6 +9,19 @@ import '../models/category.dart';
 import '../models/product.dart';
 import 'auth_service.dart';
 
+// supabase_service.dart
+// Capa de acceso a datos — conecta la app con la base de datos de Supabase.
+// Tiene dos modos:
+//   useMock = true  → usa datos falsos hardcodeados (para desarrollo sin internet)
+//   useMock = false → lee/escribe datos reales en Supabase
+//
+// Organización:
+//   - Mock data: restaurantes, categorías y productos de prueba
+//   - Restaurantes / Categorías / Productos: CRUD básico
+//   - Likes: sistema de likes en tiempo real con Supabase Realtime
+//   - Pedidos: crear pedidos, actualizar estado, notificar por FCM
+//   - Tracking: el repartidor transmite su GPS y el cliente lo recibe por polling
+
 class SupabaseService {
   static final _client = Supabase.instance.client;
 
@@ -122,6 +135,8 @@ class SupabaseService {
 
   // ── Métodos públicos ───────────────────────────────────────────────────────
 
+  // Obtiene la lista de restaurantes abiertos
+  // Si el dueño configuró su restaurante (nombre, foto, etc.), sobreescribe el primer restaurante con esos datos
   static Future<List<Restaurant>> getRestaurants() async {
     List<Restaurant> list;
     if (useMock) {
@@ -425,6 +440,7 @@ class SupabaseService {
     _activeOrderId = orderId;
   }
 
+  // El repartidor llama esto cada vez que su GPS se mueve — guarda coords en la BD
   static Future<void> broadcastLocation(double lat, double lng) async {
     if (_activeOrderId == null) return;
     try {
@@ -466,6 +482,8 @@ class SupabaseService {
 
   // ── Pedidos ───────────────────────────────────────────────────────────────
 
+  // Crea un nuevo pedido en la BD y sus ítems asociados
+  // Retorna el ID del pedido generado (ej. "ord_1717800000000")
   static Future<String> createOrder({
     required String restaurantId,
     required double total,
@@ -488,12 +506,11 @@ class SupabaseService {
       'lng': lng,
     });
     await _client.from('orders').insert({
-      'id':               orderId,
-      'restaurant_id':    restaurantId,
-      'total':            total,
-      'status':           'pending',
-      'customer_name':    deliveryJson,
-      'client_fcm_token': clientFcmToken,
+      'id':            orderId,
+      'restaurant_id': restaurantId,
+      'total':         total,
+      'status':        'pending',
+      'customer_name': deliveryJson,
     });
     if (items.isNotEmpty) {
       await _client.from('order_items').insert(

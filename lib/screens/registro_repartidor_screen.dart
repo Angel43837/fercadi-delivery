@@ -1,3 +1,8 @@
+// registro_repartidor_screen.dart
+// Formulario de registro para nuevos repartidores.
+// El repartidor llena nombre, teléfono y datos de su cuenta bancaria (CLABE).
+// Al registrarse, se crea el usuario con rol "repartidor" en Supabase Auth.
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';

@@ -1,3 +1,16 @@
+// repartidor_screen.dart
+// Panel del repartidor.
+// Muestra los pedidos pendientes de entregar y el mapa con su posición GPS en tiempo real.
+// El repartidor puede:
+//   - Ver pedidos disponibles (status: pending, accepted)
+//   - Aceptar un pedido para entregarlo
+//   - Rechazar un pedido (lo oculta localmente)
+//   - Marcar el pedido como "entregado"
+//   - Ver la dirección del cliente en Google Maps
+//   - Alternar modo claro/oscuro desde el header
+// El GPS del repartidor se transmite a Supabase cada vez que se mueve
+// para que el cliente pueda seguirlo en la pantalla de tracking.
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -6,9 +19,11 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../core/constants.dart';
+import '../providers/theme_provider.dart';
 import '../services/location_service.dart';
 import '../services/notification_service.dart';
 import '../services/supabase_service.dart';
@@ -53,11 +68,9 @@ class _Order {
     final rid = m['restaurant_id'] as String? ?? '1';
     final info = _restaurantInfo[rid] ?? _restaurantInfo['1']!;
 
-    // Parsear delivery info del JSON en customer_name
     Map<String, dynamic> delivery = {};
     try { delivery = jsonDecode(m['customer_name'] as String? ?? '{}') as Map<String, dynamic>; } catch (_) {}
 
-    // Construir lista de items
     final orderItems = (m['order_items'] as List<dynamic>? ?? []);
     final itemStrings = orderItems.map((i) {
       final qty = i['quantity'] as int? ?? 1;
@@ -99,7 +112,7 @@ class RepartidorScreen extends StatefulWidget {
 class _RepartidorScreenState extends State<RepartidorScreen> {
   bool    _disponible   = true;
   _Order? _activeOrder;
-  int     _step         = 0; // 0=ir al restaurante, 1=en restaurante, 2=en camino, 3=entregado
+  int     _step         = 0;
   int     _entregasHoy  = 0;
   double  _gananciaHoy  = 0;
   String  _displayName  = 'Repartidor';
@@ -113,6 +126,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
 
   final List<_Order> _pendingOrders = [];
   final Set<String> _notifiedOrderIds = {};
+  final Set<String> _rejectedOrderIds = {};
   bool _loadingOrders = true;
   RealtimeChannel? _ordersChannel;
   Timer? _pollTimer;
@@ -133,8 +147,10 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     try {
       final data = await SupabaseService.getOrdersForRepartidor();
       if (!mounted) return;
-      final orders = data.map(_Order.fromMap).where((o) => o.id != _activeOrder?.id).toList();
-      // Notificar pedidos nuevos
+      final orders = data
+          .map(_Order.fromMap)
+          .where((o) => o.id != _activeOrder?.id && !_rejectedOrderIds.contains(o.id))
+          .toList();
       for (final o in orders) {
         if (!_notifiedOrderIds.contains(o.id)) {
           _notifiedOrderIds.add(o.id);
@@ -166,7 +182,6 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
           setState(() => _myPos = pos);
           if (_activeOrder != null) {
             try { _mapCtrl.move(LatLng(pos.latitude, pos.longitude), 15.5); } catch (_) {}
-            // Transmitir ubicación al cliente en todos los pasos
             SupabaseService.broadcastLocation(pos.latitude, pos.longitude);
           }
         });
@@ -197,6 +212,13 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     if (!order.hasExactCoords) _geocodeCustomer(order.address);
   }
 
+  void _rechazarPedido(_Order order) {
+    setState(() {
+      _rejectedOrderIds.add(order.id);
+      _pendingOrders.removeWhere((o) => o.id == order.id);
+    });
+  }
+
   Future<void> _geocodeCustomer(String address) async {
     final result = await LocationService.geocodeAddress(address);
     if (!mounted || result == null) return;
@@ -216,7 +238,6 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         });
       }
     } else {
-      // step 2: "Marcar como entregado" completa el pedido de inmediato
       _broadcastTimer?.cancel();
       _broadcastTimer = null;
       SupabaseService.updateOrderStatus(_activeOrder!.id, 'delivered');
@@ -242,28 +263,44 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
-      backgroundColor: AppConstants.bgColor,
-      body: _activeOrder == null ? _buildOrderList() : _buildActiveOrder(),
+      backgroundColor: isDark ? AppConstants.bgColor : AppConstants.primaryColor,
+      body: _activeOrder == null ? _buildOrderList(isDark) : _buildActiveOrder(isDark),
     );
   }
 
   // ── Lista de pedidos ──────────────────────────────────────────────────────────
 
-  Widget _buildOrderList() {
+  Widget _buildOrderList(bool isDark) {
+    final cardBg = isDark ? AppConstants.surfaceColor : Colors.white;
+    final textMain = isDark ? Colors.white : Colors.black87;
+    final textSub  = isDark ? Colors.white.withValues(alpha: 0.4) : Colors.black54;
+
     return CustomScrollView(
       slivers: [
-        // Header
-        SliverToBoxAdapter(child: _buildHeader()),
+        SliverToBoxAdapter(child: _buildHeader(isDark)),
+
+        SliverToBoxAdapter(
+          child: Container(
+            height: 4,
+            decoration: BoxDecoration(
+              color: isDark ? AppConstants.bgColor : AppConstants.primaryColor,
+              border: Border(
+                bottom: BorderSide(color: AppConstants.primaryColor.withValues(alpha: 0.25), width: 1),
+              ),
+            ),
+          ),
+        ),
 
         // Ganancias del día
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
             child: Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: AppConstants.surfaceColor,
+                color: cardBg,
                 borderRadius: BorderRadius.circular(16),
               ),
               child: Row(children: [
@@ -273,15 +310,19 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                     value: '\$${_gananciaHoy.toStringAsFixed(0)} MXN',
                     icon: Icons.attach_money,
                     color: Colors.green,
+                    textColor: textMain,
+                    subColor: textSub,
                   ),
                 ),
-                Container(width: 1, height: 40, color: AppConstants.surface2Color),
+                Container(width: 1, height: 40, color: isDark ? AppConstants.surface2Color : Colors.black12),
                 Expanded(
                   child: _StatBox(
                     label: 'Entregas',
                     value: '$_entregasHoy',
                     icon: Icons.check_circle_outline,
                     color: AppConstants.primaryColor,
+                    textColor: textMain,
+                    subColor: textSub,
                   ),
                 ),
               ]),
@@ -311,15 +352,15 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
             child: Center(
               child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
                 Icon(Icons.delivery_dining,
-                    size: 80, color: Colors.white.withValues(alpha: 0.1)),
+                    size: 80, color: Colors.white.withValues(alpha: 0.2)),
                 const SizedBox(height: 16),
                 Text('No hay pedidos por ahora',
                     style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.35), fontSize: 15)),
+                        color: Colors.white.withValues(alpha: 0.5), fontSize: 15)),
                 const SizedBox(height: 8),
                 Text('Cuando llegue un pedido aparecerá aquí',
                     style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.2), fontSize: 13)),
+                        color: Colors.white.withValues(alpha: 0.35), fontSize: 13)),
               ]),
             ),
           )
@@ -328,7 +369,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
             sliver: SliverList(
               delegate: SliverChildBuilderDelegate(
-                (ctx, i) => _buildOrderCard(_pendingOrders[i]),
+                (ctx, i) => _buildOrderCard(_pendingOrders[i], isDark),
                 childCount: _pendingOrders.length,
               ),
             ),
@@ -337,15 +378,21 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     );
   }
 
-  Widget _buildHeader() {
+  Widget _buildHeader(bool isDark) {
+    final headerBg   = isDark ? AppConstants.surfaceColor : Colors.white.withValues(alpha: 0.15);
+    final textMain   = Colors.white;
+    final textSub    = Colors.white.withValues(alpha: 0.55);
+    final iconColor  = Colors.white.withValues(alpha: 0.7);
+
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-      decoration: const BoxDecoration(color: AppConstants.surfaceColor),
+      decoration: BoxDecoration(color: headerBg),
       child: SafeArea(
         bottom: false,
         child: Column(children: [
           const SizedBox(height: 8),
           Row(children: [
+            // Avatar
             GestureDetector(
               onTap: () async {
                 await context.push('/profile');
@@ -357,9 +404,9 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                 Container(
                   width: 48, height: 48,
                   decoration: BoxDecoration(
-                    color: AppConstants.primaryColor.withValues(alpha: 0.15),
+                    color: AppConstants.primaryColor.withValues(alpha: 0.2),
                     shape: BoxShape.circle,
-                    border: Border.all(color: AppConstants.primaryColor.withValues(alpha: 0.4), width: 1.5),
+                    border: Border.all(color: AppConstants.primaryColor.withValues(alpha: 0.5), width: 1.5),
                   ),
                   child: _photoPath != null
                       ? ClipOval(child: _photoPath!.startsWith('http')
@@ -377,22 +424,26 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
               ]),
             ),
             const SizedBox(width: 12),
+            // Nombre
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text('Hola, $_displayName',
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 17)),
+                    style: TextStyle(color: textMain, fontWeight: FontWeight.bold, fontSize: 17)),
                 Text('Maravatío, Mich.',
-                    style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 13)),
+                    style: TextStyle(color: textSub, fontSize: 13)),
               ]),
             ),
-            IconButton(
-              icon: Icon(Icons.logout, color: Colors.white.withValues(alpha: 0.6), size: 20),
-              tooltip: 'Salir',
-              onPressed: () async {
-                final router = GoRouter.of(context);
-                await AuthService.clearSession();
-                router.go('/login');
-              },
+            // Toggle modo oscuro/claro
+            Consumer<ThemeProvider>(
+              builder: (_, tp, _) => IconButton(
+                icon: Icon(
+                  tp.isDark ? Icons.wb_sunny_outlined : Icons.nightlight_round,
+                  color: iconColor,
+                  size: 20,
+                ),
+                tooltip: tp.isDark ? 'Modo claro' : 'Modo oscuro',
+                onPressed: tp.toggle,
+              ),
             ),
             // Toggle disponible
             GestureDetector(
@@ -402,19 +453,18 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
                   color: _disponible
-                      ? Colors.green.withValues(alpha: 0.15)
-                      : AppConstants.surface2Color,
+                      ? Colors.green.withValues(alpha: 0.2)
+                      : Colors.white.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(
-                    color: _disponible ? Colors.green : Colors.white.withValues(alpha: 0.2),
+                    color: _disponible ? Colors.green : Colors.white.withValues(alpha: 0.3),
                   ),
                 ),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
                   Container(
-                    width: 8,
-                    height: 8,
+                    width: 8, height: 8,
                     decoration: BoxDecoration(
-                      color: _disponible ? Colors.green : Colors.white.withValues(alpha: 0.3),
+                      color: _disponible ? Colors.green : Colors.white.withValues(alpha: 0.4),
                       shape: BoxShape.circle,
                     ),
                   ),
@@ -422,7 +472,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                   Text(
                     _disponible ? 'Disponible' : 'No disponible',
                     style: TextStyle(
-                      color: _disponible ? Colors.green : Colors.white.withValues(alpha: 0.4),
+                      color: _disponible ? Colors.green : Colors.white.withValues(alpha: 0.5),
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
                     ),
@@ -436,11 +486,16 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     );
   }
 
-  Widget _buildOrderCard(_Order order) {
+  Widget _buildOrderCard(_Order order, bool isDark) {
+    final cardBg  = isDark ? AppConstants.surfaceColor : Colors.white;
+    final textMain = isDark ? Colors.white : Colors.black87;
+    final textSub  = isDark ? Colors.white.withValues(alpha: 0.45) : Colors.black54;
+    final divider  = isDark ? Colors.white.withValues(alpha: 0.06) : Colors.black.withValues(alpha: 0.06);
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: AppConstants.surfaceColor,
+        color: cardBg,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppConstants.primaryColor.withValues(alpha: 0.3)),
       ),
@@ -448,18 +503,15 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         Padding(
           padding: const EdgeInsets.all(16),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            // Restaurant row
             Row(children: [
               Text(order.restaurantIcon, style: const TextStyle(fontSize: 24)),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text(order.restaurantName,
-                      style: const TextStyle(
-                          color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+                      style: TextStyle(color: textMain, fontWeight: FontWeight.bold, fontSize: 15)),
                   Text('${order.items.length} producto${order.items.length != 1 ? 's' : ''}',
-                      style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.45), fontSize: 12)),
+                      style: TextStyle(color: textSub, fontSize: 12)),
                 ]),
               ),
               Text('\$${order.total.toStringAsFixed(0)} MXN',
@@ -469,55 +521,74 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                       fontSize: 16)),
             ]),
             const SizedBox(height: 10),
-            Divider(height: 1, color: Colors.white.withValues(alpha: 0.06)),
+            Divider(height: 1, color: divider),
             const SizedBox(height: 10),
-            // Customer
             Row(children: [
-              Icon(Icons.location_on_outlined,
-                  color: Colors.white.withValues(alpha: 0.4), size: 16),
+              Icon(Icons.location_on_outlined, color: textSub, size: 16),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(order.address,
-                    style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.55), fontSize: 12)),
+                    style: TextStyle(color: textSub, fontSize: 12)),
               ),
             ]),
             const SizedBox(height: 4),
             Row(children: [
-              Icon(Icons.person_outline,
-                  color: Colors.white.withValues(alpha: 0.4), size: 16),
+              Icon(Icons.person_outline, color: textSub, size: 16),
               const SizedBox(width: 6),
               Text(order.customerName,
-                  style:
-                      TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 12)),
+                  style: TextStyle(color: textSub, fontSize: 12)),
             ]),
           ]),
         ),
-        // Botón aceptar
-        InkWell(
-          onTap: _disponible ? () => _aceptarPedido(order) : null,
-          borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            decoration: BoxDecoration(
-              color: _disponible
-                  ? AppConstants.primaryColor
-                  : AppConstants.surface2Color,
-              borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
-            ),
-            child: Center(
-              child: Text(
-                _disponible ? 'ACEPTAR PEDIDO' : 'NO DISPONIBLE',
-                style: TextStyle(
-                  color: _disponible ? Colors.white : Colors.white.withValues(alpha: 0.3),
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                  letterSpacing: 0.5,
+        // Botones: RECHAZAR + ACEPTAR
+        ClipRRect(
+          borderRadius: const BorderRadius.vertical(bottom: Radius.circular(15)),
+          child: Row(children: [
+            // Rechazar
+            Expanded(
+              flex: 2,
+              child: InkWell(
+                onTap: () => _rechazarPedido(order),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  color: isDark ? AppConstants.surface2Color : Colors.grey.shade200,
+                  child: Center(
+                    child: Text(
+                      'RECHAZAR',
+                      style: TextStyle(
+                        color: isDark ? Colors.white.withValues(alpha: 0.5) : Colors.black45,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
+            // Aceptar
+            Expanded(
+              flex: 3,
+              child: InkWell(
+                onTap: _disponible ? () => _aceptarPedido(order) : null,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  color: _disponible ? AppConstants.primaryColor : Colors.grey.shade400,
+                  child: Center(
+                    child: Text(
+                      _disponible ? 'ACEPTAR PEDIDO' : 'NO DISPONIBLE',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ]),
         ),
       ]),
     );
@@ -539,7 +610,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     'Ver más pedidos',
   ];
 
-  Widget _buildActiveOrder() {
+  Widget _buildActiveOrder(bool isDark) {
     final order = _activeOrder!;
     final sd = _steps[_step];
     final myLatLng = _myPos != null
@@ -547,15 +618,19 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         : null;
 
     final clientPos = _geocodedCustomerPos ?? order.customerPos;
-    // Solo mostrar la ubicación del cliente cuando el repartidor ya va en camino
     final showClientPos = _step >= 2;
-    // Centro del mapa: posición real del driver > restaurante como fallback
     final mapCenter = myLatLng ?? (showClientPos
         ? LatLng(
             (order.restaurantPos.latitude + clientPos.latitude) / 2,
             (order.restaurantPos.longitude + clientPos.longitude) / 2,
           )
         : order.restaurantPos);
+
+    final bgColor      = isDark ? AppConstants.bgColor : AppConstants.primaryColor;
+    final cardBg       = isDark ? AppConstants.surfaceColor : Colors.white;
+    final textMain     = isDark ? Colors.white : Colors.black87;
+    final textSub      = isDark ? Colors.white.withValues(alpha: 0.5) : Colors.black54;
+    final divider      = isDark ? Colors.white.withValues(alpha: 0.06) : Colors.black12;
 
     return Column(children: [
       // ── Mapa ──────────────────────────────────────────────────────────────
@@ -591,7 +666,6 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
               ]),
             ],
           ),
-          // Badge GPS transmitiendo (solo en step 2)
           if (_step == 2)
             Positioned(
               top: 0, left: 0, right: 0,
@@ -614,7 +688,6 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                 ),
               ),
             ),
-          // Status badge + botón navegación
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.all(12),
@@ -635,7 +708,6 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                               color: sd.color, fontWeight: FontWeight.bold, fontSize: 13)),
                     ]),
                   ),
-                  // Botón Cómo llegar — abre Google Maps con navegación
                   GestureDetector(
                     onTap: () {
                       final dest = _step >= 2 ? clientPos : order.restaurantPos;
@@ -668,40 +740,37 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
       // ── Detalle del pedido ─────────────────────────────────────────────────
       Expanded(
         child: Container(
-          color: AppConstants.bgColor,
+          color: bgColor,
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(16),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              // Stepper
               _buildStepper(),
               const SizedBox(height: 20),
 
-              // Cliente
-              _SectionLabel('Datos del cliente'),
+              _SectionLabel('Datos del cliente', textColor: Colors.white),
               const SizedBox(height: 10),
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: AppConstants.surfaceColor,
+                  color: cardBg,
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: Column(children: [
-                  _InfoRow(Icons.person_outline, order.customerName),
+                  _InfoRow(Icons.person_outline,    order.customerName,  textColor: textMain),
                   const SizedBox(height: 8),
-                  _InfoRow(Icons.phone_outlined, order.customerPhone),
+                  _InfoRow(Icons.phone_outlined,    order.customerPhone, textColor: textMain),
                   const SizedBox(height: 8),
-                  _InfoRow(Icons.location_on_outlined, order.address),
+                  _InfoRow(Icons.location_on_outlined, order.address,   textColor: textMain),
                 ]),
               ),
               const SizedBox(height: 16),
 
-              // Productos
-              _SectionLabel('Productos (${order.restaurantName})'),
+              _SectionLabel('Productos (${order.restaurantName})', textColor: Colors.white),
               const SizedBox(height: 10),
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: AppConstants.surfaceColor,
+                  color: cardBg,
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: Column(
@@ -711,27 +780,21 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 6),
                         child: Row(children: [
-                          const Icon(Icons.fastfood,
-                              color: AppConstants.primaryColor, size: 16),
+                          const Icon(Icons.fastfood, color: AppConstants.primaryColor, size: 16),
                           const SizedBox(width: 10),
-                          Text(e.value,
-                              style: const TextStyle(color: Colors.white, fontSize: 14)),
+                          Text(e.value, style: TextStyle(color: textMain, fontSize: 14)),
                         ]),
                       ),
-                      if (!isLast)
-                        Divider(height: 1, color: Colors.white.withValues(alpha: 0.06)),
+                      if (!isLast) Divider(height: 1, color: divider),
                     ]);
                   }).toList(),
                 ),
               ),
               const SizedBox(height: 8),
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                Text('Total del pedido',
-                    style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.5), fontSize: 13)),
+                Text('Total del pedido', style: TextStyle(color: textSub, fontSize: 13)),
                 Text('\$${order.total.toStringAsFixed(0)} MXN',
-                    style: const TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                    style: TextStyle(color: textMain, fontWeight: FontWeight.bold, fontSize: 16)),
               ]),
               const SizedBox(height: 20),
             ]),
@@ -743,10 +806,10 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
       Container(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
         decoration: BoxDecoration(
-          color: AppConstants.surfaceColor,
+          color: isDark ? AppConstants.surfaceColor : Colors.white,
           boxShadow: [
             BoxShadow(
-                color: Colors.black.withValues(alpha: 0.35),
+                color: Colors.black.withValues(alpha: 0.25),
                 blurRadius: 10,
                 offset: const Offset(0, -3))
           ],
@@ -783,8 +846,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
               child: Column(children: [
                 AnimatedContainer(
                   duration: const Duration(milliseconds: 300),
-                  width: 36,
-                  height: 36,
+                  width: 36, height: 36,
                   decoration: BoxDecoration(
                     color: done || active
                         ? sd.color.withValues(alpha: done ? 0.3 : 0.15)
@@ -854,46 +916,52 @@ class _StatBox extends StatelessWidget {
   final String value;
   final IconData icon;
   final Color color;
-  const _StatBox({required this.label, required this.value, required this.icon, required this.color});
+  final Color textColor;
+  final Color subColor;
+  const _StatBox({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.color,
+    required this.textColor,
+    required this.subColor,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Column(children: [
       Icon(icon, color: color, size: 22),
       const SizedBox(height: 4),
-      Text(value,
-          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-      Text(label,
-          style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11)),
+      Text(value, style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 16)),
+      Text(label, style: TextStyle(color: subColor, fontSize: 11)),
     ]);
   }
 }
 
 class _SectionLabel extends StatelessWidget {
   final String text;
-  const _SectionLabel(this.text);
+  final Color textColor;
+  const _SectionLabel(this.text, {required this.textColor});
 
   @override
   Widget build(BuildContext context) {
     return Text(text,
-        style: const TextStyle(
-            color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14));
+        style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 14));
   }
 }
 
 class _InfoRow extends StatelessWidget {
   final IconData icon;
   final String text;
-  const _InfoRow(this.icon, this.text);
+  final Color textColor;
+  const _InfoRow(this.icon, this.text, {required this.textColor});
 
   @override
   Widget build(BuildContext context) {
     return Row(children: [
       Icon(icon, color: AppConstants.primaryColor, size: 18),
       const SizedBox(width: 10),
-      Expanded(
-          child: Text(text,
-              style: const TextStyle(color: Colors.white, fontSize: 13))),
+      Expanded(child: Text(text, style: TextStyle(color: textColor, fontSize: 13))),
     ]);
   }
 }

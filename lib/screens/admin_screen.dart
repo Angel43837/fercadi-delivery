@@ -1,3 +1,9 @@
+// admin_screen.dart
+// Panel del administrador de la plataforma Grupo Fercadi.
+// Solo accesible con rol "admin" (email: admin@fercadi.com).
+// Permite ver todos los pedidos de todos los restaurantes,
+// gestionar restaurantes, usuarios y configuración general de la plataforma.
+
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';

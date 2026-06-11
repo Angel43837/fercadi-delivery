@@ -25,6 +25,8 @@ dependencies:
   shared_preferences: ^2.3.0
   url_launcher: ^6.3.0
   flutter_local_notifications: ^18.0.0
+  google_maps_flutter: ^2.10.0
+  flutter_stripe: ^11.1.0
 
 dev_dependencies:
   flutter_test:
@@ -35,9 +37,9 @@ dev_dependencies:
 flutter_launcher_icons:
   android: true
   ios: false
-  image_path: "assets/images/moto_icon_full.png"
-  adaptive_icon_background: "#FF6D00"
-  adaptive_icon_foreground: "assets/images/moto_icon.png"
+  image_path: "assets/images/app_icon.png"
+  adaptive_icon_background: "#FF5722"
+  adaptive_icon_foreground: "assets/images/app_icon.png"
   min_sdk_android: 21
 
 flutter:

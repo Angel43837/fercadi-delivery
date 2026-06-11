@@ -1,3 +1,8 @@
+// registro_restaurante_screen.dart
+// Formulario de registro para nuevos restaurantes que quieren unirse a la plataforma.
+// El dueño llena nombre, descripción, dirección y teléfono del restaurante.
+// Al registrarse, se crea el usuario con rol "dueno" en Supabase Auth.
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';

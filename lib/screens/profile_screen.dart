@@ -1,3 +1,13 @@
+// profile_screen.dart
+// Pantalla de perfil del usuario.
+// Permite al usuario configurar:
+//   - Nombre y foto de perfil
+//   - Dirección de entrega predeterminada (GPS, mapa o texto manual)
+//   - Método de pago preferido (efectivo, OXXO, tarjeta)
+//   - Datos de tarjeta bancaria
+//   - CLABE interbancaria (solo para repartidores)
+// También tiene los botones de cerrar sesión y reiniciar la app.
+
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -322,9 +332,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     if (_loading) {
-      return const Scaffold(
-        backgroundColor: AppConstants.bgColor,
+      return Scaffold(
         body: Center(child: CircularProgressIndicator(color: AppConstants.primaryColor)),
       );
     }
@@ -334,19 +345,36 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ? '?'
         : _nameCtrl.text.trim().split(' ').map((w) => w.isNotEmpty ? w[0] : '').take(2).join().toUpperCase();
 
+    // Colores adaptativos para las tarjetas internas
+    final cardBg     = isDark ? AppConstants.surfaceColor : Colors.white;
+    final cardText   = isDark ? Colors.white : Colors.black87;
+    final cardSub    = isDark ? Colors.white.withValues(alpha: 0.4) : Colors.black54;
+    final cardDiv    = isDark ? Colors.white.withValues(alpha: 0.06) : Colors.black.withValues(alpha: 0.07);
+    final cardChev   = isDark ? Colors.white.withValues(alpha: 0.3) : Colors.black38;
+    final inputText  = isDark ? Colors.white : Colors.black87;
+
     return Scaffold(
-      backgroundColor: AppConstants.bgColor,
       appBar: AppBar(
-        backgroundColor: AppConstants.surfaceColor,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          icon: const Icon(Icons.arrow_back),
           onPressed: () => context.pop(),
         ),
-        title: const Text('Mi perfil', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        title: const Text('Mi perfil', style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Cerrar sesión',
+            onPressed: () async {
+              final router = GoRouter.of(context);
+              await AuthService.clearSession();
+              if (!mounted) return;
+              router.go('/login');
+            },
+          ),
           TextButton(
             onPressed: _save,
-            child: const Text('Guardar', style: TextStyle(color: AppConstants.primaryColor, fontWeight: FontWeight.bold, fontSize: 15)),
+            child: const Text('Guardar',
+                style: TextStyle(color: AppConstants.primaryColor, fontWeight: FontWeight.bold, fontSize: 15)),
           ),
         ],
       ),
@@ -373,15 +401,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       child: _photoPath != null
                           ? ClipOval(child: _ProfileImage(path: _photoPath!, size: 96))
                           : Center(
-                              child: Text(initials, style: const TextStyle(color: Colors.white, fontSize: 36, fontWeight: FontWeight.bold)),
+                              child: Text(initials,
+                                  style: const TextStyle(color: Colors.white, fontSize: 36, fontWeight: FontWeight.bold)),
                             ),
                     ),
                     Container(
                       padding: const EdgeInsets.all(6),
-                      decoration: const BoxDecoration(
-                        color: AppConstants.primaryColor,
-                        shape: BoxShape.circle,
-                      ),
+                      decoration: const BoxDecoration(color: AppConstants.primaryColor, shape: BoxShape.circle),
                       child: const Icon(Icons.camera_alt, color: Colors.white, size: 14),
                     ),
                   ],
@@ -389,11 +415,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               const SizedBox(height: 8),
               Text('Toca para cambiar foto',
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 11)),
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 11)),
               const SizedBox(height: 12),
               if (_photoPath == null) ...[
                 Text('Elige un color para tu avatar',
-                    style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 12)),
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.65), fontSize: 12)),
                 const SizedBox(height: 10),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -424,12 +450,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SizedBox(height: 8),
           TextField(
             controller: _nameCtrl,
-            style: const TextStyle(color: Colors.white, fontSize: 16),
+            style: TextStyle(color: inputText, fontSize: 16),
             onChanged: (_) => setState(() {}),
             decoration: _inputDeco('Tu nombre', Icons.person_outline),
           ),
           const SizedBox(height: 6),
-          Text(_email, style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 12)),
+          Text(_email, style: TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 12)),
           const SizedBox(height: 28),
 
           // ── Dirección de entrega ─────────────────────────────────────────────
@@ -439,10 +465,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             onTap: _showLocationPicker,
             child: Container(
               padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: AppConstants.surfaceColor,
-                borderRadius: BorderRadius.circular(16),
-              ),
+              decoration: BoxDecoration(color: cardBg, borderRadius: BorderRadius.circular(16)),
               child: _addrLoading
                   ? const Center(child: SizedBox(width: 24, height: 24,
                       child: CircularProgressIndicator(color: AppConstants.primaryColor, strokeWidth: 2)))
@@ -450,9 +473,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       Container(
                         padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
-                          color: AppConstants.primaryColor.withValues(alpha: 0.12),
-                          shape: BoxShape.circle,
-                        ),
+                            color: AppConstants.primaryColor.withValues(alpha: 0.12), shape: BoxShape.circle),
                         child: const Icon(Icons.location_on, color: AppConstants.primaryColor, size: 20),
                       ),
                       const SizedBox(width: 12),
@@ -460,17 +481,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         Text(
                           _addrText.isEmpty ? 'Sin dirección guardada' : _addrText,
                           style: TextStyle(
-                            color: _addrText.isEmpty ? Colors.white.withValues(alpha: 0.4) : Colors.white,
-                            fontSize: 14,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
+                              color: _addrText.isEmpty ? cardSub : cardText, fontSize: 14),
+                          maxLines: 2, overflow: TextOverflow.ellipsis,
                         ),
                         const SizedBox(height: 2),
                         const Text('Toca para cambiar',
                             style: TextStyle(color: AppConstants.primaryColor, fontSize: 11)),
                       ])),
-                      Icon(Icons.chevron_right, color: Colors.white.withValues(alpha: 0.3)),
+                      Icon(Icons.chevron_right, color: cardChev),
                     ]),
             ),
           ),
@@ -480,7 +498,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           _SectionLabel('Método de pago preferido'),
           const SizedBox(height: 8),
           Container(
-            decoration: BoxDecoration(color: AppConstants.surfaceColor, borderRadius: BorderRadius.circular(16)),
+            decoration: BoxDecoration(color: cardBg, borderRadius: BorderRadius.circular(16)),
             child: Column(
               children: List.generate(_paymentOptions.length, (i) {
                 final opt      = _paymentOptions[i];
@@ -497,31 +515,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                       child: Row(children: [
                         Icon(opt.icon,
-                            color: selected ? AppConstants.primaryColor : Colors.white.withValues(alpha: 0.4), size: 24),
+                            color: selected ? AppConstants.primaryColor : cardSub, size: 24),
                         const SizedBox(width: 14),
                         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                           Text(opt.label, style: TextStyle(
-                              color: selected ? AppConstants.primaryColor : Colors.white,
+                              color: selected ? AppConstants.primaryColor : cardText,
                               fontWeight: FontWeight.w600, fontSize: 15)),
-                          Text(opt.subtitle, style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 12)),
+                          Text(opt.subtitle, style: TextStyle(color: cardSub, fontSize: 12)),
                         ])),
                         Container(
                           width: 22, height: 22,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             border: Border.all(
-                                color: selected ? AppConstants.primaryColor : Colors.white.withValues(alpha: 0.3), width: 2),
+                                color: selected ? AppConstants.primaryColor : cardChev, width: 2),
                           ),
                           child: selected
                               ? Center(child: Container(width: 11, height: 11,
-                                  decoration: const BoxDecoration(shape: BoxShape.circle, color: AppConstants.primaryColor)))
+                                  decoration: const BoxDecoration(
+                                      shape: BoxShape.circle, color: AppConstants.primaryColor)))
                               : null,
                         ),
                       ]),
                     ),
                   ),
-                  if (!isLast)
-                    Divider(height: 1, color: Colors.white.withValues(alpha: 0.06), indent: 16, endIndent: 16),
+                  if (!isLast) Divider(height: 1, color: cardDiv, indent: 16, endIndent: 16),
                 ]);
               }),
             ),
@@ -534,11 +552,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
             const SizedBox(height: 8),
             TextField(
               controller: _clabeCtrl,
-              style: const TextStyle(color: Colors.white, fontSize: 16, letterSpacing: 1.5),
+              style: TextStyle(color: inputText, fontSize: 16, letterSpacing: 1.5),
               keyboardType: TextInputType.number,
               maxLength: 18,
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              decoration: _inputDeco('CLABE interbancaria (18 dígitos)', Icons.account_balance_outlined).copyWith(counterText: ''),
+              decoration: _inputDeco('CLABE interbancaria (18 dígitos)', Icons.account_balance_outlined)
+                  .copyWith(counterText: ''),
             ),
             const SizedBox(height: 28),
           ],
@@ -547,15 +566,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
           _SectionLabel('Tarjeta de banco'),
           const SizedBox(height: 12),
           _CardPreview(
-            number:  _cardNumCtrl.text,
-            expiry:  _cardExpCtrl.text,
-            name:    _cardNameCtrl.text,
-            color:   avatarColor,
+            number: _cardNumCtrl.text,
+            expiry: _cardExpCtrl.text,
+            name:   _cardNameCtrl.text,
+            color:  avatarColor,
           ),
           const SizedBox(height: 16),
           TextField(
             controller: _cardNumCtrl,
-            style: const TextStyle(color: Colors.white, fontSize: 16, letterSpacing: 2),
+            style: TextStyle(color: inputText, fontSize: 16, letterSpacing: 2),
             keyboardType: TextInputType.number,
             maxLength: 19,
             inputFormatters: [_CardNumberFormatter()],
@@ -567,7 +586,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             Expanded(
               child: TextField(
                 controller: _cardExpCtrl,
-                style: const TextStyle(color: Colors.white, fontSize: 16),
+                style: TextStyle(color: inputText, fontSize: 16),
                 keyboardType: TextInputType.number,
                 maxLength: 5,
                 inputFormatters: [_ExpiryFormatter()],
@@ -579,7 +598,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             Expanded(
               child: TextField(
                 controller: _cvvCtrl,
-                style: const TextStyle(color: Colors.white, fontSize: 16),
+                style: TextStyle(color: inputText, fontSize: 16),
                 keyboardType: TextInputType.number,
                 maxLength: 4,
                 obscureText: !_showCvv,
@@ -588,7 +607,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   counterText: '',
                   suffixIcon: IconButton(
                     icon: Icon(_showCvv ? Icons.visibility_off : Icons.visibility,
-                        color: Colors.white.withValues(alpha: 0.35), size: 18),
+                        color: cardSub, size: 18),
                     onPressed: () => setState(() => _showCvv = !_showCvv),
                   ),
                 ),
@@ -598,10 +617,50 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SizedBox(height: 12),
           TextField(
             controller: _cardNameCtrl,
-            style: const TextStyle(color: Colors.white, fontSize: 16),
+            style: TextStyle(color: inputText, fontSize: 16),
             textCapitalization: TextCapitalization.characters,
             onChanged: (_) => setState(() {}),
             decoration: _inputDeco('Nombre en la tarjeta', Icons.person_outline),
+          ),
+          const SizedBox(height: 40),
+
+          // ── Sesión ──────────────────────────────────────────────────────────
+          _SectionLabel('Sesión'),
+          const SizedBox(height: 8),
+          Container(
+            decoration: BoxDecoration(color: cardBg, borderRadius: BorderRadius.circular(16)),
+            child: Column(children: [
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: Colors.orange.withValues(alpha: 0.12), shape: BoxShape.circle),
+                  child: const Icon(Icons.logout, color: Colors.orange, size: 20),
+                ),
+                title: Text('Cerrar sesión', style: TextStyle(color: cardText, fontWeight: FontWeight.w600)),
+                subtitle: Text('Mantiene tus datos guardados', style: TextStyle(color: cardSub, fontSize: 12)),
+                trailing: Icon(Icons.chevron_right, color: cardChev),
+                onTap: () async {
+                  final router = GoRouter.of(context);
+                  await AuthService.clearSession();
+                  if (!mounted) return;
+                  router.go('/login');
+                },
+              ),
+              Divider(height: 1, color: cardDiv, indent: 16, endIndent: 16),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: Colors.red.withValues(alpha: 0.12), shape: BoxShape.circle),
+                  child: const Icon(Icons.restart_alt, color: Colors.redAccent, size: 20),
+                ),
+                title: const Text('Reiniciar aplicación',
+                    style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600)),
+                subtitle: Text('Borra todos tus datos y empieza de cero',
+                    style: TextStyle(color: cardSub, fontSize: 12)),
+                trailing: Icon(Icons.chevron_right, color: cardChev),
+                onTap: () => _confirmarReinicio(),
+              ),
+            ]),
           ),
           const SizedBox(height: 40),
         ],
@@ -609,17 +668,52 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  InputDecoration _inputDeco(String hint, IconData icon) => InputDecoration(
-    hintText: hint,
-    hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.3)),
-    prefixIcon: Icon(icon, color: AppConstants.primaryColor, size: 20),
-    filled: true,
-    fillColor: AppConstants.surfaceColor,
-    border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
-    focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: const BorderSide(color: AppConstants.primaryColor, width: 1.5)),
-  );
+  void _confirmarReinicio() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppConstants.surfaceColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('¿Reiniciar todo?',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        content: Text(
+          'Se borrarán tu sesión, datos de perfil, historial de pedidos y direcciones guardadas.\n\nEsta acción no se puede deshacer.',
+          style: TextStyle(color: Colors.white.withValues(alpha: 0.6), height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('Cancelar', style: TextStyle(color: Colors.white.withValues(alpha: 0.5))),
+          ),
+          TextButton(
+            onPressed: () async {
+              final router = GoRouter.of(context);
+              Navigator.pop(ctx);
+              await AuthService.clearAll();
+              if (!mounted) return;
+              router.go('/login');
+            },
+            child: const Text('Sí, reiniciar', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  InputDecoration _inputDeco(String hint, IconData icon) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return InputDecoration(
+      hintText: hint,
+      hintStyle: TextStyle(color: isDark ? Colors.white.withValues(alpha: 0.3) : Colors.black38),
+      prefixIcon: Icon(icon, color: AppConstants.primaryColor, size: 20),
+      filled: true,
+      fillColor: isDark ? AppConstants.surfaceColor : Colors.white,
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+      focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: AppConstants.primaryColor, width: 1.5)),
+    );
+  }
 }
 
 // ── Card Preview ─────────────────────────────────────────────────────────────
@@ -756,6 +850,8 @@ class _SectionLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Text(text,
-        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15));
+        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15, shadows: [
+          Shadow(color: Colors.black26, blurRadius: 4),
+        ]));
   }
 }

@@ -1,3 +1,8 @@
+// product_detail_screen.dart
+// Pantalla de detalle de un platillo.
+// Muestra un carrusel de imágenes (si hay varias), descripción completa,
+// precio, selector de cantidad (- 1 +) y botón para agregar al carrito.
+
 import 'package:carousel_slider/carousel_slider.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';

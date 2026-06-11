@@ -2,6 +2,14 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+// auth_service.dart
+// Maneja la sesión del usuario y todos sus datos de perfil guardados localmente.
+// Usa SharedPreferences (almacenamiento local del teléfono) para persistir los datos.
+// Cada dato de perfil se guarda con el email como prefijo para separar cuentas.
+//
+// Roles disponibles: cliente (sin rol), repartidor, dueno, admin
+// La sesión guarda: email + ruta de destino según el rol
+
 class AuthService {
   static const _keyRole         = 'session_role';
   static const _keyEmail        = 'session_email';
@@ -22,15 +30,26 @@ class AuthService {
   static const _keyRestEmoji       = 'restaurant_emoji';
   static const _keyRestaurantId    = 'restaurant_id';
 
+    // ── Clave con prefijo por usuario ────────────────────────────────────────────
+  // Prefija cada clave con el email del usuario actual para que los datos
+  // de diferentes cuentas en el mismo teléfono no se mezclen.
+  // Ejemplo: "anjelom227@gmail.com:profile_display_name"
+  static Future<String> _userKey(String key) async {
+    final prefs = await SharedPreferences.getInstance();
+    final email = prefs.getString(_keyEmail) ?? 'guest';
+    return '$email:$key';
+  }
+
   // ── Sesión ───────────────────────────────────────────────────────────────────
 
   static Future<void> saveSession(String email, String role) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyEmail, email);
     await prefs.setString(_keyRole, role);
-    if (prefs.getString(_keyDisplayName) == null) {
+    final nameKey = '$email:$_keyDisplayName';
+    if (prefs.getString(nameKey) == null) {
       final name = email.split('@').first;
-      await prefs.setString(_keyDisplayName, _capitalize(name));
+      await prefs.setString(nameKey, _capitalize(name));
     }
   }
 
@@ -46,6 +65,13 @@ class AuthService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_keyEmail);
     await prefs.remove(_keyRole);
+    try { await Supabase.instance.client.auth.signOut(); } catch (_) {}
+  }
+
+  static Future<void> clearAll() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear();
+    try { await Supabase.instance.client.auth.signOut(); } catch (_) {}
   }
 
   static String roleToRoute(String email) {
@@ -61,47 +87,55 @@ class AuthService {
 
   static Future<String> getDisplayName() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_keyDisplayName) ?? 'Usuario';
+    final key   = await _userKey(_keyDisplayName);
+    return prefs.getString(key) ?? 'Usuario';
   }
 
   static Future<void> saveDisplayName(String name) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyDisplayName, name.trim().isEmpty ? 'Usuario' : name.trim());
+    final key   = await _userKey(_keyDisplayName);
+    await prefs.setString(key, name.trim().isEmpty ? 'Usuario' : name.trim());
   }
 
   static Future<String> getPreferredPayment() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_keyPayment) ?? 'cash';
+    final key   = await _userKey(_keyPayment);
+    return prefs.getString(key) ?? 'cash';
   }
 
   static Future<void> savePreferredPayment(String method) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyPayment, method);
+    final key   = await _userKey(_keyPayment);
+    await prefs.setString(key, method);
   }
 
   static Future<int> getAvatarColorIndex() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getInt(_keyAvatarColor) ?? 0;
+    final key   = await _userKey(_keyAvatarColor);
+    return prefs.getInt(key) ?? 0;
   }
 
   static Future<void> saveAvatarColorIndex(int index) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_keyAvatarColor, index);
+    final key   = await _userKey(_keyAvatarColor);
+    await prefs.setInt(key, index);
   }
 
   // ── Foto de perfil ───────────────────────────────────────────────────────────
 
   static Future<String?> getProfilePhoto() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_keyProfilePhoto);
+    final key   = await _userKey(_keyProfilePhoto);
+    return prefs.getString(key);
   }
 
   static Future<void> saveProfilePhoto(String? path) async {
     final prefs = await SharedPreferences.getInstance();
+    final key   = await _userKey(_keyProfilePhoto);
     if (path == null) {
-      await prefs.remove(_keyProfilePhoto);
+      await prefs.remove(key);
     } else {
-      await prefs.setString(_keyProfilePhoto, path);
+      await prefs.setString(key, path);
     }
   }
 
@@ -109,37 +143,42 @@ class AuthService {
 
   static Future<({String number, String expiry, String name})?> getCard() async {
     final prefs  = await SharedPreferences.getInstance();
-    final number = prefs.getString(_keyCardNumber);
-    final expiry = prefs.getString(_keyCardExpiry);
-    final name   = prefs.getString(_keyCardName);
+    final kNum   = await _userKey(_keyCardNumber);
+    final kExp   = await _userKey(_keyCardExpiry);
+    final kName  = await _userKey(_keyCardName);
+    final number = prefs.getString(kNum);
+    final expiry = prefs.getString(kExp);
+    final name   = prefs.getString(kName);
     if (number == null || number.isEmpty) return null;
     return (number: number, expiry: expiry ?? '', name: name ?? '');
   }
 
   static Future<void> saveCard(String number, String expiry, String name) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyCardNumber, number);
-    await prefs.setString(_keyCardExpiry, expiry);
-    await prefs.setString(_keyCardName,   name);
+    await prefs.setString(await _userKey(_keyCardNumber), number);
+    await prefs.setString(await _userKey(_keyCardExpiry), expiry);
+    await prefs.setString(await _userKey(_keyCardName),   name);
   }
 
   static Future<void> clearCard() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_keyCardNumber);
-    await prefs.remove(_keyCardExpiry);
-    await prefs.remove(_keyCardName);
+    await prefs.remove(await _userKey(_keyCardNumber));
+    await prefs.remove(await _userKey(_keyCardExpiry));
+    await prefs.remove(await _userKey(_keyCardName));
   }
 
   // ── CLABE interbancaria (repartidor) ─────────────────────────────────────────
 
   static Future<String> getCLABE() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_keyCLABE) ?? '';
+    final key   = await _userKey(_keyCLABE);
+    return prefs.getString(key) ?? '';
   }
 
   static Future<void> saveCLABE(String clabe) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyCLABE, clabe.trim());
+    final key   = await _userKey(_keyCLABE);
+    await prefs.setString(key, clabe.trim());
   }
 
   // ── Direcciones guardadas ────────────────────────────────────────────────────
@@ -162,7 +201,8 @@ class AuthService {
 
     // Fallback: SharedPreferences (funciona para usuarios demo/roles especiales)
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_keySavedAddresses);
+    final key   = await _userKey(_keySavedAddresses);
+    final raw   = prefs.getString(key);
     if (raw == null) return [];
     try {
       return (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
@@ -186,7 +226,7 @@ class AuthService {
 
     // Guarda localmente
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keySavedAddresses, encoded);
+    await prefs.setString(await _userKey(_keySavedAddresses), encoded);
 
     // Guarda en Supabase (persiste aunque se borre el navegador)
     try {

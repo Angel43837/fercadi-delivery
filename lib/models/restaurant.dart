@@ -1,13 +1,18 @@
+// restaurant.dart
+// Modelo de datos para un restaurante.
+// Corresponde a la tabla "restaurants" en Supabase.
+// lat/lng son opcionales — solo los tienen restaurantes con ubicación configurada.
+
 class Restaurant {
   final String id;
   final String name;
   final String? description;
-  final String? imageUrl;
+  final String? imageUrl;  // URL de la foto del restaurante (Supabase Storage)
   final String? address;
-  final double? lat;
-  final double? lng;
-  final double rating;
-  final bool isOpen;
+  final double? lat;       // Latitud GPS del restaurante
+  final double? lng;       // Longitud GPS del restaurante
+  final double rating;     // Calificación promedio (0.0 - 5.0)
+  final bool isOpen;       // Si está abierto para recibir pedidos
 
   const Restaurant({
     required this.id,
@@ -21,6 +26,7 @@ class Restaurant {
     this.isOpen = true,
   });
 
+  // Crea un Restaurant desde un Map de JSON (respuesta de Supabase)
   factory Restaurant.fromJson(Map<String, dynamic> json) => Restaurant(
         id: json['id'] as String,
         name: json['name'] as String,

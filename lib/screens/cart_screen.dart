@@ -1,3 +1,9 @@
+// cart_screen.dart
+// Pantalla del carrito de compras del cliente.
+// Muestra los ítems agregados, sus cantidades y el total.
+// Permite modificar cantidades o eliminar productos.
+// El botón "Pedir" lleva a la pantalla de checkout para confirmar el pedido.
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -10,25 +16,31 @@ class CartScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cart = context.watch<CartProvider>();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final cardBg  = isDark ? AppConstants.surfaceColor : Colors.white;
+    final cardText = isDark ? Colors.white : Colors.black87;
+    final cardSub  = isDark ? Colors.white.withValues(alpha: 0.45) : Colors.black54;
 
     return Scaffold(
-      backgroundColor: AppConstants.bgColor,
       appBar: AppBar(
-        title: const Text('Mi Carrito', style: TextStyle(color: Colors.white)),
+        title: const Text('Mi Carrito', style: TextStyle(fontWeight: FontWeight.bold)),
       ),
       body: cart.items.isEmpty
           ? Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.shopping_bag_outlined, size: 80, color: Colors.white.withValues(alpha: 0.15)),
+                  Icon(Icons.shopping_bag_outlined, size: 80,
+                      color: Colors.white.withValues(alpha: 0.4)),
                   const SizedBox(height: 16),
                   Text('Tu carrito está vacío',
-                      style: TextStyle(fontSize: 18, color: Colors.white.withValues(alpha: 0.4))),
+                      style: TextStyle(fontSize: 18,
+                          color: Colors.white.withValues(alpha: 0.7))),
                   const SizedBox(height: 8),
                   TextButton(
                     onPressed: () => context.go('/restaurants'),
-                    child: const Text('Ver restaurantes', style: TextStyle(color: AppConstants.primaryColor)),
+                    child: const Text('Ver restaurantes',
+                        style: TextStyle(color: AppConstants.primaryColor)),
                   ),
                 ],
               ),
@@ -45,7 +57,7 @@ class CartScreen extends StatelessWidget {
                         margin: const EdgeInsets.only(bottom: 12),
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: AppConstants.surfaceColor,
+                          color: cardBg,
                           borderRadius: BorderRadius.circular(16),
                         ),
                         child: Row(
@@ -53,9 +65,8 @@ class CartScreen extends StatelessWidget {
                             ClipRRect(
                               borderRadius: BorderRadius.circular(10),
                               child: Container(
-                                width: 60,
-                                height: 60,
-                                color: AppConstants.surface2Color,
+                                width: 60, height: 60,
+                                color: isDark ? AppConstants.surface2Color : Colors.grey.shade100,
                                 child: item.product.imageUrl != null
                                     ? Image.network(item.product.imageUrl!, fit: BoxFit.cover,
                                         errorBuilder: (_, _, _) => const Icon(Icons.fastfood, color: AppConstants.primaryColor))
@@ -68,11 +79,9 @@ class CartScreen extends StatelessWidget {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(item.product.name,
-                                      style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 15)),
-                                  Text(
-                                    '\$${item.product.price.toStringAsFixed(0)} c/u',
-                                    style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 13),
-                                  ),
+                                      style: TextStyle(fontWeight: FontWeight.bold, color: cardText, fontSize: 15)),
+                                  Text('\$${item.product.price.toStringAsFixed(0)} c/u',
+                                      style: TextStyle(color: cardSub, fontSize: 13)),
                                 ],
                               ),
                             ),
@@ -86,11 +95,10 @@ class CartScreen extends StatelessWidget {
                                 Padding(
                                   padding: const EdgeInsets.symmetric(horizontal: 12),
                                   child: Text('${item.quantity}',
-                                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: cardText)),
                                 ),
                                 _SmallButton(
-                                  icon: Icons.add,
-                                  primary: true,
+                                  icon: Icons.add, primary: true,
                                   onTap: () => context.read<CartProvider>()
                                       .updateQuantity(item.product.id, item.quantity + 1),
                                 ),
@@ -117,15 +125,19 @@ class _SmallButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return GestureDetector(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.all(6),
         decoration: BoxDecoration(
-          color: primary ? AppConstants.primaryColor : AppConstants.surface2Color,
+          color: primary
+              ? AppConstants.primaryColor
+              : (isDark ? AppConstants.surface2Color : Colors.grey.shade200),
           borderRadius: BorderRadius.circular(8),
         ),
-        child: Icon(icon, size: 16, color: Colors.white),
+        child: Icon(icon, size: 16,
+            color: primary ? Colors.white : (isDark ? Colors.white : Colors.black87)),
       ),
     );
   }
@@ -137,28 +149,21 @@ class _OrderSummary extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bg = isDark ? AppConstants.surfaceColor : AppConstants.primaryColor;
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-      decoration: BoxDecoration(
-        color: AppConstants.surfaceColor,
-        boxShadow: [
-          BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 10, offset: const Offset(0, -4)),
-        ],
-      ),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
+      color: bg,
       child: SafeArea(
         child: Column(
           children: [
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  '${cart.count} producto${cart.count != 1 ? 's' : ''}',
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
-                ),
-                Text(
-                  '\$${cart.total.toStringAsFixed(0)} MXN',
-                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
-                ),
+                Text('${cart.count} producto${cart.count != 1 ? 's' : ''}',
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.7))),
+                Text('\$${cart.total.toStringAsFixed(0)} MXN',
+                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
               ],
             ),
             const SizedBox(height: 12),
@@ -168,27 +173,12 @@ class _OrderSummary extends StatelessWidget {
                 onPressed: () => context.push('/checkout'),
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
+                  backgroundColor: Colors.white,
+                  foregroundColor: AppConstants.primaryColor,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 ),
                 child: const Text('REALIZAR PEDIDO', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-              ),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: () => context.push('/tracking', extra: {
-                  'restaurantName': 'McDonalds',
-                  'address': 'Tu dirección',
-                  'total': 0.0,
-                  'orderId': 'o1',
-                }),
-                icon: const Icon(Icons.delivery_dining, size: 20),
-                label: const Text('RASTREAR MI PEDIDO', style: TextStyle(fontWeight: FontWeight.bold)),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  side: BorderSide(color: AppConstants.primaryColor),
-                  foregroundColor: AppConstants.primaryColor,
-                ),
               ),
             ),
           ],

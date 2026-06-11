@@ -1,3 +1,8 @@
+// location_service.dart
+// Maneja todo lo relacionado con la ubicación GPS del usuario.
+// Verifica si el usuario está dentro del radio de servicio de Maravatío
+// y convierte coordenadas a direcciones de texto (geocoding inverso).
+
 import 'dart:convert';
 import 'dart:io';
 import 'package:geolocator/geolocator.dart';
@@ -10,6 +15,7 @@ class LocationService {
   // Radio del municipio en metros (~30 km cubre todo el municipio)
   static const double _radioMetros = 30000;
 
+  // Verifica si el usuario tiene GPS activado, permisos concedidos y está dentro del radio
   static Future<LocationResult> verificarUbicacion() async {
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
@@ -50,6 +56,8 @@ class LocationService {
   // Bounding box de Maravatío: minLon,maxLat,maxLon,minLat
   static const _viewbox = '-100.50,19.95,-100.40,19.85';
 
+  // Convierte coordenadas GPS (lat, lng) a una dirección de texto legible
+  // Usa la API de Nominatim (OpenStreetMap) — gratuita, no requiere API key
   static Future<String?> reverseGeocode(double lat, double lng) async {
     try {
       final uri = Uri.parse(
@@ -75,6 +83,8 @@ class LocationService {
     }
   }
 
+  // Convierte una dirección de texto a coordenadas GPS
+  // Intenta varias formas de la dirección para maximizar resultados
   static Future<({double lat, double lng})?> geocodeAddress(String address) async {
     // Intentar varias formas de la query, de más específica a más genérica
     final queries = _buildQueries(address);

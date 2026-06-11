@@ -1,16 +1,21 @@
+// tracking_screen.dart
+// Pantalla de seguimiento del pedido en tiempo real.
+// El cliente ve el mapa con Google Maps mostrando:
+//   - Su dirección de entrega (pin de destino)
+//   - La posición actual del repartidor (pin en movimiento)
+// La posición del repartidor se actualiza cada 5 segundos por polling a Supabase.
+// También muestra el estado del pedido y envía notificaciones locales al cambiar.
+
 import 'dart:async';
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:go_router/go_router.dart';
-import 'package:latlong2/latlong.dart';
 import '../core/constants.dart';
 import '../services/location_service.dart';
 import '../services/notification_service.dart';
 import '../services/order_history_service.dart';
 import '../services/supabase_service.dart';
 
-// Coordenadas mock dentro de Maravatío, Mich.
 const _kRestaurantPos = LatLng(19.9020, -100.4510);
 const _kCustomerPos   = LatLng(19.8900, -100.4370);
 const _kCenter        = LatLng(19.8960, -100.4440);
@@ -38,16 +43,14 @@ class TrackingScreen extends StatefulWidget {
 }
 
 class _TrackingScreenState extends State<TrackingScreen> {
-  final MapController _mapCtrl = MapController();
+  GoogleMapController? _mapCtrl;
   Timer? _pollTimer;
 
-  LatLng _motoPos = _kRestaurantPos;
+  LatLng _motoPos    = _kRestaurantPos;
   LatLng _customerPos = _kCustomerPos;
 
-  // Estado real del pedido: pending, accepted, delivering, delivered
   String _orderStatus = 'pending';
 
-  // 0=Preparando, 1=Repartidor viene, 2=En camino, 3=Entregado
   int get _step {
     switch (_orderStatus) {
       case 'accepted':   return 1;
@@ -58,11 +61,37 @@ class _TrackingScreenState extends State<TrackingScreen> {
   }
 
   static final _statusData = [
-    (icon: Icons.hourglass_top_rounded, label: 'Pedido recibido',           color: const Color(0xFFFFB300)),
+    (icon: Icons.hourglass_top_rounded, label: 'Pedido recibido',              color: const Color(0xFFFFB300)),
     (icon: Icons.restaurant_outlined,   label: 'Repartidor va al restaurante', color: AppConstants.primaryColor),
-    (icon: Icons.delivery_dining,       label: 'Repartidor en camino',      color: const Color(0xFF2196F3)),
-    (icon: Icons.check_circle_rounded,  label: '¡Pedido entregado!',        color: Colors.green),
+    (icon: Icons.delivery_dining,       label: 'Repartidor en camino',         color: const Color(0xFF2196F3)),
+    (icon: Icons.check_circle_rounded,  label: '¡Pedido entregado!',           color: Colors.green),
   ];
+
+  Set<Marker> get _markers {
+    final ms = <Marker>{
+      Marker(
+        markerId: const MarkerId('restaurant'),
+        position: _kRestaurantPos,
+        icon: BitmapDescriptor.defaultMarkerWithHue(340),
+        infoWindow: const InfoWindow(title: 'Restaurante'),
+      ),
+      Marker(
+        markerId: const MarkerId('customer'),
+        position: _customerPos,
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+        infoWindow: const InfoWindow(title: 'Tu domicilio'),
+      ),
+    };
+    if (_step >= 1) {
+      ms.add(Marker(
+        markerId: const MarkerId('repartidor'),
+        position: _motoPos,
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
+        infoWindow: const InfoWindow(title: 'Repartidor'),
+      ));
+    }
+    return ms;
+  }
 
   @override
   void initState() {
@@ -81,21 +110,21 @@ class _TrackingScreenState extends State<TrackingScreen> {
     final pos = LatLng(loc.lat, loc.lng);
     setState(() => _motoPos = pos);
     if (_step >= 1) {
-      try { _mapCtrl.move(pos, 15.5); } catch (_) {}
+      _mapCtrl?.animateCamera(CameraUpdate.newLatLngZoom(pos, 15.5));
     }
   }
 
   Future<void> _geocodeAddress() async {
     if (widget.lat != null && widget.lng != null) {
       setState(() => _customerPos = LatLng(widget.lat!, widget.lng!));
-      try { _mapCtrl.move(_customerPos, 15.0); } catch (_) {}
+      _mapCtrl?.animateCamera(CameraUpdate.newLatLngZoom(_customerPos, 15.0));
       return;
     }
     if (widget.address.trim().isEmpty) return;
     final result = await LocationService.geocodeAddress(widget.address);
     if (!mounted || result == null) return;
     setState(() => _customerPos = LatLng(result.lat, result.lng));
-    try { _mapCtrl.move(_customerPos, 15.0); } catch (_) {}
+    _mapCtrl?.animateCamera(CameraUpdate.newLatLngZoom(_customerPos, 15.0));
   }
 
   Future<void> _pollStatus() async {
@@ -115,7 +144,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
   @override
   void dispose() {
     _pollTimer?.cancel();
-    _mapCtrl.dispose();
+    _mapCtrl?.dispose();
     super.dispose();
   }
 
@@ -138,9 +167,11 @@ class _TrackingScreenState extends State<TrackingScreen> {
                 style: TextStyle(color: Colors.white.withValues(alpha: 0.5))),
           ),
           TextButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(dialogCtx);
-              context.go('/restaurants');
+              await SupabaseService.updateOrderStatus(widget.orderId, 'cancelled');
+              await OrderHistoryService.clearActiveOrder();
+              if (mounted) context.go('/restaurants');
             },
             child: const Text('Sí, cancelar',
                 style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
@@ -159,56 +190,24 @@ class _TrackingScreenState extends State<TrackingScreen> {
     }
   }
 
-  List<Marker> get _markers {
-    final ms = <Marker>[
-      Marker(
-        point: _kRestaurantPos,
-        width: 48,
-        height: 48,
-        child: _MapPin(icon: Icons.storefront, color: AppConstants.primaryColor),
-      ),
-      Marker(
-        point: _customerPos,
-        width: 48,
-        height: 48,
-        child: _MapPin(icon: Icons.home, color: const Color(0xFF2196F3)),
-      ),
-    ];
-    if (_step >= 1) {
-      ms.add(Marker(
-        point: _motoPos,
-        width: 52,
-        height: 52,
-        child: _MapPin(icon: Icons.delivery_dining, color: const Color(0xFFFF6D00)),
-      ));
-    }
-    return ms;
-  }
-
   @override
   Widget build(BuildContext context) {
     final sd = _statusData[_step];
 
     return Scaffold(
       body: Stack(children: [
-        // ── Mapa OpenStreetMap (CartoDB Dark Matter) ─────────────────────────
-        FlutterMap(
-          mapController: _mapCtrl,
-          options: const MapOptions(
-            initialCenter: _kCenter,
-            initialZoom: 14.5,
-          ),
-          children: [
-            TileLayer(
-              urlTemplate: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-              subdomains: const ['a', 'b', 'c', 'd'],
-              userAgentPackageName: 'com.example.landing_test',
-            ),
-            MarkerLayer(markers: _markers),
-          ],
+        // ── Mapa Google Maps ──────────────────────────────────────────────────
+        GoogleMap(
+          initialCameraPosition: const CameraPosition(target: _kCenter, zoom: 14.5),
+          onMapCreated: (ctrl) => setState(() => _mapCtrl = ctrl),
+          markers: _markers,
+          zoomControlsEnabled: false,
+          mapToolbarEnabled: false,
+          myLocationButtonEnabled: false,
+          compassEnabled: false,
         ),
 
-        // ── Tarjeta de estado (arriba) ───────────────────────────────────────
+        // ── Tarjeta de estado (arriba) ────────────────────────────────────────
         SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -252,7 +251,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
           ),
         ),
 
-        // ── Tarjeta del pedido (abajo) ───────────────────────────────────────
+        // ── Tarjeta del pedido (abajo) ────────────────────────────────────────
         Positioned(
           left: 0, right: 0, bottom: 0,
           child: Container(
@@ -336,9 +335,13 @@ class _TrackingScreenState extends State<TrackingScreen> {
                         Container(
                           width: 30, height: 30,
                           decoration: BoxDecoration(
-                            color: (done || active) ? color.withValues(alpha: 0.15) : AppConstants.surface2Color,
+                            color: (done || active)
+                                ? color.withValues(alpha: 0.15)
+                                : AppConstants.surface2Color,
                             shape: BoxShape.circle,
-                            border: Border.all(color: (done || active) ? color : Colors.transparent, width: 1.5),
+                            border: Border.all(
+                                color: (done || active) ? color : Colors.transparent,
+                                width: 1.5),
                           ),
                           child: Icon(done ? Icons.check : sd.icon, color: color, size: 14),
                         ),
@@ -347,7 +350,9 @@ class _TrackingScreenState extends State<TrackingScreen> {
                           i == 0 ? 'Recibido' : i == 1 ? 'Preparando' : i == 2 ? 'En camino' : 'Entregado',
                           style: TextStyle(
                               fontSize: 9,
-                              color: (done || active) ? Colors.white.withValues(alpha: 0.7) : Colors.white.withValues(alpha: 0.2)),
+                              color: (done || active)
+                                  ? Colors.white.withValues(alpha: 0.7)
+                                  : Colors.white.withValues(alpha: 0.2)),
                           textAlign: TextAlign.center,
                         ),
                       ]),
@@ -359,7 +364,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
-                      onPressed: () => _confirmarCancelacion(),
+                      onPressed: _confirmarCancelacion,
                       icon: const Icon(Icons.cancel_outlined, size: 18, color: Colors.redAccent),
                       label: const Text('Cancelar pedido',
                           style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600)),
@@ -398,55 +403,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
   }
 }
 
-// ── Pin del mapa ─────────────────────────────────────────────────────────────
-class _MapPin extends StatelessWidget {
-  final IconData icon;
-  final Color color;
-  const _MapPin({required this.icon, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 38,
-          height: 38,
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(color: color.withValues(alpha: 0.5), blurRadius: 8, spreadRadius: 2),
-            ],
-          ),
-          child: Icon(icon, color: Colors.white, size: 20),
-        ),
-        CustomPaint(size: const Size(12, 7), painter: _PinTailPainter(color)),
-      ],
-    );
-  }
-}
-
-class _PinTailPainter extends CustomPainter {
-  final Color color;
-  const _PinTailPainter(this.color);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = color;
-    final path = ui.Path()
-      ..moveTo(0, 0)
-      ..lineTo(size.width, 0)
-      ..lineTo(size.width / 2, size.height)
-      ..close();
-    canvas.drawPath(path, paint);
-  }
-
-  @override
-  bool shouldRepaint(_PinTailPainter old) => old.color != color;
-}
-
-// ── Punto pulsante (en tránsito) ─────────────────────────────────────────────
+// ── Punto pulsante (en tránsito) ──────────────────────────────────────────────
 class _PulsingDot extends StatefulWidget {
   final Color color;
   const _PulsingDot({required this.color});

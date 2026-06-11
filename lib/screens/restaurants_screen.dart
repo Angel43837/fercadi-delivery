@@ -14,6 +14,7 @@ import '../models/category.dart';
 import '../models/product.dart';
 import '../providers/app_data_provider.dart';
 import '../providers/cart_provider.dart';
+import '../providers/theme_provider.dart';
 import '../services/location_service.dart';
 import '../services/notification_service.dart';
 import '../services/order_history_service.dart';
@@ -258,10 +259,11 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
     if (_cats.containsKey(restaurantId)) return;
     setState(() => _loadingMenu[restaurantId] = true);
     final cats = await SupabaseService.getCategories(restaurantId);
-    final prods = <String, List<Product>>{};
-    for (final cat in cats) {
-      prods[cat.id] = await SupabaseService.getProducts(cat.id);
-    }
+    // Carga todos los productos en paralelo
+    final prodLists = await Future.wait(cats.map((c) => SupabaseService.getProducts(c.id)));
+    final prods = <String, List<Product>>{
+      for (var i = 0; i < cats.length; i++) cats[i].id: prodLists[i],
+    };
     if (mounted) {
       setState(() {
         _cats[restaurantId] = cats;
@@ -292,68 +294,84 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
   Widget build(BuildContext context) {
     final cartCount = context.watch<CartProvider>().count;
     final appData  = context.watch<AppDataProvider>();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
-      backgroundColor: AppConstants.bgColor,
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        backgroundColor: AppConstants.primaryColor,
         elevation: 0,
-        centerTitle: true,
-        title: const SizedBox.shrink(),
+        // ── Usuario a la izquierda ───────────────────────────────────────────
+        leading: GestureDetector(
+          onTap: () async {
+            await context.push('/profile');
+            final n = await AuthService.getDisplayName();
+            final p = await AuthService.getProfilePhoto();
+            if (mounted) setState(() { _displayName = n; _photoPath = p; });
+          },
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: _photoPath != null
+                ? ClipOval(
+                    child: _photoPath!.startsWith('http')
+                        ? Image.network(_photoPath!, fit: BoxFit.cover, width: 36, height: 36,
+                            errorBuilder: (_, __, ___) => _defaultAvatar())
+                        : Image.file(File(_photoPath!), fit: BoxFit.cover, width: 36, height: 36,
+                            errorBuilder: (_, __, ___) => _defaultAvatar()))
+                : _defaultAvatar(),
+          ),
+        ),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('GOGO FOOD',
+                style: TextStyle(
+                    color: isDark ? AppConstants.primaryColor : Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16)),
+            if (_displayName.isNotEmpty)
+              Text('Hola, $_displayName',
+                  style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.55),
+                      fontSize: 11)),
+          ],
+        ),
+        // ── Carrito + menú 3 líneas a la derecha ────────────────────────────
         actions: [
-          IconButton(
-            icon: Icon(Icons.person_outline, color: Colors.white.withValues(alpha: 0.8), size: 22),
-            tooltip: 'Mi perfil',
-            onPressed: () async {
-              await context.push('/profile');
-              final n = await AuthService.getDisplayName();
-              final p = await AuthService.getProfilePhoto();
-              if (mounted) setState(() { _displayName = n; _photoPath = p; });
-            },
-          ),
-          IconButton(
-            icon: Icon(Icons.receipt_long_outlined, color: Colors.white.withValues(alpha: 0.8), size: 22),
-            tooltip: 'Mis pedidos',
-            onPressed: () => context.push('/history'),
-          ),
-          IconButton(
-            icon: Icon(Icons.logout, color: Colors.white.withValues(alpha: 0.8), size: 22),
-            tooltip: 'Cerrar sesión',
-            onPressed: () async {
-              final router = GoRouter.of(context);
-              await AuthService.clearSession();
-              router.go('/login');
-            },
-          ),
           Stack(clipBehavior: Clip.none, children: [
-            IconButton(
-              icon: const Icon(Icons.shopping_bag_outlined,
-                  color: Colors.white),
-              onPressed: () => context.push('/cart'),
+            _appBarIconButton(
+              icon: Icons.shopping_bag_outlined,
+              isDark: isDark,
+              onTap: () => context.push('/cart'),
             ),
             if (cartCount > 0)
               Positioned(
-                right: 6,
-                top: 6,
+                right: 4, top: 4,
                 child: Container(
                   padding: const EdgeInsets.all(4),
-                  decoration: const BoxDecoration(
-                      color: AppConstants.surfaceColor,
+                  decoration: BoxDecoration(
+                      color: isDark ? AppConstants.primaryColor : Colors.white,
                       shape: BoxShape.circle),
                   child: Text('$cartCount',
-                      style: const TextStyle(
-                          color: Colors.white,
+                      style: TextStyle(
+                          color: isDark ? Colors.white : AppConstants.primaryColor,
                           fontSize: 10,
                           fontWeight: FontWeight.bold)),
                 ),
               ),
           ]),
+          _appBarIconButton(
+            icon: Icons.menu,
+            isDark: isDark,
+            onTap: _showSideMenu,
+          ),
+          const SizedBox(width: 4),
         ],
       ),
-      body: Stack(children: [
-        _checkingLocation ? _buildChecking() : _buildBody(appData),
-        if (_activeOrder != null) _buildActiveOrderBanner(),
-      ]),
+      // ── Barra de carrito fija abajo ──────────────────────────────────────
+      bottomNavigationBar: (cartCount > 0 || _activeOrder != null)
+          ? _buildBottomArea(cartCount, context.read<CartProvider>())
+          : null,
+      body: _checkingLocation ? _buildChecking(isDark) : _buildBody(appData, isDark),
     );
   }
 
@@ -409,9 +427,161 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
     );
   }
 
-  Widget _buildChecking() => Center(
+  // ── Avatar por defecto ───────────────────────────────────────────────────
+  Widget _defaultAvatar() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return CircleAvatar(
+      radius: 18,
+      backgroundColor: isDark
+          ? AppConstants.primaryColor.withValues(alpha: 0.15)
+          : Colors.white.withValues(alpha: 0.9),
+      child: Icon(Icons.person,
+          color: AppConstants.primaryColor, size: 20),
+    );
+  }
+
+  // ── Botón de AppBar (fondo blanco en modo claro, transparente en oscuro) ─
+  Widget _appBarIconButton({
+    required IconData icon,
+    required bool isDark,
+    required VoidCallback onTap,
+  }) {
+    if (isDark) {
+      return IconButton(
+        icon: Icon(icon, color: Colors.white),
+        onPressed: onTap,
+      );
+    }
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(icon, color: AppConstants.primaryColor, size: 22),
+      ),
+    );
+  }
+
+  // ── Menú lateral (3 líneas) ───────────────────────────────────────────────
+  void _showSideMenu() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bgColor = isDark ? AppConstants.surfaceColor : AppConstants.primaryColor;
+    final textColor = Colors.white;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: bgColor,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => Column(mainAxisSize: MainAxisSize.min, children: [
+        const SizedBox(height: 8),
+        Container(
+          width: 40, height: 4,
+          decoration: BoxDecoration(
+              color: Colors.white30, borderRadius: BorderRadius.circular(2))),
+        const SizedBox(height: 8),
+        ListTile(
+          leading: Icon(Icons.person_outline, color: isDark ? AppConstants.primaryColor : Colors.white),
+          title: Text('Mi perfil', style: TextStyle(color: textColor)),
+          onTap: () { Navigator.pop(context); context.push('/profile'); },
+        ),
+        ListTile(
+          leading: Icon(Icons.receipt_long_outlined, color: isDark ? AppConstants.primaryColor : Colors.white),
+          title: Text('Mis pedidos', style: TextStyle(color: textColor)),
+          onTap: () { Navigator.pop(context); context.push('/history'); },
+        ),
+        Consumer<ThemeProvider>(
+          builder: (ctx, theme, child) {
+            return SwitchListTile(
+              secondary: Icon(
+                theme.isDark ? Icons.dark_mode : Icons.light_mode,
+                color: isDark ? AppConstants.primaryColor : Colors.white,
+              ),
+              title: Text(
+                theme.isDark ? 'Modo oscuro' : 'Modo claro',
+                style: TextStyle(color: textColor),
+              ),
+              value: theme.isDark,
+              activeThumbColor: isDark ? AppConstants.primaryColor : Colors.white,
+              inactiveThumbColor: Colors.white70,
+              onChanged: (_) => theme.toggle(),
+            );
+          },
+        ),
+        Divider(color: Colors.white.withValues(alpha: 0.15), height: 1),
+        ListTile(
+          leading: Icon(Icons.logout, color: isDark ? Colors.redAccent : Colors.white70),
+          title: Text('Cerrar sesión',
+              style: TextStyle(color: isDark ? Colors.redAccent : Colors.white70)),
+          onTap: () async {
+            Navigator.pop(context);
+            final router = GoRouter.of(context);
+            await AuthService.clearSession();
+            router.go('/login');
+          },
+        ),
+        const SizedBox(height: 16),
+      ]),
+    );
+  }
+
+  // ── Área inferior: pedido activo + barra de carrito ───────────────────────
+  Widget _buildBottomArea(int cartCount, CartProvider cart) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      if (_activeOrder != null) _buildActiveOrderBanner(),
+      if (cartCount > 0)
+        Container(
+          color: isDark ? AppConstants.surfaceColor : AppConstants.primaryColor,
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
+          child: SafeArea(
+            child: ElevatedButton(
+              onPressed: () => context.push('/cart'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: AppConstants.primaryColor,
+                minimumSize: const Size(double.infinity, 54),
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                elevation: 0,
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                        color: AppConstants.primaryColor.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(10)),
+                    child: Text('$cartCount',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                            color: AppConstants.primaryColor)),
+                  ),
+                  const Expanded(
+                    child: Center(
+                      child: Text('Realizar pedido',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                    ),
+                  ),
+                  Text('\$${cart.total.toStringAsFixed(0)} MXN',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                ]),
+              ),
+            ),
+          ),
+        ),
+    ]);
+  }
+
+  Widget _buildChecking(bool isDark) => Center(
         child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          CircularProgressIndicator(color: AppConstants.primaryColor),
+          CircularProgressIndicator(
+              color: isDark ? AppConstants.primaryColor : Colors.white),
           const SizedBox(height: 20),
           Text('Detectando tu ubicación...',
               style: TextStyle(
@@ -419,7 +589,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
         ]),
       );
 
-  Widget _buildBody(AppDataProvider appData) {
+  Widget _buildBody(AppDataProvider appData, bool isDark) {
     if (_locationResult?.status != LocationStatus.enMaravatio) {
       return _buildFueraDeZona(_locationResult?.status);
     }
@@ -427,9 +597,9 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
       future: _futureRestaurants,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
+          return Center(
               child: CircularProgressIndicator(
-                  color: AppConstants.primaryColor));
+                  color: isDark ? AppConstants.primaryColor : Colors.white));
         }
         final restaurants = snapshot.data ?? [];
         return ListView.builder(
@@ -445,7 +615,11 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                       'assets/images/logo.svg',
                       width: MediaQuery.of(context).size.width * 0.42,
                       fit: BoxFit.contain,
-                      colorFilter: const ColorFilter.mode(Colors.white, BlendMode.srcIn),
+                      colorFilter: ColorFilter.mode(
+                          Theme.of(context).brightness == Brightness.dark
+                              ? AppConstants.primaryColor
+                              : Colors.white,
+                          BlendMode.srcIn),
                     ),
                   ),
                   const SizedBox(height: 28),
@@ -492,12 +666,16 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
     final isLoading = _loadingMenu[r.id] == true;
     final cats = _cats[r.id] ?? [];
     final selIdx = _selCat[r.id] ?? 0;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final tileBg = isDark ? AppConstants.primaryColor : Colors.white;
+    final tileText = isDark ? Colors.white : Colors.black87;
+    final tileSub = isDark ? Colors.white.withValues(alpha: 0.5) : Colors.black54;
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 250),
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: AppConstants.primaryColor,
+        color: tileBg,
         borderRadius: BorderRadius.circular(8),
         boxShadow: [
           BoxShadow(
@@ -506,9 +684,6 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
             blurRadius: 18,
           ),
         ],
-        border: isExpanded
-            ? Border.all(color: AppConstants.surfaceColor, width: 1.2)
-            : null,
       ),
       child: Column(children: [
         GestureDetector(
@@ -520,10 +695,10 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(r.name,
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
-                        color: Colors.white)),
+                        color: tileText)),
               ),
               GestureDetector(
                 onTap: () => context.read<AppDataProvider>().toggleLike(r.id).ignore(),
@@ -531,24 +706,20 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                   duration: const Duration(milliseconds: 200),
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: appData.isLikedByUser(r.id)
-                        ? AppConstants.primaryColor
-                        : AppConstants.primaryColor.withValues(alpha: 0.15),
+                    color: AppConstants.primaryColor.withValues(alpha: isDark ? 1.0 : 0.12),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Row(children: [
                     Icon(
-                      appData.isLikedByUser(r.id)
-                          ? Icons.thumb_up
-                          : Icons.thumb_up_outlined,
-                      color: Colors.white,
+                      appData.isLikedByUser(r.id) ? Icons.thumb_up : Icons.thumb_up_outlined,
+                      color: isDark ? Colors.white : AppConstants.primaryColor,
                       size: 13,
                     ),
                     const SizedBox(width: 3),
                     Text(
                       '${appData.getLikes(r.id)}',
-                      style: const TextStyle(
-                          color: Colors.white,
+                      style: TextStyle(
+                          color: isDark ? Colors.white : AppConstants.primaryColor,
                           fontWeight: FontWeight.bold,
                           fontSize: 12),
                     ),
@@ -562,7 +733,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                 child: Icon(Icons.keyboard_arrow_down,
                     color: isExpanded
                         ? AppConstants.primaryColor
-                        : Colors.white.withValues(alpha: 0.5),
+                        : tileSub,
                     size: 26),
               ),
             ]),
@@ -570,7 +741,12 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
         ),
         if (isExpanded)
           Column(children: [
-            const Divider(height: 1, color: AppConstants.surface2Color),
+            Divider(
+              height: 1,
+              color: Theme.of(context).brightness == Brightness.dark
+                  ? AppConstants.surface2Color
+                  : Colors.white.withValues(alpha: 0.3),
+            ),
             if (isLoading)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 24),
@@ -591,6 +767,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
 
   Widget _buildCategoryTabs(
       String restaurantId, List<Category> cats, int selIdx) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
@@ -599,6 +776,15 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
           final cat = cats[i];
           final color = _catColors[i % _catColors.length];
           final isSelected = selIdx == i;
+
+          final bgColor = isDark
+              ? (isSelected ? color : color.withValues(alpha: 0.12))
+              : (isSelected ? AppConstants.primaryColor : AppConstants.primaryColor.withValues(alpha: 0.65));
+          final borderColor = isDark
+              ? (isSelected ? color : color.withValues(alpha: 0.35))
+              : AppConstants.primaryColor;
+          const textColor = Colors.white;
+
           return GestureDetector(
             onTap: () => setState(() {
               _selCat[restaurantId] = i;
@@ -607,30 +793,22 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
               margin: const EdgeInsets.only(right: 8),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
-                color: isSelected ? color : color.withValues(alpha: 0.12),
+                color: bgColor,
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                    color: isSelected
-                        ? color
-                        : color.withValues(alpha: 0.35),
-                    width: 1.5),
+                border: Border.all(color: borderColor, width: 1.5),
               ),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
                 if (cat.icon != null)
                   Padding(
                       padding: const EdgeInsets.only(right: 5),
-                      child: Text(cat.icon!,
-                          style: const TextStyle(fontSize: 14))),
+                      child: Text(cat.icon!, style: const TextStyle(fontSize: 14))),
                 Text(cat.name,
                     style: TextStyle(
                         fontSize: 13,
-                        fontWeight: isSelected
-                            ? FontWeight.bold
-                            : FontWeight.w600,
-                        color: Colors.white)),
+                        fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+                        color: textColor)),
               ]),
             ),
           );
@@ -677,11 +855,12 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
 
   Widget _buildProductTile(Product p, String restaurantId, String restaurantName,
       Color accent, bool isExpanded, int qty) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return AnimatedContainer(
       duration: const Duration(milliseconds: 220),
       margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
       decoration: BoxDecoration(
-        color: AppConstants.surface2Color,
+        color: isDark ? AppConstants.surface2Color : Colors.white,
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
@@ -724,10 +903,11 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                         Text(p.description!,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color:
-                          Colors.black.withValues(alpha: 0.45))),
+                            style: TextStyle(
+                                fontSize: 11,
+                                color: isDark
+                                    ? Colors.white.withValues(alpha: 0.45)
+                                    : Colors.black54)),
                       const SizedBox(height: 4),
                     Text('\$${p.price.toStringAsFixed(0)} MXN',
                       style: TextStyle(
@@ -747,14 +927,22 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                       child: Row(mainAxisSize: MainAxisSize.min, children: [
                         Icon(
                           liked ? Icons.thumb_up : Icons.thumb_up_outlined,
-                          color: liked ? AppConstants.primaryColor : Colors.black.withValues(alpha: 0.25),
+                          color: liked
+                              ? AppConstants.primaryColor
+                              : (isDark
+                                  ? Colors.white.withValues(alpha: 0.25)
+                                  : Colors.black.withValues(alpha: 0.25)),
                           size: 18,
                         ),
                         if (likes > 0) ...[
                           const SizedBox(width: 3),
                           Text('$likes',
                               style: TextStyle(
-                                  color: liked ? AppConstants.primaryColor : Colors.black.withValues(alpha: 0.35),
+                                  color: liked
+                                      ? AppConstants.primaryColor
+                                      : (isDark
+                                          ? Colors.white.withValues(alpha: 0.35)
+                                          : Colors.black.withValues(alpha: 0.35)),
                                   fontSize: 11)),
                         ],
                       ]),
@@ -768,7 +956,9 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                 child: Icon(Icons.keyboard_arrow_down,
                     color: isExpanded
                         ? accent
-                        : Colors.white.withValues(alpha: 0.4),
+                        : (isDark
+                            ? Colors.white.withValues(alpha: 0.4)
+                            : Colors.black38),
                     size: 22),
               ),
             ]),
@@ -794,7 +984,9 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                     if (p.description != null)
                       Text(p.description!,
                           style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.6),
+                              color: isDark
+                                  ? Colors.white.withValues(alpha: 0.6)
+                                  : Colors.black54,
                               fontSize: 13,
                               height: 1.5)),
                     const SizedBox(height: 12),
@@ -808,7 +1000,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                       // Quantity selector
                       Container(
                         decoration: BoxDecoration(
-                            color: AppConstants.surfaceColor,
+                            color: isDark ? AppConstants.surfaceColor : Colors.grey.shade100,
                             borderRadius: BorderRadius.circular(10)),
                         child: Row(children: [
                           GestureDetector(
@@ -823,7 +1015,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                               height: 34,
                               alignment: Alignment.center,
                               child: Icon(Icons.remove,
-                                  color: Colors.white
+                                  color: (isDark ? Colors.white : Colors.black87)
                                       .withValues(alpha: qty > 1 ? 1 : 0.3),
                                   size: 18),
                             ),
@@ -832,8 +1024,8 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                             width: 28,
                             child: Text('$qty',
                                 textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                    color: Colors.white,
+                                style: TextStyle(
+                                    color: isDark ? Colors.white : Colors.black87,
                                     fontSize: 16,
                                     fontWeight: FontWeight.bold)),
                           ),
@@ -958,9 +1150,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
           const SizedBox(height: 24),
           Text(title,
               style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white),
+                  fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
               textAlign: TextAlign.center),
           const SizedBox(height: 12),
           Text(subtitle,

@@ -1,3 +1,8 @@
+// notification_service.dart
+// Maneja las notificaciones locales (cuando la app está abierta o minimizada).
+// Para notificaciones cuando la app está CERRADA se necesita FCM (ver fcm_service.dart).
+// Cada método corresponde a un evento específico del flujo de pedidos.
+
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 class NotificationService {

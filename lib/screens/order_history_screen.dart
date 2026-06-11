@@ -1,3 +1,8 @@
+// order_history_screen.dart
+// Pantalla de historial de pedidos del cliente.
+// Muestra pedidos anteriores guardados en el teléfono (SharedPreferences).
+// Si hay un pedido activo en curso, muestra un banner para volver al tracking.
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../core/constants.dart';

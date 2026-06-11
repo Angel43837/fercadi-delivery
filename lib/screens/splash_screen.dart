@@ -1,3 +1,9 @@
+// splash_screen.dart
+// Pantalla de bienvenida que se muestra 3 segundos al abrir la app.
+// Muestra el logo con animación de fade-in y luego redirige según el estado de sesión:
+//   - Si hay sesión guardada → va directo a la pantalla del rol (restaurantes, repartidor, etc.)
+//   - Si no hay sesión → va al login
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -35,10 +41,13 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   Future<void> _navigate() async {
-    await Future.delayed(const Duration(seconds: 3));
+    // Mínimo 1.5s de splash + sesión en paralelo, navega cuando ambos terminen
+    final results = await Future.wait([
+      Future.delayed(const Duration(milliseconds: 1500)),
+      AuthService.getSession(),
+    ]);
     if (!mounted) return;
-    final session = await AuthService.getSession();
-    if (!mounted) return;
+    final session = results[1] as dynamic;
     final route = session != null ? AuthService.roleToRoute(session.email) : '/login';
     context.go(route);
   }
@@ -46,8 +55,10 @@ class _SplashScreenState extends State<SplashScreen>
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bg = isDark ? AppConstants.bgColor : AppConstants.primaryColor;
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: bg,
       body: FadeTransition(
         opacity: _fadeAnim,
         child: Column(
@@ -72,7 +83,7 @@ class _SplashScreenState extends State<SplashScreen>
               child: Column(
                 children: [
                   CircularProgressIndicator(
-                    color: AppConstants.primaryColor,
+                    color: Colors.white,
                     strokeWidth: 2.5,
                   ),
                   const SizedBox(height: 16),
@@ -80,7 +91,7 @@ class _SplashScreenState extends State<SplashScreen>
                     'Cargando...',
                     style: TextStyle(
                       fontSize: 13,
-                      color: Colors.black.withValues(alpha: 0.35),
+                      color: Colors.white.withValues(alpha: 0.6),
                     ),
                   ),
                 ],

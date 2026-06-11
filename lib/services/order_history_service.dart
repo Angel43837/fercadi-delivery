@@ -1,8 +1,14 @@
+// order_history_service.dart
+// Guarda y recupera el historial de pedidos del cliente en el teléfono (SharedPreferences).
+// También maneja el "pedido activo" — el pedido en curso que se puede volver a ver
+// en la pantalla de tracking si el usuario sale y regresa a la app.
+// Los datos se guardan como strings separados por "||" para evitar JSON complejo.
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 class OrderHistoryService {
-  static const _key        = 'order_history';
-  static const _activeKey  = 'active_order';
+  static const _key        = 'order_history';  // Lista de pedidos anteriores
+  static const _activeKey  = 'active_order';   // Pedido en curso (para tracking)
 
   // ── Pedido activo (para volver a tracking después de salir) ─────────────────
 

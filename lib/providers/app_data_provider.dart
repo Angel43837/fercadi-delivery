@@ -1,8 +1,20 @@
+// app_data_provider.dart
+// Provider global que maneja datos compartidos entre pantallas:
+//   - Likes de restaurantes y platillos (en tiempo real con Supabase Realtime)
+//   - Estado abierto/cerrado de restaurantes
+//   - Disponibilidad de productos (el dueño puede activar/desactivar)
+//   - Productos extra agregados por el dueño
+//   - Lista de pedidos (pedidos mock para la vista de administrador/dueño)
+//
+// Se accede desde cualquier pantalla con: context.read<AppDataProvider>()
+// Los likes usan "optimistic update" — se actualiza la UI antes de confirmar con la BD.
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/supabase_service.dart';
 import '../services/auth_service.dart';
 
+// Estados posibles de un pedido en la app
 enum AppOrderStatus { pendiente, enCamino, entregado, cancelado }
 
 ({Color color, String label}) appOrderStatusStyle(AppOrderStatus s) => switch (s) {
@@ -126,20 +138,24 @@ class AppDataProvider extends ChangeNotifier {
       final session = await AuthService.getSession();
       _userEmail = session?.email ?? '';
 
-      final counts = await SupabaseService.getProductLikeCounts();
-      final liked  = await SupabaseService.getUserLikedProducts(_userEmail);
-      _productLikes
-        ..clear()
-        ..addAll(counts);
-      _productLikedByUser
-        ..clear()
-        ..addAll(liked);
+      // Todas las queries en paralelo
+      final results = await Future.wait([
+        SupabaseService.getProductLikeCounts(),
+        SupabaseService.getUserLikedProducts(_userEmail),
+        SupabaseService.getRestaurantLikeCounts(),
+        SupabaseService.getUserLikedRestaurants(_userEmail),
+      ]);
+
+      _productLikes..clear()..addAll(results[0] as Map<String, int>);
+      _productLikedByUser..clear()..addAll(results[1] as Set<String>);
+      _likes..clear()..addAll(results[2] as Map<String, int>);
+      _likedByUser..clear()..addAll(results[3] as Set<String>);
       notifyListeners();
 
       _likesChannel?.unsubscribe();
       _likesChannel = SupabaseService.subscribeToProductLikes(_refreshLikes);
-
-      await initRestaurantLikes();
+      _restaurantLikesChannel?.unsubscribe();
+      _restaurantLikesChannel = SupabaseService.subscribeToRestaurantLikes(_refreshRestaurantLikes);
     } catch (_) {}
   }
 

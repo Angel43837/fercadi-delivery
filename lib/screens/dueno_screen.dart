@@ -1,3 +1,12 @@
+// dueno_screen.dart
+// Panel del dueño del restaurante.
+// Permite al dueño:
+//   - Ver y gestionar pedidos en tiempo real (pendientes, aceptados, en camino, entregados)
+//   - Activar/desactivar productos del menú
+//   - Agregar, editar y eliminar platillos con fotos
+//   - Configurar la información del restaurante (nombre, foto, dirección, teléfono)
+// Los pedidos se actualizan en tiempo real usando Supabase Realtime (subscribeToOrders).
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';

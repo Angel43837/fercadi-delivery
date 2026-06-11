@@ -1,3 +1,10 @@
+// menu_screen.dart
+// Pantalla del menú de un restaurante específico.
+// Muestra las categorías como pestañas de colores en scroll horizontal.
+// Al seleccionar una categoría carga sus productos.
+// Cada producto tiene botón para agregar al carrito.
+// (Esta pantalla no está en uso activo — se usa la vista expandible en RestaurantsScreen)
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
