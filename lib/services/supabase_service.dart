@@ -546,20 +546,26 @@ class SupabaseService {
   }
 
   static Future<List<Map<String, dynamic>>> getOrdersForRepartidor() async {
+    final userId = _client.auth.currentUser?.id;
+    // Muestra pedidos sin repartidor asignado (pending) + pedidos asignados a este repartidor
     final data = await _client
         .from('orders')
         .select('*, order_items(quantity, price, products(id, name))')
-        .inFilter('status', ['pending', 'accepted'])
+        .or('status.eq.pending,and(status.eq.accepted,repartidor_id.eq.$userId)')
         .order('created_at', ascending: false);
     return (data as List).cast<Map<String, dynamic>>();
   }
 
   static Future<void> updateOrderStatus(String orderId, String status) async {
-    await _client.from('orders').update({'status': status}).eq('id', orderId);
-    _sendFcmForStatus(orderId, status);
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) throw Exception('No autenticado');
+    final updates = <String, dynamic>{'status': status};
+    if (status == 'accepted') updates['repartidor_id'] = userId;
+    await _client.from('orders').update(updates).eq('id', orderId);
+    await _sendFcmForStatus(orderId, status);
   }
 
-  static void _sendFcmForStatus(String orderId, String status) async {
+  static Future<void> _sendFcmForStatus(String orderId, String status) async {
     try {
       final data = await _client
           .from('orders')

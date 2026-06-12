@@ -7,6 +7,7 @@
 //   3. Limpia el carrito
 //   4. Redirige a la pantalla de tracking en tiempo real
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:go_router/go_router.dart';
@@ -190,6 +191,18 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
     // Si el pago es con tarjeta, procesar Stripe primero
     if (_payment == _Pay.card) {
+      if (kIsWeb) {
+        if (mounted) {
+          setState(() => _loading = false);
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('El pago con tarjeta solo está disponible en la app móvil. Descarga la app para pagar con tarjeta.'),
+            backgroundColor: Color(0xFFBF360C),
+            duration: Duration(seconds: 5),
+            behavior: SnackBarBehavior.floating,
+          ));
+        }
+        return;
+      }
       final paid = await _payWithStripe(cart.total);
       if (!paid) {
         if (mounted) setState(() => _loading = false);
@@ -197,10 +210,22 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       }
     }
 
+    final restaurantId = cart.restaurantId;
+    if (restaurantId == null || restaurantId.isEmpty) {
+      if (mounted) {
+        setState(() => _loading = false);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Error: carrito sin restaurante. Vuelve e intenta de nuevo.'),
+          backgroundColor: Colors.redAccent,
+        ));
+      }
+      return;
+    }
+
     String orderId = 'local';
     try {
       orderId = await SupabaseService.createOrder(
-        restaurantId: cart.restaurantId ?? '1',
+        restaurantId: restaurantId,
         total: cart.total,
         customerName: _nameCtrl.text.trim(),
         customerPhone: _phoneCtrl.text.trim(),
@@ -217,15 +242,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       );
     } catch (e) {
       if (mounted) {
+        setState(() => _loading = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error al enviar pedido: $e'),
             backgroundColor: Colors.redAccent,
           ),
         );
-        setState(() => _loading = false);
-        return;
+      } else {
+        _loading = false;
       }
+      return;
     }
 
     if (!mounted) return;

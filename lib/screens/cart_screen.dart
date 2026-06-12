@@ -173,9 +173,10 @@ class _OrderSummary extends StatelessWidget {
                 onPressed: () => context.push('/checkout'),
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
-                  backgroundColor: Colors.white,
-                  foregroundColor: AppConstants.primaryColor,
-                  elevation: 0,
+                  backgroundColor: AppConstants.primaryColor,
+                  foregroundColor: Colors.white,
+                  elevation: 6,
+                  shadowColor: Colors.black54,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 ),
                 child: const Text('REALIZAR PEDIDO', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),

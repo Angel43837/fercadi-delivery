@@ -47,8 +47,9 @@ class CartProvider extends ChangeNotifier {
       removeProduct(productId);
       return;
     }
-    final item = _items.firstWhere((i) => i.product.id == productId);
-    item.quantity = quantity;
+    final matches = _items.where((i) => i.product.id == productId);
+    if (matches.isEmpty) return;
+    matches.first.quantity = quantity;
     notifyListeners();
   }
 

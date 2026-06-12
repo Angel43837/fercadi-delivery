@@ -7,8 +7,10 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants.dart';
 import '../services/auth_service.dart';
+import '../services/supabase_service.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -41,15 +43,28 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   Future<void> _navigate() async {
-    // Mínimo 1.5s de splash + sesión en paralelo, navega cuando ambos terminen
     final results = await Future.wait([
       Future.delayed(const Duration(milliseconds: 1500)),
       AuthService.getSession(),
     ]);
     if (!mounted) return;
     final session = results[1] as dynamic;
-    final route = session != null ? AuthService.roleToRoute(session.email) : '/login';
-    context.go(route);
+    if (session == null) { context.go('/login'); return; }
+
+    // Para rutas privilegiadas, verificar contra Supabase live en modo real
+    final candidateRoute = AuthService.roleToRoute(session.email);
+    if (!SupabaseService.useMock &&
+        (candidateRoute == '/admin' || candidateRoute == '/repartidor' || candidateRoute == '/dueno')) {
+      final liveUser = Supabase.instance.client.auth.currentUser;
+      final liveRole = liveUser?.userMetadata?['role'] as String?;
+      final verifiedRoute = liveRole == 'repartidor' ? '/repartidor'
+                          : liveRole == 'dueno'      ? '/dueno'
+                          : liveRole == 'admin'      ? '/admin'
+                          : '/login';
+      context.go(verifiedRoute);
+      return;
+    }
+    context.go(candidateRoute);
   }
 
   @override

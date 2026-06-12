@@ -259,19 +259,18 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
     if (_cats.containsKey(restaurantId)) return;
     setState(() => _loadingMenu[restaurantId] = true);
     final cats = await SupabaseService.getCategories(restaurantId);
-    // Carga todos los productos en paralelo
+    if (!mounted) return;
     final prodLists = await Future.wait(cats.map((c) => SupabaseService.getProducts(c.id)));
+    if (!mounted) return;
     final prods = <String, List<Product>>{
       for (var i = 0; i < cats.length; i++) cats[i].id: prodLists[i],
     };
-    if (mounted) {
-      setState(() {
-        _cats[restaurantId] = cats;
-        _prods[restaurantId] = prods;
-        _loadingMenu[restaurantId] = false;
-        _selCat[restaurantId] = 0;
-      });
-    }
+    setState(() {
+      _cats[restaurantId] = cats;
+      _prods[restaurantId] = prods;
+      _loadingMenu[restaurantId] = false;
+      _selCat[restaurantId] = 0;
+    });
   }
 
   void _toggleRestaurant(String id) {
@@ -541,12 +540,13 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
             child: ElevatedButton(
               onPressed: () => context.push('/cart'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.white,
-                foregroundColor: AppConstants.primaryColor,
+                backgroundColor: AppConstants.primaryColor,
+                foregroundColor: Colors.white,
                 minimumSize: const Size(double.infinity, 54),
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                elevation: 0,
+                elevation: 6,
+                shadowColor: Colors.black54,
               ),
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -554,13 +554,13 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
-                        color: AppConstants.primaryColor.withValues(alpha: 0.15),
+                        color: Colors.black.withValues(alpha: 0.18),
                         borderRadius: BorderRadius.circular(10)),
                     child: Text('$cartCount',
                         style: const TextStyle(
                             fontWeight: FontWeight.bold,
                             fontSize: 13,
-                            color: AppConstants.primaryColor)),
+                            color: Colors.white)),
                   ),
                   const Expanded(
                     child: Center(
@@ -666,10 +666,9 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
     final isLoading = _loadingMenu[r.id] == true;
     final cats = _cats[r.id] ?? [];
     final selIdx = _selCat[r.id] ?? 0;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final tileBg = isDark ? AppConstants.primaryColor : Colors.white;
-    final tileText = isDark ? Colors.white : Colors.black87;
-    final tileSub = isDark ? Colors.white.withValues(alpha: 0.5) : Colors.black54;
+    const tileBg = AppConstants.primaryColor;
+    const tileText = Colors.white;
+    final tileSub = Colors.white.withValues(alpha: 0.6);
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 250),
@@ -706,20 +705,20 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                   duration: const Duration(milliseconds: 200),
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: AppConstants.primaryColor.withValues(alpha: isDark ? 1.0 : 0.12),
+                    color: Colors.white.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Row(children: [
                     Icon(
                       appData.isLikedByUser(r.id) ? Icons.thumb_up : Icons.thumb_up_outlined,
-                      color: isDark ? Colors.white : AppConstants.primaryColor,
+                      color: Colors.white,
                       size: 13,
                     ),
                     const SizedBox(width: 3),
                     Text(
                       '${appData.getLikes(r.id)}',
-                      style: TextStyle(
-                          color: isDark ? Colors.white : AppConstants.primaryColor,
+                      style: const TextStyle(
+                          color: Colors.white,
                           fontWeight: FontWeight.bold,
                           fontSize: 12),
                     ),

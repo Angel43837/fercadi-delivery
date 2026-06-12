@@ -47,3 +47,4 @@ app.*.map.json
 # Claude Code internal files
 .claude/
 autocommit.ps1
+.vercel
