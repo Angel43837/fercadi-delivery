@@ -157,13 +157,14 @@ jobs:
           fi
           DERIVED_DATA_PATH="${GITHUB_WORKSPACE}/DerivedData"
           if [ "$PROJECT_TYPE" = "flutter" ]; then
-            cd ..
+            # Flutter builds from repo root, not ios_path
+            cd "${GITHUB_WORKSPACE}"
             if [ "$CONFIGURATION" = "Debug" ]; then
               flutter build ios --debug --no-codesign
             else
               flutter build ios --release --no-codesign
             fi
-            cd "$IOS_PATH"
+            cd "${GITHUB_WORKSPACE}/$IOS_PATH"
           fi
           if [ "$USE_SIGNING" = "true" ]; then
             cd ..
@@ -193,7 +194,7 @@ jobs:
               echo "Error: Could not find .app"
               exit 1
             fi
-            cd ..
+            cd "${GITHUB_WORKSPACE}"
             mkdir -p build/Payload
             cp -R "$APP_PATH" build/Payload/
             cd build
