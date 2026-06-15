@@ -163,10 +163,19 @@ jobs:
           if [ "$PROJECT_TYPE" = "flutter" ]; then
             # Flutter builds from repo root, not ios_path
             cd "${GITHUB_WORKSPACE}"
+            echo "=== Generated.xcconfig ===" && cat ios/Flutter/Generated.xcconfig || true
+            echo "=== Flutter version ===" && flutter --version
             if [ "$CONFIGURATION" = "Debug" ]; then
-              flutter build ios --debug --no-codesign
+              flutter build ios --debug --no-codesign --verbose 2>&1 | tee /tmp/flutter-build.log; BUILD_EXIT=${PIPESTATUS[0]}
             else
-              flutter build ios --release --no-codesign
+              flutter build ios --release --no-codesign --verbose 2>&1 | tee /tmp/flutter-build.log; BUILD_EXIT=${PIPESTATUS[0]}
+            fi
+            if [ "$BUILD_EXIT" != "0" ]; then
+              echo "## Flutter Build Error" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              tail -200 /tmp/flutter-build.log >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              exit 1
             fi
             cd "${GITHUB_WORKSPACE}/$IOS_PATH"
           fi
