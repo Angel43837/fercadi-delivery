@@ -220,20 +220,22 @@ jobs:
             rm -rf Payload
           fi
 
-      - name: Report build failure
+      - name: Push build log to branch
         if: failure()
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
+          LOG_FILE="${GITHUB_WORKSPACE}/flutter-build-error.txt"
           if [ -f /tmp/flutter-build.log ]; then
-            tail -300 /tmp/flutter-build.log > /tmp/build-error.txt
+            tail -500 /tmp/flutter-build.log > "$LOG_FILE"
           else
-            echo "No flutter build log found" > /tmp/build-error.txt
+            echo "No flutter build log found at /tmp/flutter-build.log" > "$LOG_FILE"
           fi
-          gh gist create /tmp/build-error.txt \
-            --public \
-            --desc "GOGO Food iOS Build Error - run ${{ github.run_id }}" \
-            --filename "flutter-build-error.txt" 2>&1 || true
+          git config user.email "ci@github.com"
+          git config user.name "GitHub Actions CI"
+          git fetch origin build-logs 2>/dev/null || true
+          git checkout -B build-logs
+          git add flutter-build-error.txt
+          git commit -m "Build log: run ${{ github.run_id }}" || true
+          git push origin build-logs --force || true
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
