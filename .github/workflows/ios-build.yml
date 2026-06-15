@@ -81,6 +81,10 @@ jobs:
         if: steps.detect.outputs.type == 'flutter'
         run: flutter pub get
 
+      - name: Flutter doctor
+        if: steps.detect.outputs.type == 'flutter'
+        run: flutter doctor -v >> $GITHUB_STEP_SUMMARY 2>&1 || true
+
       - name: Setup Node.js
         if: steps.detect.outputs.type == 'reactnative' || steps.detect.outputs.type == 'expo'
         uses: actions/setup-node@v4
