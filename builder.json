@@ -1,0 +1,25 @@
+{
+  "project": "GOGO Food",
+  "platform": "ios",
+  "github": {
+    "owner": "Angel43837",
+    "repo": "fercadi-delivery"
+  },
+  "ios": {
+    "path": "ios",
+    "scheme": "",
+    "signing": false
+  },
+  "mobai": {
+    "url": "http://localhost:8686",
+    "device_id": ""
+  },
+  "flutter": {
+    "watch": {
+      "dirs": ["lib"],
+      "patterns": [".dart"],
+      "ignore": [".g.dart", ".freezed.dart"],
+      "debounce": 100
+    }
+  }
+}
