@@ -81,6 +81,14 @@ jobs:
         if: steps.detect.outputs.type == 'flutter'
         run: flutter pub get
 
+      - name: Patch xcconfig for arm64 CI build
+        if: steps.detect.outputs.type == 'flutter'
+        run: |
+          echo "" >> ios/Flutter/Generated.xcconfig
+          echo "ARCHS=arm64" >> ios/Flutter/Generated.xcconfig
+          echo "ONLY_ACTIVE_ARCH=NO" >> ios/Flutter/Generated.xcconfig
+          echo "EXCLUDED_ARCHS[sdk=iphonesimulator*]=i386 armv7 x86_64" >> ios/Flutter/Generated.xcconfig
+
       - name: Flutter doctor
         if: steps.detect.outputs.type == 'flutter'
         run: flutter doctor -v >> $GITHUB_STEP_SUMMARY 2>&1 || true
