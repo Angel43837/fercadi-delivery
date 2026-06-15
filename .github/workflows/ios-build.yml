@@ -165,11 +165,7 @@ jobs:
             cd "${GITHUB_WORKSPACE}"
             echo "=== Generated.xcconfig ===" && cat ios/Flutter/Generated.xcconfig || true
             echo "=== Flutter version ===" && flutter --version
-            if [ "$CONFIGURATION" = "Debug" ]; then
-              flutter build ios --debug --no-codesign --verbose 2>&1 | tee /tmp/flutter-build.log; BUILD_EXIT=${PIPESTATUS[0]}
-            else
-              flutter build ios --release --no-codesign --verbose 2>&1 | tee /tmp/flutter-build.log; BUILD_EXIT=${PIPESTATUS[0]}
-            fi
+            flutter build ios --release --no-codesign --verbose 2>&1 | tee /tmp/flutter-build.log; BUILD_EXIT=${PIPESTATUS[0]}
             if [ "$BUILD_EXIT" != "0" ]; then
               echo "## Flutter Build Error" >> $GITHUB_STEP_SUMMARY
               echo '```' >> $GITHUB_STEP_SUMMARY
