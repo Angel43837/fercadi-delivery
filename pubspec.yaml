@@ -27,6 +27,8 @@ dependencies:
   flutter_local_notifications: ^18.0.0
   google_maps_flutter: ^2.10.0
   flutter_stripe: ^11.1.0
+  flutter_image_compress: ^2.3.0
+  sentry_flutter: ^8.14.0
 
 dev_dependencies:
   flutter_test:

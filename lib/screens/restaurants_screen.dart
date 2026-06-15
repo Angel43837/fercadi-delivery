@@ -764,6 +764,29 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
 
   // ── Category tabs ──────────────────────────────────────────────────────
 
+  static IconData _categoryIcon(String name, String? emoji) {
+    final key = name.toLowerCase();
+    if (key.contains('hambur') || key.contains('burger'))  return Icons.lunch_dining;
+    if (key.contains('papa')  || key.contains('frita'))    return Icons.set_meal;
+    if (key.contains('bebida')|| key.contains('drink'))    return Icons.local_drink;
+    if (key.contains('postre')|| key.contains('dulce') || key.contains('helado')) return Icons.icecream;
+    if (key.contains('ensalada') || key.contains('vegano')) return Icons.eco;
+    if (key.contains('desayuno') || key.contains('breakfast')) return Icons.breakfast_dining;
+    if (key.contains('café') || key.contains('cafe') || key.contains('coffee')) return Icons.coffee;
+    if (key.contains('frappé')|| key.contains('frappe')|| key.contains('smoothie')) return Icons.local_cafe;
+    if (key.contains('pizza'))                             return Icons.local_pizza;
+    if (key.contains('pollo') || key.contains('chicken'))  return Icons.egg_alt;
+    if (key.contains('taco')  || key.contains('burritos')) return Icons.wrap_text;
+    if (key.contains('sushi') || key.contains('roll'))     return Icons.set_meal;
+    if (key.contains('entrada')|| key.contains('snack'))   return Icons.tapas;
+    if (key.contains('comida')|| key.contains('platillo'))  return Icons.restaurant;
+    if (key.contains('carne') || key.contains('asado'))    return Icons.outdoor_grill;
+    if (key.contains('mariscos') || key.contains('pesca')) return Icons.water;
+    if (key.contains('pasta') || key.contains('sopa'))     return Icons.ramen_dining;
+    if (key.contains('sandwich')|| key.contains('torta'))  return Icons.brunch_dining;
+    return Icons.restaurant_menu;
+  }
+
   Widget _buildCategoryTabs(
       String restaurantId, List<Category> cats, int selIdx) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -799,10 +822,10 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                 border: Border.all(color: borderColor, width: 1.5),
               ),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
-                if (cat.icon != null)
-                  Padding(
-                      padding: const EdgeInsets.only(right: 5),
-                      child: Text(cat.icon!, style: const TextStyle(fontSize: 14))),
+                Padding(
+                  padding: const EdgeInsets.only(right: 5),
+                  child: Icon(_categoryIcon(cat.name, cat.icon), color: Colors.white, size: 16),
+                ),
                 Text(cat.name,
                     style: TextStyle(
                         fontSize: 13,

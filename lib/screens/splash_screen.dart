@@ -12,6 +12,25 @@ import '../core/constants.dart';
 import '../services/auth_service.dart';
 import '../services/supabase_service.dart';
 
+// Espera a que Supabase restaure su sesión del localStorage (o confirme que no hay ninguna).
+// Supabase emite AuthChangeEvent.initialSession cuando termina de leer el token guardado.
+// Sin esto, auth.currentUser es null en web aunque el token siga válido.
+Future<Session?> _waitForSupabaseSession() async {
+  final current = Supabase.instance.client.auth.currentSession;
+  if (current != null) return current;
+  try {
+    final state = await Supabase.instance.client.auth.onAuthStateChange
+        .firstWhere((s) =>
+            s.event == AuthChangeEvent.initialSession ||
+            s.event == AuthChangeEvent.signedIn ||
+            s.event == AuthChangeEvent.tokenRefreshed)
+        .timeout(const Duration(seconds: 6));
+    return state.session;
+  } catch (_) {
+    return null;
+  }
+}
+
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
@@ -51,12 +70,19 @@ class _SplashScreenState extends State<SplashScreen>
     final session = results[1] as dynamic;
     if (session == null) { context.go('/login'); return; }
 
-    // Para rutas privilegiadas, verificar contra Supabase live en modo real
-    final candidateRoute = AuthService.roleToRoute(session.email);
+    // La sesión guarda la ruta directamente (ej. '/dueno', '/repartidor')
+    final candidateRoute = session.role;
     if (!SupabaseService.useMock &&
         (candidateRoute == '/admin' || candidateRoute == '/repartidor' || candidateRoute == '/dueno')) {
-      final liveUser = Supabase.instance.client.auth.currentUser;
-      final liveRole = liveUser?.userMetadata?['role'] as String?;
+      final supabaseSession = await _waitForSupabaseSession();
+      if (!mounted) return;
+      if (supabaseSession == null) {
+        await AuthService.clearSession();
+        if (!mounted) return;
+        context.go('/login');
+        return;
+      }
+      final liveRole = supabaseSession.user.userMetadata?['role'] as String?;
       final verifiedRoute = liveRole == 'repartidor' ? '/repartidor'
                           : liveRole == 'dueno'      ? '/dueno'
                           : liveRole == 'admin'      ? '/admin'

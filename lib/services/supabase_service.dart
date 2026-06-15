@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart' hide Category;
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants.dart';
@@ -237,13 +238,32 @@ class SupabaseService {
     }
   }
 
+  // Comprime a WebP con calidad 82. En web no hay soporte nativo, regresa los bytes sin cambio.
+  static Future<Uint8List> _compressToWebP(Uint8List bytes) async {
+    if (kIsWeb) return bytes;
+    try {
+      final compressed = await FlutterImageCompress.compressWithList(
+        bytes,
+        quality: 82,
+        format: CompressFormat.webp,
+      );
+      // Solo usar la versión comprimida si es más pequeña
+      return compressed.length < bytes.length ? compressed : bytes;
+    } catch (_) {
+      return bytes;
+    }
+  }
+
   static Future<String?> uploadProductImageBytes(Uint8List bytes) async {
     if (useMock) return null;
     try {
-      final fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final compressed = await _compressToWebP(bytes);
+      final ext      = kIsWeb ? 'jpg' : 'webp';
+      final mimeType = kIsWeb ? 'image/jpeg' : 'image/webp';
+      final fileName = '${DateTime.now().millisecondsSinceEpoch}.$ext';
       await _client.storage.from('product-images').uploadBinary(
-        fileName, bytes,
-        fileOptions: const FileOptions(contentType: 'image/jpeg', upsert: true),
+        fileName, compressed,
+        fileOptions: FileOptions(contentType: mimeType, upsert: true),
       );
       return _client.storage.from('product-images').getPublicUrl(fileName);
     } catch (_) {
@@ -254,10 +274,13 @@ class SupabaseService {
   static Future<String?> uploadProfilePhotoBytes(Uint8List bytes, String userId) async {
     if (useMock) return null;
     try {
-      final fileName = 'profile_$userId.jpg';
+      final compressed = await _compressToWebP(bytes);
+      final ext      = kIsWeb ? 'jpg' : 'webp';
+      final mimeType = kIsWeb ? 'image/jpeg' : 'image/webp';
+      final fileName = 'profile_$userId.$ext';
       await _client.storage.from('profile-photos').uploadBinary(
-        fileName, bytes,
-        fileOptions: const FileOptions(contentType: 'image/jpeg', upsert: true),
+        fileName, compressed,
+        fileOptions: FileOptions(contentType: mimeType, upsert: true),
       );
       return _client.storage.from('profile-photos').getPublicUrl(fileName);
     } catch (_) {
@@ -268,13 +291,14 @@ class SupabaseService {
   static Future<String?> uploadProfilePhoto(String localPath, String userId) async {
     if (useMock) return null;
     try {
-      final file     = File(localPath);
-      final bytes    = await file.readAsBytes();
-      final ext      = localPath.split('.').last.toLowerCase();
-      final fileName = 'profile_$userId.$ext';
+      final bytes      = await File(localPath).readAsBytes();
+      final compressed = await _compressToWebP(bytes);
+      final ext        = kIsWeb ? localPath.split('.').last.toLowerCase() : 'webp';
+      final mimeType   = kIsWeb ? 'image/${localPath.split('.').last.toLowerCase()}' : 'image/webp';
+      final fileName   = 'profile_$userId.$ext';
       await _client.storage.from('profile-photos').uploadBinary(
-        fileName, bytes,
-        fileOptions: FileOptions(contentType: 'image/$ext', upsert: true),
+        fileName, compressed,
+        fileOptions: FileOptions(contentType: mimeType, upsert: true),
       );
       return _client.storage.from('profile-photos').getPublicUrl(fileName);
     } catch (_) {
@@ -537,12 +561,69 @@ class SupabaseService {
   }
 
   static Future<List<Map<String, dynamic>>> getActiveOrders() async {
+    if (useMock) return [];
+    final now = DateTime.now();
+    final startOfDay = DateTime(now.year, now.month, now.day).toUtc().toIso8601String();
     final data = await _client
         .from('orders')
         .select('*, order_items(quantity, price, products(id, name))')
         .inFilter('status', ['pending', 'accepted', 'delivering', 'delivered', 'cancelled'])
-        .order('created_at', ascending: false);
+        .gte('created_at', startOfDay)
+        .order('created_at', ascending: false)
+        .limit(200);
     return (data as List).cast<Map<String, dynamic>>();
+  }
+
+  static Future<void> adminUpdateOrderStatus(String orderId, String status) async {
+    if (useMock) return;
+    await _client.from('orders').update({'status': status}).eq('id', orderId);
+    await _sendFcmForStatus(orderId, status);
+  }
+
+  static Future<List<Map<String, dynamic>>> getRepartidores() async {
+    if (useMock) return [];
+    final data = await _client
+        .from('orders')
+        .select('repartidor_id')
+        .not('repartidor_id', 'is', null);
+    final orders = (data as List).cast<Map<String, dynamic>>();
+    final Map<String, int> counts = {};
+    for (final o in orders) {
+      final id = o['repartidor_id'] as String? ?? '';
+      if (id.isNotEmpty) counts[id] = (counts[id] ?? 0) + 1;
+    }
+    final result = counts.entries
+        .map((e) => <String, dynamic>{'id': e.key, 'entregas': e.value})
+        .toList()
+      ..sort((a, b) => (b['entregas'] as int).compareTo(a['entregas'] as int));
+    return result;
+  }
+
+  static Future<void> setRestaurantOpen(String restaurantId, bool isOpen) async {
+    if (useMock) return;
+    await _client.from('restaurants').update({'is_open': isOpen}).eq('id', restaurantId);
+  }
+
+  static Future<void> deleteRestaurant(String restaurantId) async {
+    if (useMock) return;
+    // Obtiene IDs de categorías y productos para borrar en cascada
+    final catRows = await _client.from('categories').select('id').eq('restaurant_id', restaurantId);
+    final catIds  = (catRows as List).map((r) => r['id'] as String).toList();
+
+    if (catIds.isNotEmpty) {
+      final prodRows = await _client.from('products').select('id').inFilter('category_id', catIds);
+      final prodIds  = (prodRows as List).map((r) => r['id'] as String).toList();
+      if (prodIds.isNotEmpty) {
+        await _client.from('product_images').delete().inFilter('product_id', prodIds);
+        await _client.from('product_likes').delete().inFilter('product_id', prodIds);
+        await _client.from('order_items').delete().inFilter('product_id', prodIds);
+        await _client.from('products').delete().inFilter('category_id', catIds);
+      }
+      await _client.from('categories').delete().eq('restaurant_id', restaurantId);
+    }
+
+    await _client.from('orders').delete().eq('restaurant_id', restaurantId);
+    await _client.from('restaurants').delete().eq('id', restaurantId);
   }
 
   static Future<List<Map<String, dynamic>>> getOrdersForRepartidor() async {

@@ -201,9 +201,12 @@ class AppDataProvider extends ChangeNotifier {
 
   bool isRestaurantOpen(String restaurantId) => _isOpen[restaurantId] ?? true;
 
-  void setRestaurantOpen(String restaurantId, bool open) {
+  Future<void> setRestaurantOpen(String restaurantId, bool open) async {
     _isOpen[restaurantId] = open;
     notifyListeners();
+    try {
+      await SupabaseService.setRestaurantOpen(restaurantId, open);
+    } catch (_) {}
   }
 
   // ── Disponibilidad de productos ──────────────────────────────────────────────

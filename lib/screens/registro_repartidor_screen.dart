@@ -1,8 +1,3 @@
-// registro_repartidor_screen.dart
-// Formulario de registro para nuevos repartidores.
-// El repartidor llena nombre, teléfono y datos de su cuenta bancaria (CLABE).
-// Al registrarse, se crea el usuario con rol "repartidor" en Supabase Auth.
-
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -15,22 +10,24 @@ class RegistroRepartidorScreen extends StatefulWidget {
 }
 
 class _RegistroRepartidorScreenState extends State<RegistroRepartidorScreen> {
-  final _nameCtrl     = TextEditingController();
-  final _emailCtrl    = TextEditingController();
-  final _passCtrl     = TextEditingController();
-  final _confirmCtrl  = TextEditingController();
-  bool _loading       = false;
-  bool _showPass      = false;
-  bool _showConfirm   = false;
-  bool _registrado    = false;
-  String _nombreRegistrado = '';
+  final _nameCtrl    = TextEditingController();
+  final _emailCtrl   = TextEditingController();
+  final _passCtrl    = TextEditingController();
+  final _confirmCtrl = TextEditingController();
+  bool _loading      = false;
+  bool _showPass     = false;
+  bool _showConfirm  = false;
+  bool _registrado   = false;
+  String _nombre     = '';
+
+  static const _orange = AppConstants.primaryColor;
+  static const _dark   = Color(0xFFE64A19);
+  static const _white  = Colors.white;
 
   @override
   void dispose() {
-    _nameCtrl.dispose();
-    _emailCtrl.dispose();
-    _passCtrl.dispose();
-    _confirmCtrl.dispose();
+    _nameCtrl.dispose(); _emailCtrl.dispose();
+    _passCtrl.dispose(); _confirmCtrl.dispose();
     super.dispose();
   }
 
@@ -57,20 +54,14 @@ class _RegistroRepartidorScreenState extends State<RegistroRepartidorScreen> {
         password: pass,
         data: {'role': 'repartidor', 'name': name},
       );
-
       if (res.user == null) {
-        _msg('No se pudo crear la cuenta', error: true);
-        return;
+        _msg('No se pudo crear la cuenta', error: true); return;
       }
-
-      // Iniciar sesión inmediatamente
       await Supabase.instance.client.auth.signInWithPassword(
-        email: email,
-        password: pass,
+        email: email, password: pass,
       );
-
       if (!mounted) return;
-      setState(() { _registrado = true; _nombreRegistrado = name; });
+      setState(() { _registrado = true; _nombre = name; });
     } catch (e) {
       final msg = e.toString().contains('already registered')
           ? 'Este correo ya está registrado'
@@ -85,55 +76,203 @@ class _RegistroRepartidorScreenState extends State<RegistroRepartidorScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(text),
-      backgroundColor: error ? Colors.red[700] : Colors.green[700],
+      backgroundColor: error ? Colors.red[900] : Colors.green[700],
     ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_registrado) return _buildExito();
+    return Scaffold(
+      backgroundColor: _orange,
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const SizedBox(height: 40),
+
+            Center(
+              child: Column(children: [
+                Container(
+                  width: 72, height: 72,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.delivery_dining, color: _white, size: 42),
+                ),
+                const SizedBox(height: 16),
+                const Text('Únete como repartidor',
+                    style: TextStyle(color: _white, fontSize: 26,
+                        fontWeight: FontWeight.bold)),
+                const SizedBox(height: 6),
+                Text('Crea tu cuenta para empezar a repartir',
+                    style: TextStyle(color: _white.withValues(alpha: 0.75),
+                        fontSize: 14)),
+              ]),
+            ),
+            const SizedBox(height: 36),
+
+            _field(ctrl: _nameCtrl, label: 'Nombre completo',
+                hint: 'Tu nombre', icon: Icons.person_outline,
+                capitalization: TextCapitalization.words),
+            const SizedBox(height: 12),
+            _field(ctrl: _emailCtrl, label: 'Correo electrónico',
+                hint: 'tucorreo@gmail.com', icon: Icons.email_outlined,
+                keyboard: TextInputType.emailAddress),
+            const SizedBox(height: 12),
+            _field(ctrl: _passCtrl, label: 'Contraseña',
+                hint: 'Mínimo 6 caracteres', icon: Icons.lock_outline,
+                obscure: !_showPass,
+                suffix: IconButton(
+                  icon: Icon(_showPass ? Icons.visibility_off : Icons.visibility,
+                      color: _white.withValues(alpha: 0.5), size: 20),
+                  onPressed: () => setState(() => _showPass = !_showPass),
+                )),
+            const SizedBox(height: 12),
+            _field(ctrl: _confirmCtrl, label: 'Confirmar contraseña',
+                hint: 'Repite tu contraseña', icon: Icons.lock_outline,
+                obscure: !_showConfirm,
+                suffix: IconButton(
+                  icon: Icon(_showConfirm ? Icons.visibility_off : Icons.visibility,
+                      color: _white.withValues(alpha: 0.5), size: 20),
+                  onPressed: () => setState(() => _showConfirm = !_showConfirm),
+                )),
+            const SizedBox(height: 32),
+
+            SizedBox(
+              width: double.infinity, height: 52,
+              child: ElevatedButton(
+                onPressed: _loading ? null : _registrar,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _white,
+                  disabledBackgroundColor: _white.withValues(alpha: 0.5),
+                  foregroundColor: _orange,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                ),
+                child: _loading
+                    ? SizedBox(width: 22, height: 22,
+                        child: CircularProgressIndicator(
+                            color: _orange, strokeWidth: 2.5))
+                    : const Text('Crear cuenta',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Center(
+              child: GestureDetector(
+                onTap: () => context.go('/login'),
+                child: RichText(
+                  text: TextSpan(
+                    text: '¿Ya tienes cuenta? ',
+                    style: TextStyle(color: _white.withValues(alpha: 0.7),
+                        fontSize: 13),
+                    children: const [
+                      TextSpan(text: 'Inicia sesión',
+                          style: TextStyle(color: _white,
+                              fontWeight: FontWeight.bold,
+                              decoration: TextDecoration.underline)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 48),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _field({
+    required TextEditingController ctrl,
+    required String label,
+    required String hint,
+    required IconData icon,
+    TextInputType? keyboard,
+    TextCapitalization capitalization = TextCapitalization.none,
+    bool obscure = false,
+    Widget? suffix,
+  }) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: const TextStyle(color: _white, fontWeight: FontWeight.w600,
+          fontSize: 13)),
+      const SizedBox(height: 6),
+      TextField(
+        controller: ctrl,
+        obscureText: obscure,
+        keyboardType: keyboard,
+        textCapitalization: capitalization,
+        style: const TextStyle(color: _white, fontSize: 15),
+        decoration: InputDecoration(
+          hintText: hint,
+          hintStyle: TextStyle(color: _white.withValues(alpha: 0.45)),
+          prefixIcon: Icon(icon, color: _white, size: 20),
+          suffixIcon: suffix,
+          filled: true,
+          fillColor: _dark,
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none),
+          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: _white, width: 1.5)),
+          contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
+        ),
+      ),
+    ]);
   }
 
   Widget _buildExito() {
     return Scaffold(
-      backgroundColor: AppConstants.bgColor,
+      backgroundColor: _orange,
       body: SafeArea(
         child: Center(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 32),
             child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-              // Ícono de éxito
               Container(
                 width: 100, height: 100,
                 decoration: BoxDecoration(
-                  color: AppConstants.primaryColor.withValues(alpha: 0.12),
+                  color: Colors.white.withValues(alpha: 0.2),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.check_circle_outline, color: AppConstants.primaryColor, size: 60),
+                child: const Icon(Icons.check_circle_outline,
+                    color: _white, size: 60),
               ),
               const SizedBox(height: 28),
-              Text('¡Felicidades, $_nombreRegistrado!',
+              Text('¡Bienvenido, $_nombre!',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
+                  style: const TextStyle(color: _white, fontSize: 26,
+                      fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
               const Text('Ahora eres miembro de',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white70, fontSize: 16)),
-              const SizedBox(height: 6),
+                  style: TextStyle(color: _white, fontSize: 16)),
+              const SizedBox(height: 4),
               const Text('GOGO Food 🛵',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: AppConstants.primaryColor, fontSize: 28, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              Text('Vuelve a la app e inicia sesión\ncon tu correo para recoger pedidos.',
+                  style: TextStyle(color: _white, fontSize: 28,
+                      fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+              Text('Inicia sesión con tu correo\npara empezar a recoger pedidos.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 15, height: 1.5)),
-              const SizedBox(height: 40),
+                  style: TextStyle(color: _white.withValues(alpha: 0.75),
+                      fontSize: 15, height: 1.5)),
+              const SizedBox(height: 36),
               SizedBox(
-                width: double.infinity,
-                height: 52,
+                width: double.infinity, height: 52,
                 child: ElevatedButton(
                   onPressed: () => context.go('/login'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppConstants.primaryColor,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    backgroundColor: _white,
+                    foregroundColor: _orange,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
                   ),
                   child: const Text('Ir al inicio de sesión',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                 ),
               ),
             ]),
@@ -142,176 +281,4 @@ class _RegistroRepartidorScreenState extends State<RegistroRepartidorScreen> {
       ),
     );
   }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_registrado) return _buildExito();
-    return Scaffold(
-      backgroundColor: AppConstants.bgColor,
-      appBar: AppBar(
-        backgroundColor: AppConstants.bgColor,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => context.pop(),
-        ),
-      ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 28),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const SizedBox(height: 8),
-
-            // Ícono
-            Center(
-              child: Container(
-                width: 80, height: 80,
-                decoration: BoxDecoration(
-                  color: AppConstants.primaryColor.withValues(alpha: 0.12),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.delivery_dining, size: 44, color: AppConstants.primaryColor),
-              ),
-            ),
-            const SizedBox(height: 20),
-
-            const Center(
-              child: Text('Registro de repartidor',
-                  style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
-            ),
-            const SizedBox(height: 6),
-            Center(
-              child: Text('Crea tu cuenta para empezar a repartir',
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 14)),
-            ),
-            const SizedBox(height: 36),
-
-            // Nombre
-            _label('Nombre completo'),
-            const SizedBox(height: 8),
-            _field(
-              controller: _nameCtrl,
-              hint: 'Tu nombre',
-              icon: Icons.person_outline,
-              capitalization: TextCapitalization.words,
-            ),
-            const SizedBox(height: 16),
-
-            // Email
-            _label('Correo electrónico'),
-            const SizedBox(height: 8),
-            _field(
-              controller: _emailCtrl,
-              hint: 'tucorreo@gmail.com',
-              icon: Icons.email_outlined,
-              keyboard: TextInputType.emailAddress,
-            ),
-            const SizedBox(height: 16),
-
-            // Contraseña
-            _label('Contraseña'),
-            const SizedBox(height: 8),
-            _field(
-              controller: _passCtrl,
-              hint: 'Mínimo 6 caracteres',
-              icon: Icons.lock_outline,
-              obscure: !_showPass,
-              suffix: IconButton(
-                icon: Icon(_showPass ? Icons.visibility_off : Icons.visibility,
-                    color: Colors.white.withValues(alpha: 0.35), size: 18),
-                onPressed: () => setState(() => _showPass = !_showPass),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Confirmar contraseña
-            _label('Confirmar contraseña'),
-            const SizedBox(height: 8),
-            _field(
-              controller: _confirmCtrl,
-              hint: 'Repite tu contraseña',
-              icon: Icons.lock_outline,
-              obscure: !_showConfirm,
-              suffix: IconButton(
-                icon: Icon(_showConfirm ? Icons.visibility_off : Icons.visibility,
-                    color: Colors.white.withValues(alpha: 0.35), size: 18),
-                onPressed: () => setState(() => _showConfirm = !_showConfirm),
-              ),
-            ),
-            const SizedBox(height: 32),
-
-            // Botón registrar
-            SizedBox(
-              width: double.infinity,
-              height: 52,
-              child: ElevatedButton(
-                onPressed: _loading ? null : _registrar,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppConstants.primaryColor,
-                  disabledBackgroundColor: AppConstants.primaryColor.withValues(alpha: 0.5),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                ),
-                child: _loading
-                    ? const SizedBox(width: 22, height: 22,
-                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                    : const Text('Crear cuenta',
-                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-              ),
-            ),
-            const SizedBox(height: 20),
-
-            // Ya tengo cuenta
-            Center(
-              child: GestureDetector(
-                onTap: () => context.pop(),
-                child: RichText(
-                  text: TextSpan(
-                    text: '¿Ya tienes cuenta? ',
-                    style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 13),
-                    children: const [
-                      TextSpan(text: 'Inicia sesión',
-                          style: TextStyle(color: AppConstants.primaryColor, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 40),
-          ]),
-        ),
-      ),
-    );
-  }
-
-  Widget _label(String text) => Text(text,
-      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14));
-
-  Widget _field({
-    required TextEditingController controller,
-    required String hint,
-    required IconData icon,
-    TextInputType? keyboard,
-    TextCapitalization capitalization = TextCapitalization.none,
-    bool obscure = false,
-    Widget? suffix,
-  }) =>
-      TextField(
-        controller: controller,
-        obscureText: obscure,
-        keyboardType: keyboard,
-        textCapitalization: capitalization,
-        style: const TextStyle(color: Colors.white, fontSize: 15),
-        decoration: InputDecoration(
-          hintText: hint,
-          hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.3)),
-          prefixIcon: Icon(icon, color: AppConstants.primaryColor, size: 20),
-          suffixIcon: suffix,
-          filled: true,
-          fillColor: AppConstants.surfaceColor,
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
-          focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(14),
-              borderSide: const BorderSide(color: AppConstants.primaryColor, width: 1.5)),
-        ),
-      );
 }

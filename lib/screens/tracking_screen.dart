@@ -7,6 +7,7 @@
 // También muestra el estado del pedido y envía notificaciones locales al cambiar.
 
 import 'dart:async';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:go_router/go_router.dart';
@@ -15,6 +16,49 @@ import '../services/location_service.dart';
 import '../services/notification_service.dart';
 import '../services/order_history_service.dart';
 import '../services/supabase_service.dart';
+
+Future<BitmapDescriptor> _buildMarkerIcon(IconData icon, Color bg) async {
+  const size = 80.0;
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+
+  // Círculo de fondo
+  canvas.drawCircle(
+    const Offset(size / 2, size / 2),
+    size / 2,
+    Paint()..color = bg,
+  );
+  // Borde blanco
+  canvas.drawCircle(
+    const Offset(size / 2, size / 2),
+    size / 2,
+    Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 5,
+  );
+
+  // Ícono centrado
+  final tp = TextPainter(textDirection: TextDirection.ltr)
+    ..text = TextSpan(
+      text: String.fromCharCode(icon.codePoint),
+      style: TextStyle(
+        fontSize: size * 0.52,
+        fontFamily: icon.fontFamily,
+        package: icon.fontPackage,
+        color: Colors.white,
+      ),
+    )
+    ..layout();
+  tp.paint(canvas,
+      Offset((size - tp.width) / 2, (size - tp.height) / 2));
+
+  final img = await recorder
+      .endRecording()
+      .toImage(size.toInt(), size.toInt());
+  final bytes = await img.toByteData(format: ui.ImageByteFormat.png);
+  return BitmapDescriptor.bytes(bytes!.buffer.asUint8List());
+}
 
 const _kRestaurantPos = LatLng(19.9020, -100.4510);
 const _kCustomerPos   = LatLng(19.8900, -100.4370);
@@ -46,10 +90,14 @@ class _TrackingScreenState extends State<TrackingScreen> {
   GoogleMapController? _mapCtrl;
   Timer? _pollTimer;
 
-  LatLng _motoPos    = _kRestaurantPos;
+  LatLng _motoPos     = _kRestaurantPos;
   LatLng _customerPos = _kCustomerPos;
 
   String _orderStatus = 'pending';
+
+  BitmapDescriptor? _iconRestaurant;
+  BitmapDescriptor? _iconCustomer;
+  BitmapDescriptor? _iconRepartidor;
 
   int get _step {
     switch (_orderStatus) {
@@ -72,13 +120,13 @@ class _TrackingScreenState extends State<TrackingScreen> {
       Marker(
         markerId: const MarkerId('restaurant'),
         position: _kRestaurantPos,
-        icon: BitmapDescriptor.defaultMarkerWithHue(340),
+        icon: _iconRestaurant ?? BitmapDescriptor.defaultMarkerWithHue(340),
         infoWindow: const InfoWindow(title: 'Restaurante'),
       ),
       Marker(
         markerId: const MarkerId('customer'),
         position: _customerPos,
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+        icon: _iconCustomer ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
         infoWindow: const InfoWindow(title: 'Tu domicilio'),
       ),
     };
@@ -86,7 +134,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
       ms.add(Marker(
         markerId: const MarkerId('repartidor'),
         position: _motoPos,
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
+        icon: _iconRepartidor ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
         infoWindow: const InfoWindow(title: 'Repartidor'),
       ));
     }
@@ -96,12 +144,25 @@ class _TrackingScreenState extends State<TrackingScreen> {
   @override
   void initState() {
     super.initState();
+    _loadIcons();
     _pollStatus();
     _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) {
       _pollStatus();
       _pollLocation();
     });
     _geocodeAddress();
+  }
+
+  Future<void> _loadIcons() async {
+    final r = await _buildMarkerIcon(Icons.storefront_rounded, AppConstants.primaryColor);
+    final c = await _buildMarkerIcon(Icons.home_rounded, const Color(0xFF2196F3));
+    final d = await _buildMarkerIcon(Icons.delivery_dining, const Color(0xFFFF6D00));
+    if (!mounted) return;
+    setState(() {
+      _iconRestaurant  = r;
+      _iconCustomer    = c;
+      _iconRepartidor  = d;
+    });
   }
 
   Future<void> _pollLocation() async {

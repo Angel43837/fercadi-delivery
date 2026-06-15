@@ -565,14 +565,22 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 ),
                 _PayOption(
                   value: _Pay.card, group: _payment,
-                  label: 'Tarjeta', subtitle: 'Crédito o débito',
-                  iconWidget: const Icon(Icons.credit_card, color: Color(0xFF2196F3), size: 28),
+                  label: 'Tarjeta', subtitle: 'Crédito o débito — procesado por Stripe',
+                  iconWidget: const _StripeIcon(),
                   onChanged: (v) => setState(() => _payment = v!),
                   isLast: true,
                   textMain: textMain, textSub: textSub, divColor: divColor,
                 ),
               ]),
             ),
+            const SizedBox(height: 12),
+            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(Icons.lock_outline, size: 13, color: textSub),
+              const SizedBox(width: 4),
+              Text('Pagos seguros con', style: TextStyle(color: textSub, fontSize: 11)),
+              const SizedBox(width: 5),
+              const _StripeWordmark(),
+            ]),
             const SizedBox(height: 100),
           ],
         ),
@@ -771,6 +779,58 @@ class _OxxoIcon extends StatelessWidget {
       child: const Text(
         'OXXO',
         style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 9, letterSpacing: 0.5),
+      ),
+    );
+  }
+}
+
+class _StripeIcon extends StatelessWidget {
+  const _StripeIcon();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 36,
+      height: 28,
+      decoration: BoxDecoration(
+        color: const Color(0xFF635BFF),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      alignment: Alignment.center,
+      child: const Text(
+        'S',
+        style: TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.bold,
+          fontSize: 18,
+          fontStyle: FontStyle.italic,
+          height: 1,
+        ),
+      ),
+    );
+  }
+}
+
+class _StripeWordmark extends StatelessWidget {
+  const _StripeWordmark();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: const Color(0xFF635BFF),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: const Text(
+        'stripe',
+        style: TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.bold,
+          fontSize: 10,
+          fontStyle: FontStyle.italic,
+          letterSpacing: 0.3,
+        ),
       ),
     );
   }

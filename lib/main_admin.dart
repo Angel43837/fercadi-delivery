@@ -5,7 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'core/constants.dart';
 import 'providers/app_data_provider.dart';
 import 'screens/admin_screen.dart';
-import 'screens/login_screen.dart';
+import 'screens/admin_login_screen.dart';
 import 'services/auth_service.dart';
 
 void main() async {
@@ -29,7 +29,7 @@ final _adminRouter = GoRouter(
   routes: [
     GoRoute(
       path: '/login',
-      builder: (_, _) => const LoginScreen(),
+      builder: (_, _) => const AdminLoginScreen(),
     ),
     GoRoute(
       path: '/admin',

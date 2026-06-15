@@ -1,194 +1,116 @@
-# Grupo Fercadi — Delivery App
+# GOGO Food — Grupo Fercadi
 
-App de delivery para el municipio de Maravatío, Michoacán.
-Desarrollada en Flutter con tema oscuro y diseño rosa/magenta.
+App de delivery para Maravatío, Michoacán. Flutter + Supabase + Stripe.
 
 ---
 
-## Stack Tecnológico
+## Stack
 
 | Tecnología | Uso |
 |---|---|
-| Flutter | Framework principal (Dart 3.11.5) |
-| Supabase | Base de datos y autenticación (pendiente configurar) |
-| go_router ^14.0.0 | Navegación entre pantallas |
+| Flutter (Dart 3.11.5) | Framework principal |
+| Supabase | BD, Auth, Storage, Edge Functions |
+| go_router ^14.0.0 | Navegación |
 | provider ^6.1.2 | Estado global (carrito) |
-| geolocator ^13.0.2 | Detección de ubicación GPS |
-| carousel_slider ^5.0.0 | Carrusel de imágenes en detalle |
-| supabase_flutter ^2.8.0 | Cliente de Supabase |
+| google_maps_flutter | Mapa para selección de dirección (móvil) |
+| flutter_stripe | Pagos con tarjeta |
+| geolocator | GPS |
+| shared_preferences | Sesión persistente local |
 
 ---
 
-## Cómo correr la app
+## Correr la app
 
-```bash
-# Instalar dependencias
+```powershell
 flutter pub get
-
-# Correr en emulador Android
-flutter run -d emulator-5554
-
-# Correr en Chrome (web)
-flutter run -d chrome
+flutter run -d emulator-5554   # Android
+flutter run -d chrome          # Web
 ```
 
-> **Nota:** El emulador puede tardar en arrancar. Abrirlo desde Android Studio → Device Manager antes de correr `flutter run`.
+Mock data: `lib/services/supabase_service.dart` → `static const bool useMock = true`
+Supabase real: `false` + credenciales en `lib/core/constants.dart`
 
 ---
 
-## Modo Demo (Mock)
+## Roles y pantallas
 
-En `lib/services/supabase_service.dart`:
+| Rol | Ruta | Pantalla |
+|---|---|---|
+| Cliente | `/restaurants` | Lista de restaurantes, carrito, checkout |
+| Dueño | `/dueno` | Panel naranja — pedidos, productos, config restaurante |
+| Repartidor | `/repartidor` | Pedidos activos (solo app móvil, web muestra aviso) |
+| Admin | `/admin` | Panel oscuro — todos los restaurantes, pedidos, usuarios |
+
+El rol se guarda en `user_metadata.role` en Supabase Auth y en SharedPreferences.
+La sesión persiste: el splash espera el evento `initialSession` de Supabase antes de rutear.
+
+---
+
+## Temas
 
 ```dart
-static const bool useMock = true;  // ← true = datos falsos, false = Supabase real
-```
+// App cliente / admin
+bgColor      = 0xFF121212   // negro
+surfaceColor = 0xFF1E1E1E
+primaryColor = 0xFFE91E8C   // rosa/magenta
 
-Con `useMock = true`:
-- No se conecta a Supabase (no necesita credenciales)
-- Simula estar ubicado en Maravatío
-- Usa restaurantes/categorías/productos de prueba
-
-Para conectar Supabase real: cambiar a `false` y poner las credenciales en `lib/core/constants.dart`.
-
----
-
-## Estructura de Archivos
-
-```
-lib/
-├── main.dart                    # Punto de entrada, Provider, tema
-├── router.dart                  # Rutas con go_router
-├── core/
-│   └── constants.dart           # Colores, URLs de Supabase
-├── models/
-│   ├── restaurant.dart          # Modelo Restaurante
-│   ├── category.dart            # Modelo Categoría
-│   ├── product.dart             # Modelo Producto
-│   └── cart_item.dart           # Modelo ítem del carrito
-├── providers/
-│   └── cart_provider.dart       # Estado del carrito (ChangeNotifier)
-├── services/
-│   ├── supabase_service.dart    # CRUD Supabase + datos mock
-│   └── location_service.dart   # GPS y verificación de zona
-└── screens/
-    ├── splash_screen.dart       # Pantalla de carga con logo
-    ├── login_screen.dart        # Login / registro
-    ├── restaurants_screen.dart  # Pantalla principal (acordeón)
-    ├── menu_screen.dart         # Menú por categorías (no en uso activo)
-    ├── product_detail_screen.dart # Detalle de producto
-    ├── cart_screen.dart         # Carrito de compras
-    └── home_shell.dart          # Shell anterior (reemplazado)
+// Dueño y registro de restaurante
+primaryColor = 0xFFFF5722   // naranja — NO cambiar
 ```
 
 ---
 
-## Flujo de la App
+## Deploy
 
+**Web** (Vercel — `web-iota-brown-32.vercel.app`):
+```powershell
+flutter build web --release
+Copy-Item vercel.json build/web/vercel.json -Force
+cd build/web
+npx vercel --prod --archive=tgz
 ```
-Splash (logo Fercadi, 3s)
-    ↓
-Login (email + contraseña / botón demo)
-    ↓
-Restaurantes (lista acordeón)
-    ├── Logo Fercadi centrado arriba de la lista
-    ├── Cada restaurante se expande al tocarlo
-    │   ├── Like 👍 funcional (toca para dar/quitar like)
-    │   ├── Pestañas de categorías con colores (scroll horizontal)
-    │   └── Lista de platillos — cada platillo también se expande
-    │       ├── Imagen del platillo
-    │       ├── Descripción completa
-    │       ├── Precio + selector de cantidad (- 1 +)
-    │       └── Botón "Agregar al pedido • $XX MXN"
-    └── Ícono de carrito en AppBar → pantalla de carrito
+
+**Android APKs** (dos apps: cliente y admin):
+```powershell
+.\build_apks.ps1
+# Genera: build\GOGOFood.apk y build\GOGOAdmin.apk
 ```
+
+Bundle ID: `com.fercadi.app` (admin: `com.fercadi.admin`)
 
 ---
 
-## Diseño / Tema
+## Supabase — Tablas principales
 
-```dart
-bgColor      = Color(0xFF121212)  // Negro oscuro — fondo principal
-surfaceColor = Color(0xFF1E1E1E)  // Gris oscuro — tarjetas
-surface2Color= Color(0xFF2A2A2A)  // Gris más oscuro — sub-tarjetas
-primaryColor = Color(0xFFE91E8C)  // Rosa/magenta — color principal
-```
+`restaurants`, `categories`, `products`, `product_images`, `orders`, `order_items`, `product_likes`
 
-Colores de las pestañas de categorías (van rotando por índice):
-1. Rosa `#E91E8C`
-2. Naranja `#FF6D00`
-3. Verde azulado `#00BFA5`
-4. Morado `#7C4DFF`
-5. Azul `#2196F3`
-6. Ámbar `#FFB300`
+RLS activa. Roles via `auth.jwt() -> 'user_metadata' ->> 'role'`.
+
+Para eliminar restaurante desde admin: `SupabaseService.deleteRestaurant(id)` — borra en cascada.
+
+---
+
+## Comportamientos web vs móvil
+
+- **Repartidor en web**: muestra pantalla "usa la app móvil", sin panel
+- **Dirección en registro**: sin botón GPS (solo texto libre)
+- **Dirección en panel dueño**: campo editable directo, sin mapa
+- **Mapa (MapPickerScreen)**: solo funciona en móvil (google_maps_flutter no soporta web)
+
+---
+
+## Pendiente para tiendas
+
+- [ ] Cambiar bundle ID de `com.example.landing_test` a `com.fercadi.gogofood`
+- [ ] Crear keystore para firmar Android (Play Store)
+- [ ] Cuenta Google Play ($25 USD una vez) → play.google.com/console
+- [ ] Cuenta Apple Developer ($99 USD/año) → developer.apple.com
+- [ ] Icono 1024×1024 sin transparencia
+- [ ] Screenshots para ambas tiendas
 
 ---
 
 ## Geolocalización
 
-- Centro de Maravatío: `19.8969° N, 100.4447° W`
-- Radio de servicio: **30 km**
-- Si el usuario está fuera, ve pantalla de "Fuera de zona de servicio"
-- En modo mock siempre simula estar dentro del radio
-
-Permisos en `android/app/src/main/AndroidManifest.xml`:
-```xml
-<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-```
-
----
-
-## Assets
-
-```
-assets/
-└── images/
-    └── logo.png    # Logo oficial de Grupo Fercadi
-```
-
-Registrado en `pubspec.yaml`:
-```yaml
-flutter:
-  assets:
-    - assets/images/
-```
-
----
-
-## Base de Datos (Supabase — pendiente)
-
-Tablas necesarias:
-| Tabla | Campos clave |
-|---|---|
-| `restaurants` | id, name, description, address, image_url, rating, is_open |
-| `categories` | id, restaurant_id, name, emoji_icon |
-| `products` | id, category_id, name, description, price, image_url, is_available |
-| `product_images` | id, product_id, image_url |
-| `orders` | id, user_id, restaurant_id, total, status |
-| `order_items` | id, order_id, product_id, quantity, price |
-
----
-
-## Pendiente / Próximos pasos
-
-- [ ] Configurar Supabase real (poner URL y anon key en `constants.dart`)
-- [ ] Sistema de roles: cliente / repartidor / admin
-- [ ] Panel de administrador (dueño): gestionar restaurantes, pedidos, usuarios
-- [ ] Vista de repartidor: pedidos pendientes para entregar
-- [ ] Autenticación con Clerk (actualmente usa Supabase Auth)
-- [ ] Integración de Google Maps para mostrar restaurantes en mapa
-- [ ] Imágenes reales de restaurantes y platillos
-- [ ] Agregar restaurantes reales de Maravatío
-
----
-
-## Datos Mock de Prueba
-
-Restaurantes: McDonalds (id:1), Starbucks (id:2), Sushi Roll (id:3)
-
-McDonalds tiene 6 categorías de ejemplo:
-🍔 Hamburguesas | 🍟 Papas | 🥤 Bebidas | 🍦 Postres | 🥗 Ensaladas | 🥞 Desayunos
-
-Productos de ejemplo: Big Mac ($89), Quarter Pounder ($95), McPollo Crispy ($79),
-Café Americano ($65), California Roll ($120), etc.
+- Centro Maravatío: `19.8969° N, 100.4447° W`, radio 30 km
+- Mock siempre simula estar dentro del radio

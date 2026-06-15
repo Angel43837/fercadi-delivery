@@ -10,6 +10,10 @@ class AppConstants {
   static const String stripePublishableKey = 'pk_test_51ThAd2JlrTraAKwstUDr3pynDCZiLz88mldbch47FD6Fa4XVMjPKl9CGvdbAGkE4UG85mxwkrXXgIMdxF2SpbmlV00e1EnYwvc';
   // La clave secreta NUNCA va aquí — va en la Supabase Edge Function como variable de entorno
 
+  // Sentry — obtén tu DSN en sentry.io > tu proyecto > Settings > Client Keys
+  // Dejar vacío en desarrollo para no enviar errores de prueba
+  static const String sentryDsn = String.fromEnvironment('SENTRY_DSN', defaultValue: '');
+
   // Colores principales — tema oscuro con naranja
   static const Color primaryColor  = Color(0xFFFF5722); // Naranja principal
   static const Color bgColor       = Color(0xFF121212); // Fondo oscurou

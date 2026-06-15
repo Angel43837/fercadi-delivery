@@ -48,3 +48,10 @@ app.*.map.json
 .claude/
 autocommit.ps1
 .vercel
+
+# Docker — archivos sensibles (NUNCA subir a Git)
+docker/.env
+docker/certbot/conf/
+docker/data/
+fercadi-release.jks
+android/key.properties

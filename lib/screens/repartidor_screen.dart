@@ -14,6 +14,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
@@ -263,6 +264,29 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (kIsWeb) {
+      return Scaffold(
+        backgroundColor: AppConstants.primaryColor,
+        body: SafeArea(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                const Icon(Icons.delivery_dining, color: Colors.white, size: 80),
+                const SizedBox(height: 24),
+                const Text('¡Hola, repartidor!',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 12),
+                Text('Para ver tus pedidos y recibir notificaciones,\ninicia sesión en la aplicación móvil.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 15, height: 1.5)),
+              ]),
+            ),
+          ),
+        ),
+      );
+    }
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
       backgroundColor: isDark ? AppConstants.bgColor : AppConstants.primaryColor,

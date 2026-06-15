@@ -12,7 +12,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
@@ -63,6 +62,15 @@ class DuenoScreen extends StatefulWidget {
 class _DuenoScreenState extends State<DuenoScreen> {
   int _tab = 0;
   AppOrderStatus? _filterStatus;
+  bool _isDark = true;
+
+  Color get _bg       => AppConstants.primaryColor;
+  Color get _surface  => const Color(0xFFE64A19);
+  Color get _surface2 => const Color(0xFFD84315);
+  Color get _text     => Colors.white;
+  Color get _textMid  => Colors.white.withValues(alpha: 0.75);
+  Color get _textLow  => Colors.white.withValues(alpha: 0.45);
+  Color get _inputFill => const Color(0xFFD84315);
 
   // Pedidos reales de Supabase
   List<Map<String, dynamic>> _realOrders = [];
@@ -85,14 +93,15 @@ class _DuenoScreenState extends State<DuenoScreen> {
   final _restNameCtrl    = TextEditingController();
   final _restDescCtrl    = TextEditingController();
   final _restPhoneCtrl   = TextEditingController();
+  final _restAddressCtrl = TextEditingController();
 
   final List<_Category> _categories = const [
-    _Category(id: 'c1',  name: 'Hamburguesas', emoji: '🍔'),
-    _Category(id: 'c2',  name: 'Papas',        emoji: '🍟'),
-    _Category(id: 'c3',  name: 'Bebidas',       emoji: '🥤'),
-    _Category(id: 'c10', name: 'Postres',       emoji: '🍦'),
-    _Category(id: 'c11', name: 'Ensaladas',     emoji: '🥗'),
-    _Category(id: 'c12', name: 'Desayunos',     emoji: '🥞'),
+    _Category(id: 'c1',  name: 'Platillos',  emoji: '🍽️'),
+    _Category(id: 'c2',  name: 'Botanas',    emoji: '🍟'),
+    _Category(id: 'c3',  name: 'Bebidas',    emoji: '🥤'),
+    _Category(id: 'c10', name: 'Postres',    emoji: '🍰'),
+    _Category(id: 'c11', name: 'Desayunos',  emoji: '🌅'),
+    _Category(id: 'c12', name: 'Especiales', emoji: '⭐'),
   ];
 
   List<_Product> _products = [
@@ -132,9 +141,10 @@ class _DuenoScreenState extends State<DuenoScreen> {
       _restPhoto   = s['photo']!;
       _restEmoji   = s['emoji']!.isNotEmpty ? s['emoji']! : '🍴';
     });
-    _restNameCtrl.text  = _restName;
-    _restDescCtrl.text  = _restDesc;
-    _restPhoneCtrl.text = _restPhone;
+    _restNameCtrl.text    = _restName;
+    _restDescCtrl.text    = _restDesc;
+    _restPhoneCtrl.text   = _restPhone;
+    _restAddressCtrl.text = _restAddress;
   }
 
   @override
@@ -144,6 +154,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
     _restNameCtrl.dispose();
     _restDescCtrl.dispose();
     _restPhoneCtrl.dispose();
+    _restAddressCtrl.dispose();
     super.dispose();
   }
 
@@ -233,7 +244,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
     final pendingCount = _realOrders.where((o) => o['status'] == 'pending').length;
 
     return Scaffold(
-      backgroundColor: AppConstants.bgColor,
+      backgroundColor: _bg,
       body: Column(children: [
         _buildHeader(appData, isOpen),
         Expanded(
@@ -254,7 +265,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
 
   Widget _buildHeader(AppDataProvider appData, bool isOpen) {
     return Container(
-      color: AppConstants.surfaceColor,
+      color: _surface,
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
       child: SafeArea(
         bottom: false,
@@ -271,19 +282,19 @@ class _DuenoScreenState extends State<DuenoScreen> {
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(
                 _restName.isNotEmpty ? _restName : 'Mi Restaurante',
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                style: TextStyle(color: _text, fontWeight: FontWeight.bold, fontSize: 16)),
               Text('Panel del restaurante',
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 12)),
+                  style: TextStyle(color: _textMid, fontSize: 12)),
             ]),
           ),
           IconButton(
-            icon: Icon(Icons.logout, color: Colors.white.withValues(alpha: 0.5), size: 20),
-            tooltip: 'Cerrar sesión',
-            onPressed: () async {
-              final router = GoRouter.of(context);
-              await AuthService.clearSession();
-              router.go('/login');
-            },
+            icon: Icon(
+              _isDark ? Icons.wb_sunny_rounded : Icons.nightlight_round,
+              color: _isDark ? const Color(0xFFFFB300) : const Color(0xFF5C6BC0),
+              size: 22,
+            ),
+            tooltip: _isDark ? 'Modo claro' : 'Modo oscuro',
+            onPressed: () => setState(() => _isDark = !_isDark),
           ),
           GestureDetector(
             onTap: () => appData.setRestaurantOpen(_restaurantId, !isOpen),
@@ -291,17 +302,17 @@ class _DuenoScreenState extends State<DuenoScreen> {
               duration: const Duration(milliseconds: 200),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
-                color: isOpen ? Colors.green.withValues(alpha: 0.12) : AppConstants.surface2Color,
+                color: isOpen ? Colors.green.withValues(alpha: 0.12) : _surface2,
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
-                  color: isOpen ? Colors.green.withValues(alpha: 0.5) : Colors.white.withValues(alpha: 0.2),
+                  color: isOpen ? Colors.green.withValues(alpha: 0.5) : _textLow,
                 ),
               ),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
                 Container(
                   width: 7, height: 7,
                   decoration: BoxDecoration(
-                    color: isOpen ? Colors.green : Colors.white.withValues(alpha: 0.3),
+                    color: isOpen ? Colors.green : _textLow,
                     shape: BoxShape.circle,
                   ),
                 ),
@@ -309,7 +320,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 Text(
                   isOpen ? 'Abierto' : 'Cerrado',
                   style: TextStyle(
-                    color: isOpen ? Colors.green : Colors.white.withValues(alpha: 0.35),
+                    color: isOpen ? Colors.green : _textMid,
                     fontSize: 12, fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -342,19 +353,19 @@ class _DuenoScreenState extends State<DuenoScreen> {
           mainAxisSpacing: 12,
           childAspectRatio: 1.5,
           children: [
-            _StatCard(label: 'Ventas hoy',   value: '\$${ventasHoy.toStringAsFixed(0)}', suffix: 'MXN',        icon: Icons.attach_money,       color: Colors.green),
-            _StatCard(label: 'Pedidos hoy',  value: '$total',                             suffix: 'total',       icon: Icons.receipt_long,        color: AppConstants.primaryColor),
-            _StatCard(label: 'Entregados',   value: '$entregados',                        suffix: 'completados', icon: Icons.check_circle_outline, color: const Color(0xFF00BFA5)),
-            _StatCard(label: 'Pendientes',   value: '$pendientes',                        suffix: 'en espera',   icon: Icons.hourglass_bottom,    color: const Color(0xFFFFB300)),
+            _StatCard(label: 'Ventas hoy',   value: '\$${ventasHoy.toStringAsFixed(0)}', suffix: 'MXN',        icon: Icons.attach_money,       color: Colors.green,                  isDark: _isDark),
+            _StatCard(label: 'Pedidos hoy',  value: '$total',                             suffix: 'total',       icon: Icons.receipt_long,        color: AppConstants.primaryColor,     isDark: _isDark),
+            _StatCard(label: 'Entregados',   value: '$entregados',                        suffix: 'completados', icon: Icons.check_circle_outline, color: const Color(0xFF00BFA5),       isDark: _isDark),
+            _StatCard(label: 'Pendientes',   value: '$pendientes',                        suffix: 'en espera',   icon: Icons.hourglass_bottom,    color: const Color(0xFFFFB300),       isDark: _isDark),
           ],
         ),
         const SizedBox(height: 20),
         Container(
           padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(color: AppConstants.surfaceColor, borderRadius: BorderRadius.circular(16)),
+          decoration: BoxDecoration(color: _surface, borderRadius: BorderRadius.circular(16)),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('Estado de pedidos',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+            Text('Estado de pedidos',
+                style: TextStyle(color: _text, fontWeight: FontWeight.bold, fontSize: 14)),
             const SizedBox(height: 14),
             if (total > 0) ClipRRect(
               borderRadius: BorderRadius.circular(6),
@@ -367,24 +378,24 @@ class _DuenoScreenState extends State<DuenoScreen> {
             ),
             const SizedBox(height: 12),
             Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-              _StatusLegend('Pendiente', const Color(0xFFFFB300),   pendientes),
-              _StatusLegend('En camino', AppConstants.primaryColor, enCamino),
-              _StatusLegend('Entregado', Colors.green,              entregados),
-              _StatusLegend('Cancelado', Colors.red,                cancelados),
+              _StatusLegend('Pendiente', const Color(0xFFFFB300),   pendientes, isDark: _isDark),
+              _StatusLegend('En camino', AppConstants.primaryColor, enCamino,   isDark: _isDark),
+              _StatusLegend('Entregado', Colors.green,              entregados, isDark: _isDark),
+              _StatusLegend('Cancelado', Colors.red,                cancelados, isDark: _isDark),
             ]),
           ]),
         ),
         const SizedBox(height: 20),
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          const Text('Últimos pedidos',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+          Text('Últimos pedidos',
+              style: TextStyle(color: _text, fontWeight: FontWeight.bold, fontSize: 15)),
           TextButton(
             onPressed: () => setState(() => _tab = 1),
             child: const Text('Ver todos', style: TextStyle(color: AppConstants.primaryColor, fontSize: 12)),
           ),
         ]),
         const SizedBox(height: 8),
-        ..._realOrders.take(4).map((o) => _RealOrderMiniRow(order: o)),
+        ..._realOrders.take(4).map((o) => _RealOrderMiniRow(order: o, isDark: _isDark)),
       ],
     );
   }
@@ -417,11 +428,10 @@ class _DuenoScreenState extends State<DuenoScreen> {
         child: filtered.isEmpty
             ? Center(
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.receipt_long_outlined, size: 56,
-                      color: Colors.white.withValues(alpha: 0.15)),
+                  Icon(Icons.receipt_long_outlined, size: 56, color: _textLow),
                   const SizedBox(height: 12),
                   Text('Sin pedidos por ahora',
-                      style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 15)),
+                      style: TextStyle(color: _textLow, fontSize: 15)),
                 ]),
               )
             : ListView.builder(
@@ -429,6 +439,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 itemCount: filtered.length,
                 itemBuilder: (_, i) => _RealOrderCard(
                   order: filtered[i],
+                  isDark: _isDark,
                   onAccept: () async {
                     await SupabaseService.updateOrderStatus(
                         filtered[i]['id'] as String, 'accepted');
@@ -462,10 +473,10 @@ class _DuenoScreenState extends State<DuenoScreen> {
                   Text(cat.emoji, style: const TextStyle(fontSize: 18)),
                   const SizedBox(width: 8),
                   Text(cat.name,
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+                      style: TextStyle(color: _text, fontWeight: FontWeight.bold, fontSize: 15)),
                   const SizedBox(width: 8),
                   Text('(${preseeded.length + extra.length})',
-                      style: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 13)),
+                      style: TextStyle(color: _textLow, fontSize: 13)),
                 ]),
               ),
               ...preseeded.map((p) {
@@ -473,6 +484,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 return _ProductTile(
                   product: p,
                   isAvailable: avail,
+                  isDark: _isDark,
                   onToggle: () {
                     appData.setProductAvailability(p.id, !avail);
                     SupabaseService.setProductAvailability(p.id, !avail);
@@ -490,6 +502,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 return _ProductTile(
                   product: p,
                   isAvailable: avail,
+                  isDark: _isDark,
                   onToggle: () {
                     appData.setProductAvailability(sp.id, !avail);
                     SupabaseService.setProductAvailability(sp.id, !avail);
@@ -570,7 +583,10 @@ class _DuenoScreenState extends State<DuenoScreen> {
           borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setModal) => SingleChildScrollView(
-          padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.of(ctx).viewInsets.bottom + 20),
+          padding: EdgeInsets.fromLTRB(
+            20, 20, 20,
+            MediaQuery.of(ctx).viewInsets.bottom + MediaQuery.of(ctx).padding.bottom + 24,
+          ),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
             Center(
               child: Container(
@@ -678,7 +694,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
               initialValue: selectedCatId,
               dropdownColor: AppConstants.surface2Color,
               style: const TextStyle(color: Colors.white),
-              decoration: _inputDecoration('Categoría'),
+              decoration: _inputDecoration('Categoría', isDark: true),
               items: _categories.map((c) => DropdownMenuItem(
                 value: c.id,
                 child: Text('${c.emoji} ${c.name}'),
@@ -686,16 +702,16 @@ class _DuenoScreenState extends State<DuenoScreen> {
               onChanged: (v) => setModal(() => selectedCatId = v!),
             ),
             const SizedBox(height: 12),
-            _FormField(controller: nameCtrl,  label: 'Nombre del platillo', icon: Icons.fastfood_outlined),
+            _FormField(controller: nameCtrl,  label: 'Nombre del platillo', icon: Icons.fastfood_outlined, isDark: true),
             const SizedBox(height: 12),
-            _FormField(controller: descCtrl,  label: 'Descripción',         icon: Icons.notes, maxLines: 2),
+            _FormField(controller: descCtrl,  label: 'Descripción',         icon: Icons.notes, maxLines: 2, isDark: true),
             const SizedBox(height: 12),
-            _FormField(controller: priceCtrl, label: 'Precio (MXN)',        icon: Icons.attach_money, keyboardType: TextInputType.number),
+            _FormField(controller: priceCtrl, label: 'Precio (MXN)',        icon: Icons.attach_money, keyboardType: TextInputType.number, isDark: true),
             const SizedBox(height: 12),
 
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-              decoration: BoxDecoration(color: const Color(0xFFD84315), borderRadius: BorderRadius.circular(12)),
+              decoration: BoxDecoration(color: const Color(0xFF2A2A2A), borderRadius: BorderRadius.circular(12)),
               child: Row(children: [
                 Icon(Icons.storefront_outlined, color: Colors.white.withValues(alpha: 0.5), size: 20),
                 const SizedBox(width: 10),
@@ -729,12 +745,14 @@ class _DuenoScreenState extends State<DuenoScreen> {
                   final desc = descCtrl.text.trim();
 
                   if (existing == null) {
-                    appData.addExtraProduct(SharedProduct(
-                      id: newId, name: name, description: desc,
-                      price: price, isAvailable: available,
-                      categoryId: selectedCatId, restaurantId: _restaurantId,
-                      imagePath: pickedImagePath,
-                    ));
+                    if (SupabaseService.useMock) {
+                      appData.addExtraProduct(SharedProduct(
+                        id: newId, name: name, description: desc,
+                        price: price, isAvailable: available,
+                        categoryId: selectedCatId, restaurantId: _restaurantId,
+                        imagePath: pickedImagePath,
+                      ));
+                    }
                   } else if (isExtra) {
                     appData.updateExtraProduct(SharedProduct(
                       id: existing.id, name: name, description: desc,
@@ -821,7 +839,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
                   width: 110, height: 110,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: AppConstants.surfaceColor,
+                    color: _surface,
                     border: Border.all(color: AppConstants.primaryColor, width: 2.5),
                   ),
                   clipBehavior: Clip.hardEdge,
@@ -865,12 +883,12 @@ class _DuenoScreenState extends State<DuenoScreen> {
                   decoration: BoxDecoration(
                     color: _restEmoji == e
                         ? AppConstants.primaryColor.withValues(alpha: 0.2)
-                        : AppConstants.surfaceColor,
+                        : _surface,
                     shape: BoxShape.circle,
                     border: Border.all(
                       color: _restEmoji == e
                           ? AppConstants.primaryColor
-                          : Colors.white.withValues(alpha: 0.1),
+                          : _textLow,
                     ),
                   ),
                   child: Center(child: Text(e, style: const TextStyle(fontSize: 20))),
@@ -882,44 +900,72 @@ class _DuenoScreenState extends State<DuenoScreen> {
         const SizedBox(height: 28),
 
         // ── Campos de texto ─────────────────────────────────────────────────
-        _FormField(controller: _restNameCtrl,  label: 'Nombre del restaurante', icon: Icons.storefront_outlined),
+        _FormField(controller: _restNameCtrl,  label: 'Nombre del restaurante', icon: Icons.storefront_outlined, isDark: _isDark),
         const SizedBox(height: 12),
-        _FormField(controller: _restDescCtrl,  label: 'Descripción',            icon: Icons.notes_outlined, maxLines: 3),
+        _FormField(controller: _restDescCtrl,  label: 'Descripción',            icon: Icons.notes_outlined, maxLines: 3, isDark: _isDark),
         const SizedBox(height: 12),
-        _FormField(controller: _restPhoneCtrl, label: 'Teléfono de contacto',   icon: Icons.phone_outlined, keyboardType: TextInputType.phone),
+        _FormField(controller: _restPhoneCtrl, label: 'Teléfono de contacto',   icon: Icons.phone_outlined, keyboardType: TextInputType.phone, isDark: _isDark),
         const SizedBox(height: 12),
 
-        // ── Dirección: toca para abrir el mapa ─────────────────────────────
-        GestureDetector(
-          onTap: pickAddress,
-          child: AbsorbPointer(
-            child: Container(
-              decoration: BoxDecoration(
-                color: AppConstants.surfaceColor,
-                borderRadius: BorderRadius.circular(14),
+        // ── Dirección ───────────────────────────────────────────────────────
+        // Web: campo de texto libre (el mapa no funciona en navegador)
+        // Móvil: toca para abrir el mapa
+        if (kIsWeb)
+          Container(
+            decoration: BoxDecoration(
+              color: _surface,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: TextField(
+              controller: _restAddressCtrl,
+              style: TextStyle(color: _text),
+              onChanged: (v) => _restAddress = v,
+              decoration: InputDecoration(
+                labelText: 'Dirección del local',
+                labelStyle: TextStyle(color: _textMid),
+                prefixIcon: const Icon(Icons.location_on_outlined, color: AppConstants.primaryColor),
+                filled: true,
+                fillColor: _surface,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide.none,
+                ),
+                hintText: 'Ej: Calle Morelos 45, Col. Centro',
+                hintStyle: TextStyle(color: _textLow, fontSize: 13),
               ),
-              child: TextField(
-                controller: TextEditingController(text: _restAddress),
-                readOnly: true,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  labelText: 'Dirección del local',
-                  labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
-                  prefixIcon: const Icon(Icons.location_on_outlined, color: AppConstants.primaryColor),
-                  suffixIcon: const Icon(Icons.map_outlined, color: AppConstants.primaryColor, size: 20),
-                  filled: true,
-                  fillColor: AppConstants.surfaceColor,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: BorderSide.none,
+            ),
+          )
+        else
+          GestureDetector(
+            onTap: pickAddress,
+            child: AbsorbPointer(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: _surface,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: TextField(
+                  controller: TextEditingController(text: _restAddress),
+                  readOnly: true,
+                  style: TextStyle(color: _text),
+                  decoration: InputDecoration(
+                    labelText: 'Dirección del local',
+                    labelStyle: TextStyle(color: _textMid),
+                    prefixIcon: const Icon(Icons.location_on_outlined, color: AppConstants.primaryColor),
+                    suffixIcon: const Icon(Icons.map_outlined, color: AppConstants.primaryColor, size: 20),
+                    filled: true,
+                    fillColor: _surface,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide.none,
+                    ),
+                    hintText: 'Toca para ubicar en el mapa',
+                    hintStyle: TextStyle(color: _textLow, fontSize: 13),
                   ),
-                  hintText: 'Toca para ubicar en el mapa',
-                  hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 13),
                 ),
               ),
             ),
           ),
-        ),
         const SizedBox(height: 28),
 
         SizedBox(
@@ -959,16 +1005,16 @@ class _DuenoScreenState extends State<DuenoScreen> {
   Widget _buildBottomNav(int pendingCount) {
     return Container(
       decoration: BoxDecoration(
-        color: AppConstants.surfaceColor,
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 10, offset: const Offset(0, -2))],
+        color: _surface,
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, -2))],
       ),
       child: SafeArea(
         top: false,
         child: Row(children: [
-          _NavItem(icon: Icons.dashboard_outlined,     label: 'Resumen',      index: 0, current: _tab, onTap: (i) => setState(() => _tab = i)),
-          _NavItem(icon: Icons.receipt_long_outlined,  label: 'Pedidos',      index: 1, current: _tab, onTap: (i) => setState(() => _tab = i), badge: pendingCount),
-          _NavItem(icon: Icons.menu_book_outlined,     label: 'Menú',         index: 2, current: _tab, onTap: (i) => setState(() => _tab = i)),
-          _NavItem(icon: Icons.storefront_outlined,    label: 'Restaurante',  index: 3, current: _tab, onTap: (i) => setState(() => _tab = i)),
+          _NavItem(icon: Icons.dashboard_outlined,     label: 'Resumen',      index: 0, current: _tab, onTap: (i) => setState(() => _tab = i), isDark: _isDark),
+          _NavItem(icon: Icons.receipt_long_outlined,  label: 'Pedidos',      index: 1, current: _tab, onTap: (i) => setState(() => _tab = i), badge: pendingCount, isDark: _isDark),
+          _NavItem(icon: Icons.menu_book_outlined,     label: 'Menú',         index: 2, current: _tab, onTap: (i) => setState(() => _tab = i), isDark: _isDark),
+          _NavItem(icon: Icons.storefront_outlined,    label: 'Restaurante',  index: 3, current: _tab, onTap: (i) => setState(() => _tab = i), isDark: _isDark),
         ]),
       ),
     );
@@ -981,18 +1027,21 @@ class _StatCard extends StatelessWidget {
   final String label, value, suffix;
   final IconData icon;
   final Color color;
-  const _StatCard({required this.label, required this.value, required this.suffix, required this.icon, required this.color});
+  final bool isDark;
+  const _StatCard({required this.label, required this.value, required this.suffix, required this.icon, required this.color, this.isDark = true});
 
   @override
   Widget build(BuildContext context) {
+    final surface = isDark ? const Color(0xFFE64A19) : Colors.white;
+    final textLow = isDark ? Colors.white.withValues(alpha: 0.45) : Colors.black45;
     return Container(
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: AppConstants.surfaceColor, borderRadius: BorderRadius.circular(16)),
+      decoration: BoxDecoration(color: surface, borderRadius: BorderRadius.circular(16)),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Icon(icon, color: color, size: 22),
         const Spacer(),
         Text(value, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 22)),
-        Text(label, style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 11)),
+        Text(label, style: TextStyle(color: textLow, fontSize: 11)),
       ]),
     );
   }
@@ -1002,13 +1051,15 @@ class _StatusLegend extends StatelessWidget {
   final String label;
   final Color color;
   final int count;
-  const _StatusLegend(this.label, this.color, this.count);
+  final bool isDark;
+  const _StatusLegend(this.label, this.color, this.count, {this.isDark = true});
 
   @override
   Widget build(BuildContext context) {
+    final textLow = isDark ? Colors.white.withValues(alpha: 0.4) : Colors.black45;
     return Column(children: [
       Text('$count', style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 18)),
-      Text(label, style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 10)),
+      Text(label, style: TextStyle(color: textLow, fontSize: 10)),
     ]);
   }
 }
@@ -1038,7 +1089,8 @@ class _ActionBtn extends StatelessWidget {
 
 class _RealOrderMiniRow extends StatelessWidget {
   final Map<String, dynamic> order;
-  const _RealOrderMiniRow({required this.order});
+  final bool isDark;
+  const _RealOrderMiniRow({required this.order, this.isDark = true});
 
   @override
   Widget build(BuildContext context) {
@@ -1063,22 +1115,25 @@ class _RealOrderMiniRow extends StatelessWidget {
       _            => ('Desconocido', Colors.grey),
     };
 
+    final surface = isDark ? const Color(0xFFE64A19) : Colors.white;
+    final text    = isDark ? Colors.white : const Color(0xFF1A1A1A);
+    final textLow = isDark ? Colors.white38 : Colors.black38;
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(color: AppConstants.surfaceColor, borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(color: surface, borderRadius: BorderRadius.circular(12)),
       child: Row(children: [
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+            Text(name, style: TextStyle(color: text, fontWeight: FontWeight.w600, fontSize: 13)),
             Text(itemNames.isEmpty ? 'Sin productos' : itemNames,
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11),
+                style: TextStyle(color: textLow, fontSize: 11),
                 maxLines: 1, overflow: TextOverflow.ellipsis),
           ]),
         ),
         Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
           Text('\$${total.toStringAsFixed(0)}',
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+              style: TextStyle(color: text, fontWeight: FontWeight.bold, fontSize: 13)),
           Container(
             margin: const EdgeInsets.only(top: 3),
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -1097,7 +1152,99 @@ class _RealOrderCard extends StatelessWidget {
   final Map<String, dynamic> order;
   final VoidCallback onAccept;
   final VoidCallback? onCancel;
-  const _RealOrderCard({required this.order, required this.onAccept, this.onCancel});
+  final bool isDark;
+  const _RealOrderCard({required this.order, required this.onAccept, this.onCancel, this.isDark = true});
+
+  void _showDetail(BuildContext context) {
+    Map<String, dynamic> delivery = {};
+    try { delivery = jsonDecode(order['customer_name'] as String? ?? '{}') as Map<String, dynamic>; } catch (_) {}
+
+    final status  = order['status'] as String? ?? 'pending';
+    final name    = delivery['name']    as String? ?? 'Cliente';
+    final phone   = delivery['phone']   as String? ?? '—';
+    final address = delivery['address'] as String? ?? 'Sin dirección';
+    final payment = delivery['payment'] as String? ?? 'cash';
+    final total   = (order['total'] as num?)?.toDouble() ?? 0;
+    final items   = (order['order_items'] as List<dynamic>? ?? []);
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.of(ctx).padding.bottom + 24),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Center(child: Container(width: 36, height: 4,
+              decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)))),
+          const SizedBox(height: 16),
+          Row(children: [
+            Expanded(child: Text(name,
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18))),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: (status == 'pending' ? const Color(0xFFFFB300) : Colors.green).withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(status == 'pending' ? 'Pendiente' : 'Aceptado',
+                  style: TextStyle(
+                    color: status == 'pending' ? const Color(0xFFFFB300) : Colors.green,
+                    fontWeight: FontWeight.bold, fontSize: 12)),
+            ),
+          ]),
+          const SizedBox(height: 4),
+          Text(phone,   style: const TextStyle(color: Colors.white54, fontSize: 13)),
+          const SizedBox(height: 2),
+          Text(address, style: const TextStyle(color: Colors.white54, fontSize: 13)),
+          const SizedBox(height: 2),
+          Text('Pago: ${payment == 'cash' ? '💵 Efectivo' : payment == 'card' ? '💳 Tarjeta' : 'OXXO'}',
+              style: const TextStyle(color: Colors.white38, fontSize: 12)),
+          const SizedBox(height: 16),
+          const Text('Productos pedidos', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+          const SizedBox(height: 10),
+          ...items.map((i) {
+            final qty     = i['quantity'] as int? ?? 1;
+            final product = i['products'] as Map<String, dynamic>?;
+            final pname   = product?['name'] as String? ?? 'Producto';
+            final price   = (i['price'] as num?)?.toDouble() ?? 0;
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF2A2A2A),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(children: [
+                Container(
+                  width: 28, height: 28,
+                  decoration: BoxDecoration(
+                    color: AppConstants.primaryColor.withValues(alpha: 0.15),
+                    shape: BoxShape.circle,
+                  ),
+                  alignment: Alignment.center,
+                  child: Text('$qty', style: const TextStyle(
+                      color: AppConstants.primaryColor, fontWeight: FontWeight.bold, fontSize: 13)),
+                ),
+                const SizedBox(width: 12),
+                Expanded(child: Text(pname,
+                    style: const TextStyle(color: Colors.white, fontSize: 14))),
+                Text('\$${(price * qty).toStringAsFixed(0)}',
+                    style: const TextStyle(color: Colors.white70, fontSize: 13)),
+              ]),
+            );
+          }),
+          const Divider(color: Colors.white12, height: 24),
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            const Text('Total', style: TextStyle(color: Colors.white70, fontSize: 14)),
+            Text('\$${total.toStringAsFixed(0)} MXN',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+          ]),
+        ]),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1119,18 +1266,27 @@ class _RealOrderCard extends StatelessWidget {
       _            => ('Desconocido', Colors.grey),
     };
 
-    return Container(
+    final surface = isDark ? const Color(0xFFE64A19) : Colors.white;
+    final text    = isDark ? Colors.white : const Color(0xFF1A1A1A);
+    final textLow = isDark ? Colors.white.withValues(alpha: 0.45) : Colors.black45;
+    final textMin = isDark ? Colors.white.withValues(alpha: 0.35) : Colors.black26;
+
+    final itemCount = items.fold<int>(0, (s, i) => s + ((i['quantity'] as int?) ?? 1));
+
+    return GestureDetector(
+      onTap: () => _showDetail(context),
+      child: Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppConstants.surfaceColor,
+        color: surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: statusColor.withValues(alpha: 0.35)),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           Text('#${(order['id'] as String).substring(4, 10)}',
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 11)),
+              style: TextStyle(color: textMin, fontSize: 11)),
           const Spacer(),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -1143,65 +1299,58 @@ class _RealOrderCard extends StatelessWidget {
           ),
         ]),
         const SizedBox(height: 8),
-        Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+        Text(name, style: TextStyle(color: text, fontWeight: FontWeight.bold, fontSize: 15)),
         const SizedBox(height: 2),
-        Text(phone, style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 12)),
+        Text(phone, style: TextStyle(color: textLow, fontSize: 12)),
         const SizedBox(height: 2),
-        Text(address, style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 12)),
-        const SizedBox(height: 8),
-        ...items.map((i) {
-          final qty = i['quantity'] as int? ?? 1;
-          final product = i['products'] as Map<String, dynamic>?;
-          final pname = product?['name'] as String? ?? 'Producto';
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 3),
-            child: Row(children: [
-              Icon(Icons.circle, size: 5, color: Colors.white.withValues(alpha: 0.3)),
-              const SizedBox(width: 6),
-              Text('$qty× $pname',
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12)),
-            ]),
-          );
-        }),
+        Text(address, style: TextStyle(color: textLow, fontSize: 12)),
         const SizedBox(height: 10),
         Row(children: [
           Text('\$${total.toStringAsFixed(0)} MXN',
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+              style: TextStyle(color: text, fontWeight: FontWeight.bold, fontSize: 15)),
           const Spacer(),
-          if (status == 'pending') ...[
-            if (onCancel != null)
-              _ActionBtn(label: 'Rechazar', color: Colors.redAccent, onTap: onCancel!),
-            const SizedBox(width: 8),
-            _ActionBtn(label: 'Aceptar pedido', color: Colors.green, onTap: onAccept),
-          ],
-          if (status == 'accepted')
-            _ActionBtn(label: 'En preparación ✓', color: AppConstants.primaryColor, onTap: () {}),
-          if (status == 'delivering')
-            _ActionBtn(label: 'En camino 🛵', color: const Color(0xFF2196F3), onTap: () {}),
-          if (status == 'delivered')
-            _ActionBtn(label: 'Entregado ✓', color: Colors.green, onTap: () {}),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            decoration: BoxDecoration(
+              color: statusColor.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: statusColor.withValues(alpha: 0.4)),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.receipt_long_outlined, size: 14, color: statusColor),
+              const SizedBox(width: 5),
+              Text('Ver $itemCount producto${itemCount != 1 ? 's' : ''}',
+                  style: TextStyle(color: statusColor, fontSize: 12, fontWeight: FontWeight.bold)),
+            ]),
+          ),
         ]),
       ]),
-    );
+    ),
+  );
   }
 }
 
 class _ProductTile extends StatelessWidget {
   final _Product product;
   final bool isAvailable;
+  final bool isDark;
   final VoidCallback onToggle;
   final VoidCallback onEdit;
-  const _ProductTile({required this.product, required this.isAvailable, required this.onToggle, required this.onEdit});
+  const _ProductTile({required this.product, required this.isAvailable, required this.onToggle, required this.onEdit, this.isDark = true});
 
   @override
   Widget build(BuildContext context) {
+    final surface  = isDark ? const Color(0xFFE64A19) : Colors.white;
+    final surface2 = isDark ? const Color(0xFFD84315) : const Color(0xFFEEEEEE);
+    final text     = isDark ? Colors.white : const Color(0xFF1A1A1A);
+    final textLow  = isDark ? Colors.white.withValues(alpha: 0.4) : Colors.black45;
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: AppConstants.surfaceColor,
+        color: surface,
         borderRadius: BorderRadius.circular(14),
-        border: isAvailable ? null : Border.all(color: Colors.white.withValues(alpha: 0.07)),
+        border: isAvailable ? null : Border.all(color: textLow.withValues(alpha: 0.15)),
       ),
       child: Row(children: [
         ClipRRect(
@@ -1209,31 +1358,31 @@ class _ProductTile extends StatelessWidget {
           child: product.imagePath != null
               ? ((kIsWeb || product.imagePath!.startsWith('http'))
                   ? Image.network(product.imagePath!, width: 60, height: 60, fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => Container(width: 60, height: 60, color: AppConstants.surface2Color, child: Icon(Icons.fastfood_outlined, color: Colors.white.withValues(alpha: 0.2), size: 26)))
+                      errorBuilder: (_, _, _) => Container(width: 60, height: 60, color: surface2, child: Icon(Icons.fastfood_outlined, color: textLow, size: 26)))
                   : Image.file(File(product.imagePath!), width: 60, height: 60, fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => Container(width: 60, height: 60, color: AppConstants.surface2Color, child: Icon(Icons.fastfood_outlined, color: Colors.white.withValues(alpha: 0.2), size: 26))))
-              : Container(width: 60, height: 60, color: AppConstants.surface2Color, child: Icon(Icons.fastfood_outlined, color: Colors.white.withValues(alpha: 0.2), size: 26)),
+                      errorBuilder: (_, _, _) => Container(width: 60, height: 60, color: surface2, child: Icon(Icons.fastfood_outlined, color: textLow, size: 26))))
+              : Container(width: 60, height: 60, color: surface2, child: Icon(Icons.fastfood_outlined, color: textLow, size: 26)),
         ),
         const SizedBox(width: 12),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(product.name,
                 style: TextStyle(
-                    color: isAvailable ? Colors.white : Colors.white.withValues(alpha: 0.35),
+                    color: isAvailable ? text : textLow,
                     fontWeight: FontWeight.bold, fontSize: 14)),
             const SizedBox(height: 2),
             Text(product.description,
                 maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 12)),
+                style: TextStyle(color: textLow, fontSize: 12)),
             const SizedBox(height: 6),
             Text('\$${product.price.toStringAsFixed(0)} MXN',
                 style: TextStyle(
-                    color: isAvailable ? AppConstants.primaryColor : Colors.white.withValues(alpha: 0.25),
+                    color: isAvailable ? AppConstants.primaryColor : textLow,
                     fontWeight: FontWeight.bold, fontSize: 13)),
           ]),
         ),
         IconButton(
-          icon: Icon(Icons.edit_outlined, color: Colors.white.withValues(alpha: 0.4), size: 20),
+          icon: Icon(Icons.edit_outlined, color: textLow, size: 20),
           onPressed: onEdit,
         ),
         Switch(
@@ -1284,11 +1433,13 @@ class _NavItem extends StatelessWidget {
   final int index, current;
   final int badge;
   final ValueChanged<int> onTap;
-  const _NavItem({required this.icon, required this.label, required this.index, required this.current, required this.onTap, this.badge = 0});
+  final bool isDark;
+  const _NavItem({required this.icon, required this.label, required this.index, required this.current, required this.onTap, this.badge = 0, this.isDark = true});
 
   @override
   Widget build(BuildContext context) {
     final active = index == current;
+    final inactive = isDark ? Colors.white.withValues(alpha: 0.3) : Colors.black38;
     return Expanded(
       child: InkWell(
         onTap: () => onTap(index),
@@ -1296,7 +1447,7 @@ class _NavItem extends StatelessWidget {
           padding: const EdgeInsets.symmetric(vertical: 12),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             Stack(children: [
-              Icon(icon, color: active ? AppConstants.primaryColor : Colors.white.withValues(alpha: 0.3), size: 22),
+              Icon(icon, color: active ? AppConstants.primaryColor : inactive, size: 22),
               if (badge > 0)
                 Positioned(
                   right: 0, top: 0,
@@ -1309,7 +1460,7 @@ class _NavItem extends StatelessWidget {
             const SizedBox(height: 4),
             Text(label,
                 style: TextStyle(
-                    color: active ? AppConstants.primaryColor : Colors.white.withValues(alpha: 0.3),
+                    color: active ? AppConstants.primaryColor : inactive,
                     fontSize: 10,
                     fontWeight: active ? FontWeight.bold : FontWeight.normal)),
           ]),
@@ -1325,21 +1476,25 @@ class _FormField extends StatelessWidget {
   final IconData icon;
   final int maxLines;
   final TextInputType? keyboardType;
-  const _FormField({required this.controller, required this.label, required this.icon, this.maxLines = 1, this.keyboardType});
+  final bool isDark;
+  const _FormField({required this.controller, required this.label, required this.icon, this.maxLines = 1, this.keyboardType, this.isDark = true});
 
   @override
   Widget build(BuildContext context) {
+    final text     = isDark ? Colors.white : const Color(0xFF1A1A1A);
+    final textMid  = isDark ? Colors.white.withValues(alpha: 0.6) : Colors.black54;
+    final fillColor = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF0F0F0);
     return TextField(
       controller: controller,
       maxLines: maxLines,
       keyboardType: keyboardType,
-      style: const TextStyle(color: Colors.white),
+      style: TextStyle(color: text),
       decoration: InputDecoration(
         labelText: label,
-        labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
-        prefixIcon: Icon(icon, color: Colors.white.withValues(alpha: 0.6), size: 20),
+        labelStyle: TextStyle(color: textMid),
+        prefixIcon: Icon(icon, color: textMid, size: 20),
         filled: true,
-        fillColor: const Color(0xFFD84315),
+        fillColor: fillColor,
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
         focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
@@ -1349,13 +1504,17 @@ class _FormField extends StatelessWidget {
   }
 }
 
-InputDecoration _inputDecoration(String label) => InputDecoration(
-  labelText: label,
-  labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
-  filled: true,
-  fillColor: const Color(0xFFD84315),
-  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-  focusedBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: AppConstants.primaryColor)),
-);
+InputDecoration _inputDecoration(String label, {bool isDark = true}) {
+  final textMid   = isDark ? Colors.white.withValues(alpha: 0.6) : Colors.black54;
+  final fillColor = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF0F0F0);
+  return InputDecoration(
+    labelText: label,
+    labelStyle: TextStyle(color: textMid),
+    filled: true,
+    fillColor: fillColor,
+    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+    focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: AppConstants.primaryColor)),
+  );
+}

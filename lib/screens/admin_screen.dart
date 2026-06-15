@@ -27,6 +27,9 @@ class _AdminScreenState extends State<AdminScreen> {
   AppOrderStatus? _filterStatus;
   List<Map<String, dynamic>> _realOrders = [];
   List<Map<String, dynamic>> _restaurants = [];
+  List<Map<String, dynamic>> _repartidores = [];
+  bool _loadingOrders = false;
+  bool _loadingRestaurants = false;
   Timer? _pollTimer;
 
   @override
@@ -34,9 +37,13 @@ class _AdminScreenState extends State<AdminScreen> {
     super.initState();
     _loadOrders();
     _loadRestaurants();
+    _loadRepartidores();
     _pollTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       _loadOrders();
       _loadRestaurants();
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) context.read<AppDataProvider>().initRestaurantLikes();
     });
   }
 
@@ -47,17 +54,55 @@ class _AdminScreenState extends State<AdminScreen> {
   }
 
   Future<void> _loadOrders() async {
+    if (_loadingOrders) return;
+    _loadingOrders = true;
     try {
       final data = await SupabaseService.getActiveOrders();
-      if (mounted) setState(() => _realOrders = data);
-    } catch (_) {}
+      if (mounted) setState(() { _realOrders = data; _loadingOrders = false; });
+    } catch (e) {
+      if (mounted) {
+        setState(() => _loadingOrders = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error cargando pedidos: $e'),
+          backgroundColor: Colors.red[700],
+          duration: const Duration(seconds: 3),
+        ));
+      } else {
+        _loadingOrders = false;
+      }
+    }
   }
 
   Future<void> _loadRestaurants() async {
+    if (_loadingRestaurants) return;
+    _loadingRestaurants = true;
     try {
       final data = await SupabaseService.getRestaurantsAdmin();
-      if (mounted) setState(() => _restaurants = data);
+      if (mounted) setState(() { _restaurants = data; _loadingRestaurants = false; });
+    } catch (_) {
+      _loadingRestaurants = false;
+    }
+  }
+
+  Future<void> _loadRepartidores() async {
+    try {
+      final data = await SupabaseService.getRepartidores();
+      if (mounted) setState(() => _repartidores = data);
     } catch (_) {}
+  }
+
+  Future<void> _changeOrderStatus(String orderId, String status) async {
+    try {
+      await SupabaseService.adminUpdateOrderStatus(orderId, status);
+      await _loadOrders();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error: $e'),
+          backgroundColor: Colors.red[700],
+        ));
+      }
+    }
   }
 
   @override
@@ -241,7 +286,10 @@ class _AdminScreenState extends State<AdminScreen> {
             : ListView.builder(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                 itemCount: filtered.length,
-                itemBuilder: (_, i) => _RealOrderCard(order: filtered[i]),
+                itemBuilder: (_, i) => _RealOrderCard(
+                  order: filtered[i],
+                  onStatusChange: _changeOrderStatus,
+                ),
               ),
       ),
     ]);
@@ -308,6 +356,45 @@ class _AdminScreenState extends State<AdminScreen> {
                   ),
                 ),
               ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: () async {
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    builder: (_) => AlertDialog(
+                      backgroundColor: AppConstants.surfaceColor,
+                      title: const Text('¿Eliminar restaurante?', style: TextStyle(color: Colors.white)),
+                      content: Text(
+                        'Esto eliminará "$name" y todos sus productos, categorías y pedidos. Esta acción no se puede deshacer.',
+                        style: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          child: Text('Cancelar', style: TextStyle(color: Colors.white.withValues(alpha: 0.5))),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          child: const Text('Eliminar', style: TextStyle(color: Colors.red)),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (confirm == true) {
+                    await SupabaseService.deleteRestaurant(id);
+                    _loadRestaurants();
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+                  ),
+                  child: const Icon(Icons.delete_outline, color: Colors.red, size: 18),
+                ),
+              ),
             ]),
             const SizedBox(height: 12),
             Divider(height: 1, color: Colors.white.withValues(alpha: 0.06)),
@@ -325,14 +412,7 @@ class _AdminScreenState extends State<AdminScreen> {
 
   // ── Usuarios ─────────────────────────────────────────────────────────────────
 
-  static const _mockRepartidores = [
-    (name: 'Carlos Mendoza',  moto: 'Honda CB125 • MV-123-AB', entregas: 42, color: Color(0xFF00BFA5)),
-    (name: 'Luis Hernández',  moto: 'Yamaha FZ150 • MV-456-CD', entregas: 31, color: Color(0xFF7C4DFF)),
-    (name: 'Miguel Torres',   moto: 'Italika DS125 • MV-789-EF', entregas: 18, color: Color(0xFFFF6D00)),
-  ];
-
   Widget _buildUsuarios() {
-    // Extraer clientes únicos de los pedidos reales
     final Map<String, Map<String, dynamic>> clientMap = {};
     for (final o in _realOrders) {
       Map<String, dynamic> delivery = {};
@@ -340,7 +420,7 @@ class _AdminScreenState extends State<AdminScreen> {
       final phone = delivery['phone'] as String? ?? '—';
       if (!clientMap.containsKey(phone)) {
         clientMap[phone] = {
-          'name':   delivery['name']    as String? ?? 'Cliente',
+          'name':   delivery['name'] as String? ?? 'Cliente',
           'phone':  phone,
           'orders': 0,
           'total':  0.0,
@@ -351,11 +431,18 @@ class _AdminScreenState extends State<AdminScreen> {
     }
     final clients = clientMap.values.toList();
 
+    final repartidoreColors = [
+      const Color(0xFF00BFA5),
+      const Color(0xFF7C4DFF),
+      const Color(0xFFFF6D00),
+      const Color(0xFF2196F3),
+      const Color(0xFFFFB300),
+    ];
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        // Clientes
-        _SectionTitle(icon: Icons.people_outline, label: 'Clientes registrados (${clients.length})'),
+        _SectionTitle(icon: Icons.people_outline, label: 'Clientes (${clients.length})'),
         const SizedBox(height: 10),
         if (clients.isEmpty)
           _EmptyHint('Sin pedidos registrados aún')
@@ -369,16 +456,26 @@ class _AdminScreenState extends State<AdminScreen> {
           )),
         const SizedBox(height: 24),
 
-        // Repartidores
-        _SectionTitle(icon: Icons.delivery_dining, label: 'Repartidores (${_mockRepartidores.length})'),
+        _SectionTitle(icon: Icons.delivery_dining, label: 'Repartidores (${_repartidores.length})'),
         const SizedBox(height: 10),
-        ..._mockRepartidores.map((r) => _UserTile(
-          name:     r.name,
-          subtitle: r.moto,
-          trailing: '${r.entregas} entregas',
-          color:    r.color,
-          icon:     Icons.delivery_dining,
-        )),
+        if (_repartidores.isEmpty)
+          _EmptyHint('Sin repartidores con entregas registradas')
+        else
+          ..._repartidores.asMap().entries.map((entry) {
+            final i = entry.key;
+            final r = entry.value;
+            final id        = r['id'] as String? ?? '';
+            final entregas  = r['entregas'] as int? ?? 0;
+            final shortId   = id.length >= 8 ? id.substring(0, 8).toUpperCase() : id.toUpperCase();
+            final color     = repartidoreColors[i % repartidoreColors.length];
+            return _UserTile(
+              name:     'Repartidor $shortId',
+              subtitle: '$entregas entrega${entregas != 1 ? 's' : ''} totales',
+              trailing: '$entregas entregas',
+              color:    color,
+              icon:     Icons.delivery_dining,
+            );
+          }),
         const SizedBox(height: 16),
       ],
     );
@@ -487,7 +584,8 @@ class _RealOrderMiniRow extends StatelessWidget {
 
 class _RealOrderCard extends StatelessWidget {
   final Map<String, dynamic> order;
-  const _RealOrderCard({required this.order});
+  final Future<void> Function(String orderId, String status)? onStatusChange;
+  const _RealOrderCard({required this.order, this.onStatusChange});
 
   @override
   Widget build(BuildContext context) {
@@ -500,6 +598,7 @@ class _RealOrderCard extends StatelessWidget {
     final address = delivery['address'] as String? ?? 'Sin dirección';
     final total   = (order['total'] as num?)?.toDouble() ?? 0;
     final items   = (order['order_items'] as List<dynamic>? ?? []);
+    final orderId = order['id'] as String? ?? '';
 
     final (statusLabel, statusColor) = switch (status) {
       'pending'    => ('Pendiente',   const Color(0xFFFFB300)),
@@ -509,6 +608,23 @@ class _RealOrderCard extends StatelessWidget {
       'cancelled'  => ('Cancelado',   Colors.red),
       _            => ('Desconocido', Colors.grey),
     };
+
+    final shortId = orderId.length >= 6 ? orderId.substring(0, 6).toUpperCase() : orderId.toUpperCase();
+
+    // Botones de acción según el estado actual
+    final nextStatus = switch (status) {
+      'pending'    => 'accepted',
+      'accepted'   => 'delivering',
+      'delivering' => 'delivered',
+      _            => null,
+    };
+    final nextLabel = switch (status) {
+      'pending'    => 'Aceptar',
+      'accepted'   => 'En camino',
+      'delivering' => 'Entregado',
+      _            => null,
+    };
+    final canCancel = status == 'pending' || status == 'accepted' || status == 'delivering';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -520,7 +636,7 @@ class _RealOrderCard extends StatelessWidget {
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          Text('#${(order['id'] as String? ?? '------').substring(0, 6).toUpperCase()}',
+          Text('#$shortId',
               style: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 11)),
           const Spacer(),
           Container(
@@ -555,8 +671,38 @@ class _RealOrderCard extends StatelessWidget {
           );
         }),
         const SizedBox(height: 10),
-        Text('\$${total.toStringAsFixed(0)} MXN',
-            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+        Row(children: [
+          Text('\$${total.toStringAsFixed(0)} MXN',
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+          const Spacer(),
+          if (canCancel) GestureDetector(
+            onTap: () => onStatusChange?.call(orderId, 'cancelled'),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.red.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+              ),
+              child: const Text('Cancelar', style: TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.w600)),
+            ),
+          ),
+          if (nextStatus != null) ...[
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: () => onStatusChange?.call(orderId, nextStatus),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: statusColor.withValues(alpha: 0.4)),
+                ),
+                child: Text(nextLabel!, style: TextStyle(color: statusColor, fontSize: 12, fontWeight: FontWeight.w600)),
+              ),
+            ),
+          ],
+        ]),
       ]),
     );
   }

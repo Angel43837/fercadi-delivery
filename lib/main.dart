@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:provider/provider.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'core/constants.dart';
 import 'providers/cart_provider.dart';
@@ -15,27 +16,39 @@ import 'services/supabase_service.dart';
 import 'services/notification_service.dart';
 
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  await SentryFlutter.init(
+    (options) {
+      options.dsn = AppConstants.sentryDsn;
+      // Solo enviar errores reales en producción — en debug solo se imprimen localmente
+      options.environment = AppConstants.sentryDsn.isEmpty ? 'development' : 'production';
+      options.tracesSampleRate = 0.3; // Captura 30% de las sesiones para performance
+      options.attachScreenshot = true; // Adjunta captura de pantalla cuando hay un error
+    },
+    appRunner: () async {
+      WidgetsFlutterBinding.ensureInitialized();
 
-  // Inicializa Stripe (envuelto en try-catch para no crashear si el tema no es compatible)
-  try {
-    Stripe.publishableKey = AppConstants.stripePublishableKey;
-    await Stripe.instance.applySettings();
-  } catch (_) {}
+      // Inicializa Stripe
+      try {
+        Stripe.publishableKey = AppConstants.stripePublishableKey;
+        await Stripe.instance.applySettings();
+      } catch (_) {}
 
-  // Inicializa notificaciones push locales
-  await NotificationService.init();
+      // Inicializa notificaciones push locales
+      await NotificationService.init();
 
-  // Solo conecta Supabase si no estamos en modo demo (useMock = false)
-  if (!SupabaseService.useMock) {
-    await Supabase.initialize(
-      url: AppConstants.supabaseUrl,
-      anonKey: AppConstants.supabaseAnonKey,
-    );
-    // Crea los buckets de Storage si no existen (fotos de perfil, productos)
-    SupabaseService.ensureStorageBuckets();
-  }
-  runApp(const FercadiApp());
+      // Solo conecta Supabase si no estamos en modo demo (useMock = false)
+      if (!SupabaseService.useMock) {
+        await Supabase.initialize(
+          url: AppConstants.supabaseUrl,
+          anonKey: AppConstants.supabaseAnonKey,
+        );
+        // Crea los buckets de Storage si no existen (fotos de perfil, productos)
+        SupabaseService.ensureStorageBuckets();
+      }
+
+      runApp(const FercadiApp());
+    },
+  );
 }
 
 // Widget raíz de la app — configura providers globales y el tema visual
