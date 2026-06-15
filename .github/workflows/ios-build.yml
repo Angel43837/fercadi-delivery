@@ -215,6 +215,25 @@ jobs:
             rm -rf Payload
           fi
 
+      - name: Report build failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LOG_CONTENT=""
+          if [ -f /tmp/flutter-build.log ]; then
+            LOG_CONTENT=$(tail -300 /tmp/flutter-build.log)
+          fi
+          gh issue create \
+            --repo "${{ github.repository }}" \
+            --title "Build failure: run ${{ github.run_id }}" \
+            --body "## Flutter Build Error Log
+          Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          \`\`\`
+          $LOG_CONTENT
+          \`\`\`" || true
+
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
