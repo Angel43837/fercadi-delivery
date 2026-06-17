@@ -10,13 +10,16 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants.dart';
 import '../models/cart_item.dart';
+import '../models/restaurant.dart';
 import '../providers/cart_provider.dart';
+import '../services/location_service.dart';
 import '../services/supabase_service.dart';
 import 'map_picker_screen.dart';
 import '../services/auth_service.dart';
@@ -43,11 +46,35 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   bool _loading = false;
   LatLng? _selectedPos;
   List<Map<String, dynamic>> _savedAddresses = [];
+  Restaurant? _restaurant;
+
+  double get _deliveryFee {
+    if (_restaurant?.lat == null || _restaurant?.lng == null || _selectedPos == null) {
+      return LocationService.calcularCostoEnvio(null);
+    }
+    final distanciaKm = Geolocator.distanceBetween(
+          _restaurant!.lat!,
+          _restaurant!.lng!,
+          _selectedPos!.latitude,
+          _selectedPos!.longitude,
+        ) /
+        1000;
+    return LocationService.calcularCostoEnvio(distanciaKm);
+  }
 
   @override
   void initState() {
     super.initState();
     _loadSavedAddresses();
+    _loadRestaurant();
+  }
+
+  Future<void> _loadRestaurant() async {
+    final restaurantId = context.read<CartProvider>().restaurantId;
+    if (restaurantId == null) return;
+    final restaurant = await SupabaseService.getRestaurantById(restaurantId);
+    if (!mounted) return;
+    setState(() => _restaurant = restaurant);
   }
 
   Future<void> _loadSavedAddresses() async {
@@ -188,6 +215,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     }
     setState(() => _loading = true);
     final cart = context.read<CartProvider>();
+    final deliveryFee = _deliveryFee;
+    final orderTotal = cart.total + deliveryFee;
 
     // Si el pago es con tarjeta, procesar Stripe primero
     if (_payment == _Pay.card) {
@@ -203,7 +232,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         }
         return;
       }
-      final paid = await _payWithStripe(cart.total);
+      final paid = await _payWithStripe(orderTotal);
       if (!paid) {
         if (mounted) setState(() => _loading = false);
         return;
@@ -226,7 +255,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     try {
       orderId = await SupabaseService.createOrder(
         restaurantId: restaurantId,
-        total: cart.total,
+        total: orderTotal,
+        deliveryFee: deliveryFee,
         customerName: _nameCtrl.text.trim(),
         customerPhone: _phoneCtrl.text.trim(),
         address: _addressCtrl.text.trim(),
@@ -260,7 +290,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final orderData = <String, dynamic>{
       'restaurantName': cart.restaurantName ?? 'Tu restaurante',
       'address': _addressCtrl.text.trim(),
-      'total': cart.total,
+      'total': orderTotal,
       'orderId': orderId,
       if (_selectedPos != null) 'lat': _selectedPos!.latitude,
       if (_selectedPos != null) 'lng': _selectedPos!.longitude,
@@ -268,7 +298,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     await OrderHistoryService.add(
       orderId: orderId,
       restaurantName: cart.restaurantName ?? 'Restaurante',
-      total: cart.total,
+      total: orderTotal,
       address: _addressCtrl.text.trim(),
     );
     await AuthService.saveAddress(
@@ -280,7 +310,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     await OrderHistoryService.saveActiveOrder(
       orderId: orderId,
       restaurantName: cart.restaurantName ?? 'Restaurante',
-      total: cart.total,
+      total: orderTotal,
       address: _addressCtrl.text.trim(),
       lat: _selectedPos?.latitude,
       lng: _selectedPos?.longitude,
@@ -389,16 +419,46 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   }),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    child: Column(
                       children: [
-                        Text(
-                          'Total (${cart.count} producto${cart.count != 1 ? 's' : ''})',
-                          style: TextStyle(fontWeight: FontWeight.bold, color: textMain, fontSize: 15),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Subtotal (${cart.count} producto${cart.count != 1 ? 's' : ''})',
+                              style: TextStyle(color: textSub, fontSize: 14),
+                            ),
+                            Text(
+                              '\$${cart.total.toStringAsFixed(0)} MXN',
+                              style: TextStyle(color: textMain, fontSize: 14),
+                            ),
+                          ],
                         ),
-                        Text(
-                          '\$${cart.total.toStringAsFixed(0)} MXN',
-                          style: const TextStyle(fontWeight: FontWeight.bold, color: AppConstants.primaryColor, fontSize: 18),
+                        const SizedBox(height: 6),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('Envío', style: TextStyle(color: textSub, fontSize: 14)),
+                            Text(
+                              '\$${_deliveryFee.toStringAsFixed(0)} MXN',
+                              style: TextStyle(color: textMain, fontSize: 14),
+                            ),
+                          ],
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          child: Divider(color: divColor, height: 1),
+                        ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('Total',
+                                style: TextStyle(fontWeight: FontWeight.bold, color: textMain, fontSize: 15)),
+                            Text(
+                              '\$${(cart.total + _deliveryFee).toStringAsFixed(0)} MXN',
+                              style: const TextStyle(fontWeight: FontWeight.bold, color: AppConstants.primaryColor, fontSize: 18),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -585,7 +645,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           ],
         ),
       ),
-      bottomNavigationBar: _ConfirmBar(total: cart.total, onConfirm: _confirm, loading: _loading, isDark: isDark),
+      bottomNavigationBar: _ConfirmBar(total: cart.total + _deliveryFee, onConfirm: _confirm, loading: _loading, isDark: isDark),
     );
   }
 }

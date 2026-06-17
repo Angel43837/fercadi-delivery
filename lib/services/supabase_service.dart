@@ -169,6 +169,19 @@ class SupabaseService {
     return list;
   }
 
+  static Future<Restaurant?> getRestaurantById(String restaurantId) async {
+    if (useMock) {
+      final matches = _mockRestaurants.where((r) => r.id == restaurantId);
+      return matches.isEmpty ? null : matches.first;
+    }
+    final data = await _client
+        .from('restaurants')
+        .select()
+        .eq('id', restaurantId)
+        .maybeSingle();
+    return data == null ? null : Restaurant.fromJson(data);
+  }
+
   static Future<List<Category>> getCategories(String restaurantId) async {
     if (useMock) return _mockCategories[restaurantId] ?? [];
     final data = await _client
@@ -518,6 +531,7 @@ class SupabaseService {
     required List<Map<String, dynamic>> items,
     double? lat,
     double? lng,
+    double deliveryFee = 0,
     String? clientFcmToken,
   }) async {
     final orderId = 'ord_${DateTime.now().millisecondsSinceEpoch}';
@@ -533,6 +547,7 @@ class SupabaseService {
       'id':            orderId,
       'restaurant_id': restaurantId,
       'total':         total,
+      'delivery_fee':  deliveryFee,
       'status':        'pending',
       'customer_name': deliveryJson,
     });

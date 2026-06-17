@@ -69,8 +69,7 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
     try {
       final email = _emailController.text.trim().toLowerCase();
-      if (email == 'dueno@fercadi.com' ||
-          email == 'repartidor@fercadi.com' || SupabaseService.useMock) {
+      if (SupabaseService.useMock) {
         await Future.delayed(const Duration(milliseconds: 500));
         if (!mounted) return;
         final route = AuthService.roleToRoute(email);

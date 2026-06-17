@@ -29,6 +29,8 @@ class _RegistroRestauranteScreenState extends State<RegistroRestauranteScreen> {
   bool _registrado      = false;
   bool _loadingLocation = false;
   String _nombreRest    = '';
+  double? _detectedLat;
+  double? _detectedLng;
 
   static const _orange  = AppConstants.primaryColor;
   static const _dark    = Color(0xFFE64A19); // naranja oscuro para inputs
@@ -83,6 +85,8 @@ class _RegistroRestauranteScreenState extends State<RegistroRestauranteScreen> {
         'is_open': true,
         'rating': 0.0,
         'owner_id': res.user!.id,
+        if (_detectedLat != null) 'lat': _detectedLat,
+        if (_detectedLng != null) 'lng': _detectedLng,
       }).select().single();
 
       final restaurantId = data['id'] as String;
@@ -143,6 +147,8 @@ class _RegistroRestauranteScreenState extends State<RegistroRestauranteScreen> {
           addr['city'] ?? addr['town'] ?? addr['village'] ?? '',
         ].where((s) => (s as String).isNotEmpty).join(', ');
         _addressCtrl.text = parts.isNotEmpty ? parts : json['display_name'] ?? '';
+        _detectedLat = pos.latitude;
+        _detectedLng = pos.longitude;
       } else {
         _msg('No se pudo obtener la dirección', error: true);
       }

@@ -1,0 +1,74 @@
+version: '3.8'
+
+# ══════════════════════════════════════════════════════════════
+#  Fercadi — Servicios del servidor (VPS)
+#  Uso:
+#    Subir al VPS y correr: docker compose up -d
+#    Ver logs:              docker compose logs -f
+#    Actualizar:            docker compose pull && docker compose up -d
+#    Apagar:                docker compose down
+# ══════════════════════════════════════════════════════════════
+
+services:
+
+  # ── Proxy inverso + SSL ───────────────────────────────────────
+  # Recibe las visitas del dominio y las manda al servicio correcto
+  nginx:
+    image: nginx:alpine
+    container_name: fercadi-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot:ro
+    depends_on:
+      - uptime-kuma
+    restart: always
+    networks:
+      - fercadi-net
+
+  # ── Monitoreo — te avisa si algo se cae ──────────────────────
+  # Accesible en: https://monitor.tudominio.com
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: fercadi-monitor
+    volumes:
+      - ./data/uptime-kuma:/app/data
+    restart: always
+    networks:
+      - fercadi-net
+
+  # ── Renovación automática del certificado SSL ─────────────────
+  # Let's Encrypt vence cada 90 días — este lo renueva solo cada 12h
+  certbot:
+    image: certbot/certbot
+    container_name: fercadi-certbot
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    entrypoint: >
+      /bin/sh -c "trap exit TERM;
+      while :; do
+        certbot renew --webroot -w /var/www/certbot --quiet;
+        sleep 12h & wait $${!};
+      done;"
+    restart: always
+    networks:
+      - fercadi-net
+
+  # ══════════════════════════════════════════════════════════════
+  # PANEL ADMIN (descomentar cuando esté listo el panel web)
+  # ══════════════════════════════════════════════════════════════
+  # admin-panel:
+  #   image: ghcr.io/fercadi/admin-panel:latest
+  #   container_name: fercadi-admin
+  #   env_file: .env
+  #   restart: always
+  #   networks:
+  #     - fercadi-net
+
+networks:
+  fercadi-net:
+    driver: bridge

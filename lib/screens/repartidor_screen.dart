@@ -14,7 +14,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
@@ -128,6 +127,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   final List<_Order> _pendingOrders = [];
   final Set<String> _notifiedOrderIds = {};
   final Set<String> _rejectedOrderIds = {};
+  bool _initialOrdersLoaded = false;
   bool _loadingOrders = true;
   RealtimeChannel? _ordersChannel;
   Timer? _pollTimer;
@@ -152,10 +152,13 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
           .map(_Order.fromMap)
           .where((o) => o.id != _activeOrder?.id && !_rejectedOrderIds.contains(o.id))
           .toList();
-      for (final o in orders) {
-        if (!_notifiedOrderIds.contains(o.id)) {
-          _notifiedOrderIds.add(o.id);
-          if (_notifiedOrderIds.length > 1) {
+      if (!_initialOrdersLoaded) {
+        _initialOrdersLoaded = true;
+        _notifiedOrderIds.addAll(orders.map((o) => o.id));
+      } else {
+        for (final o in orders) {
+          if (!_notifiedOrderIds.contains(o.id)) {
+            _notifiedOrderIds.add(o.id);
             NotificationService.pedidoDisponible(o.restaurantName, o.total);
           }
         }
@@ -264,29 +267,6 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (kIsWeb) {
-      return Scaffold(
-        backgroundColor: AppConstants.primaryColor,
-        body: SafeArea(
-          child: Center(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 32),
-              child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                const Icon(Icons.delivery_dining, color: Colors.white, size: 80),
-                const SizedBox(height: 24),
-                const Text('¡Hola, repartidor!',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 12),
-                Text('Para ver tus pedidos y recibir notificaciones,\ninicia sesión en la aplicación móvil.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 15, height: 1.5)),
-              ]),
-            ),
-          ),
-        ),
-      );
-    }
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
       backgroundColor: isDark ? AppConstants.bgColor : AppConstants.primaryColor,

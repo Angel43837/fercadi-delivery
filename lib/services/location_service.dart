@@ -15,6 +15,17 @@ class LocationService {
   // Radio del municipio en metros (~30 km cubre todo el municipio)
   static const double _radioMetros = 30000;
 
+  // Tarifa de envío: cuota base + costo por kilómetro recorrido
+  static const double tarifaBase = 15.0;   // MXN, se cobra siempre
+  static const double tarifaPorKm = 5.0;   // MXN por cada km entre restaurante y cliente
+
+  // Calcula el costo de envío en MXN dada la distancia en km.
+  // Si no se conoce la distancia (faltan coordenadas), regresa solo la tarifa base.
+  static double calcularCostoEnvio(double? distanciaKm) {
+    if (distanciaKm == null) return tarifaBase;
+    return tarifaBase + (tarifaPorKm * distanciaKm);
+  }
+
   // Verifica si el usuario tiene GPS activado, permisos concedidos y está dentro del radio
   static Future<LocationResult> verificarUbicacion() async {
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();

@@ -95,7 +95,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
   final _restPhoneCtrl   = TextEditingController();
   final _restAddressCtrl = TextEditingController();
 
-  final List<_Category> _categories = const [
+  List<_Category> _categories = const [
     _Category(id: 'c1',  name: 'Platillos',  emoji: '🍽️'),
     _Category(id: 'c2',  name: 'Botanas',    emoji: '🍟'),
     _Category(id: 'c3',  name: 'Bebidas',    emoji: '🥤'),
@@ -123,11 +123,28 @@ class _DuenoScreenState extends State<DuenoScreen> {
 
   Future<void> _initRestaurant() async {
     _restaurantId = await AuthService.getRestaurantId();
-    if (!SupabaseService.useMock) _loadProductsFromSupabase();
+    if (!SupabaseService.useMock) {
+      _loadCategories();
+      _loadProductsFromSupabase();
+    }
     _loadRealOrders();
     _ordersChannel = SupabaseService.subscribeToOrders(_loadRealOrders);
     _orderPollTimer = Timer.periodic(const Duration(seconds: 8), (_) => _loadRealOrders());
     _loadRestaurantSettings();
+  }
+
+  // Carga las categorías reales del restaurante desde Supabase.
+  // Sin esto, el menú usaba siempre la lista fija de IDs c1/c2/c3... y los
+  // platillos de restaurantes con categorías propias (ej. Tacos Chuy) no
+  // coincidían con ningún ID, así que no se mostraban.
+  Future<void> _loadCategories() async {
+    final cats = await SupabaseService.getCategories(_restaurantId);
+    if (!mounted || cats.isEmpty) return;
+    setState(() {
+      _categories = cats
+          .map((c) => _Category(id: c.id, name: c.name, emoji: c.icon ?? '🍽️'))
+          .toList();
+    });
   }
 
   Future<void> _loadRestaurantSettings() async {
@@ -900,11 +917,17 @@ class _DuenoScreenState extends State<DuenoScreen> {
         const SizedBox(height: 28),
 
         // ── Campos de texto ─────────────────────────────────────────────────
-        _FormField(controller: _restNameCtrl,  label: 'Nombre del restaurante', icon: Icons.storefront_outlined, isDark: _isDark),
+        // Usan el color naranja del panel del dueño (_surface), no el tema
+        // negro genérico — antes se veían negros porque _FormField está
+        // pensado para la app de cliente, que sí es oscura.
+        _RestField(controller: _restNameCtrl,  label: 'Nombre del restaurante', icon: Icons.storefront_outlined,
+            fill: _surface, text: _text, textMid: _textMid),
         const SizedBox(height: 12),
-        _FormField(controller: _restDescCtrl,  label: 'Descripción',            icon: Icons.notes_outlined, maxLines: 3, isDark: _isDark),
+        _RestField(controller: _restDescCtrl,  label: 'Descripción',            icon: Icons.notes_outlined, maxLines: 3,
+            fill: _surface, text: _text, textMid: _textMid),
         const SizedBox(height: 12),
-        _FormField(controller: _restPhoneCtrl, label: 'Teléfono de contacto',   icon: Icons.phone_outlined, keyboardType: TextInputType.phone, isDark: _isDark),
+        _RestField(controller: _restPhoneCtrl, label: 'Teléfono de contacto',   icon: Icons.phone_outlined, keyboardType: TextInputType.phone,
+            fill: _surface, text: _text, textMid: _textMid),
         const SizedBox(height: 12),
 
         // ── Dirección ───────────────────────────────────────────────────────
@@ -1464,6 +1487,45 @@ class _NavItem extends StatelessWidget {
                     fontSize: 10,
                     fontWeight: active ? FontWeight.bold : FontWeight.normal)),
           ]),
+        ),
+      ),
+    );
+  }
+}
+
+// Campo de texto con el color naranja del panel del dueño (a juego con
+// el campo de dirección), en vez del gris oscuro genérico de _FormField.
+class _RestField extends StatelessWidget {
+  final TextEditingController controller;
+  final String label;
+  final IconData icon;
+  final int maxLines;
+  final TextInputType? keyboardType;
+  final Color fill;
+  final Color text;
+  final Color textMid;
+  const _RestField({
+    required this.controller, required this.label, required this.icon,
+    this.maxLines = 1, this.keyboardType,
+    required this.fill, required this.text, required this.textMid,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(color: fill, borderRadius: BorderRadius.circular(14)),
+      child: TextField(
+        controller: controller,
+        maxLines: maxLines,
+        keyboardType: keyboardType,
+        style: TextStyle(color: text),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: TextStyle(color: textMid),
+          prefixIcon: Icon(icon, color: AppConstants.primaryColor, size: 20),
+          filled: true,
+          fillColor: fill,
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
         ),
       ),
     );
