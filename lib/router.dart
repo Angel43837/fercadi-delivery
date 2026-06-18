@@ -21,6 +21,8 @@ import 'screens/order_history_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/registro_repartidor_screen.dart';
 import 'screens/registro_restaurante_screen.dart';
+import 'screens/dueno_login_screen.dart';
+import 'screens/repartidor_login_screen.dart';
 
 // Router global de la app — se pasa a MaterialApp.router en main.dart
 final appRouter = GoRouter(
@@ -93,6 +95,16 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/registro-repartidor',
       builder: (_, _) => const RegistroRepartidorScreen(),
+    ),
+    // Login exclusivo para dueños de restaurante (tema naranja)
+    GoRoute(
+      path: '/restaurante',
+      builder: (_, _) => const DuenoLoginScreen(),
+    ),
+    // Login exclusivo para repartidores — deben registrarse primero
+    GoRoute(
+      path: '/moto',
+      builder: (_, _) => const RepartidorLoginScreen(),
     ),
     // Formulario de registro para nuevos restaurantes / dueños
     GoRoute(

@@ -31,7 +31,7 @@ class _Product {
   String description;
   double price;
   bool isAvailable;
-  final String categoryId;
+  List<String> categoryIds;
   String? imagePath;
 
   _Product({
@@ -40,7 +40,7 @@ class _Product {
     required this.description,
     required this.price,
     required this.isAvailable,
-    required this.categoryId,
+    required this.categoryIds,
     this.imagePath,
   });
 }
@@ -105,14 +105,14 @@ class _DuenoScreenState extends State<DuenoScreen> {
   ];
 
   List<_Product> _products = [
-    _Product(id: 'p1', name: 'Big Mac',         description: 'Dos carnes, lechuga, queso, cebolla y salsa especial', price: 89,  isAvailable: true,  categoryId: 'c1'),
-    _Product(id: 'p2', name: 'Quarter Pounder', description: 'Carne 100% res, queso americano, cebolla y mostaza',   price: 95,  isAvailable: true,  categoryId: 'c1'),
-    _Product(id: 'p3', name: 'McPollo Crispy',  description: 'Pollo crujiente, lechuga y mayonesa en pan tostado',   price: 79,  isAvailable: false, categoryId: 'c1'),
-    _Product(id: 'p4', name: 'Papas Medianas',  description: 'Papas fritas crujientes con sal',                      price: 35,  isAvailable: true,  categoryId: 'c2'),
-    _Product(id: 'p5', name: 'Papas Grandes',   description: 'Porción grande de papas fritas',                       price: 45,  isAvailable: true,  categoryId: 'c2'),
-    _Product(id: 'p6', name: 'Coca-Cola 500ml', description: 'Refresco frío en vaso',                                price: 30,  isAvailable: true,  categoryId: 'c3'),
-    _Product(id: 'p7', name: 'Café Americano',  description: 'Café negro recién preparado',                          price: 40,  isAvailable: true,  categoryId: 'c3'),
-    _Product(id: 'p8', name: 'McFlurry Oreo',   description: 'Helado suave con trozos de galleta Oreo',              price: 55,  isAvailable: true,  categoryId: 'c10'),
+    _Product(id: 'p1', name: 'Big Mac',         description: 'Dos carnes, lechuga, queso, cebolla y salsa especial', price: 89,  isAvailable: true,  categoryIds: ['c1']),
+    _Product(id: 'p2', name: 'Quarter Pounder', description: 'Carne 100% res, queso americano, cebolla y mostaza',   price: 95,  isAvailable: true,  categoryIds: ['c1']),
+    _Product(id: 'p3', name: 'McPollo Crispy',  description: 'Pollo crujiente, lechuga y mayonesa en pan tostado',   price: 79,  isAvailable: false, categoryIds: ['c1']),
+    _Product(id: 'p4', name: 'Papas Medianas',  description: 'Papas fritas crujientes con sal',                      price: 35,  isAvailable: true,  categoryIds: ['c2']),
+    _Product(id: 'p5', name: 'Papas Grandes',   description: 'Porción grande de papas fritas',                       price: 45,  isAvailable: true,  categoryIds: ['c2']),
+    _Product(id: 'p6', name: 'Coca-Cola 500ml', description: 'Refresco frío en vaso',                                price: 30,  isAvailable: true,  categoryIds: ['c3']),
+    _Product(id: 'p7', name: 'Café Americano',  description: 'Café negro recién preparado',                          price: 40,  isAvailable: true,  categoryIds: ['c3']),
+    _Product(id: 'p8', name: 'McFlurry Oreo',   description: 'Helado suave con trozos de galleta Oreo',              price: 55,  isAvailable: true,  categoryIds: ['c10']),
   ];
 
   @override
@@ -248,7 +248,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
         description: p.description ?? '',
         price: p.price,
         isAvailable: p.isAvailable,
-        categoryId: p.categoryId,
+        categoryIds: [p.categoryId],
         imagePath: p.imageUrl,
       )).toList();
     });
@@ -478,7 +478,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
       ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
         children: _categories.map((cat) {
-          final preseeded = _products.where((p) => p.categoryId == cat.id).toList();
+          final preseeded = _products.where((p) => p.categoryIds.contains(cat.id)).toList();
           final extra = appData.extraProductsForCategory(_restaurantId, cat.id);
           if (preseeded.isEmpty && extra.isEmpty) return const SizedBox();
           return Column(
@@ -513,7 +513,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 final p = _Product(
                   id: sp.id, name: sp.name, description: sp.description,
                   price: sp.price, isAvailable: sp.isAvailable,
-                  categoryId: sp.categoryId, imagePath: sp.imagePath,
+                  categoryIds: sp.categoryIds, imagePath: sp.imagePath,
                 );
                 final avail = appData.getProductAvailability(sp.id, sp.isAvailable);
                 return _ProductTile(
@@ -548,7 +548,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
     final nameCtrl  = TextEditingController(text: existing?.name ?? '');
     final descCtrl  = TextEditingController(text: existing?.description ?? '');
     final priceCtrl = TextEditingController(text: existing != null ? existing.price.toStringAsFixed(0) : '');
-    String selectedCatId = existing?.categoryId ?? _categories.first.id;
+    List<String> selectedCatIds = existing?.categoryIds.toList() ?? [_categories.first.id];
     bool available = existing?.isAvailable ?? true;
     String? pickedImagePath = existing?.imagePath;
     final picker = ImagePicker();
@@ -595,7 +595,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: AppConstants.surfaceColor,
+      backgroundColor: AppConstants.primaryColor,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => StatefulBuilder(
@@ -707,28 +707,51 @@ class _DuenoScreenState extends State<DuenoScreen> {
             ),
             const SizedBox(height: 14),
 
-            DropdownButtonFormField<String>(
-              initialValue: selectedCatId,
-              dropdownColor: AppConstants.surface2Color,
-              style: const TextStyle(color: Colors.white),
-              decoration: _inputDecoration('Categoría', isDark: true),
-              items: _categories.map((c) => DropdownMenuItem(
-                value: c.id,
-                child: Text('${c.emoji} ${c.name}'),
-              )).toList(),
-              onChanged: (v) => setModal(() => selectedCatId = v!),
+            Text('Categorías', style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 13, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8, runSpacing: 8,
+              children: _categories.map((c) {
+                final selected = selectedCatIds.contains(c.id);
+                return GestureDetector(
+                  onTap: () => setModal(() {
+                    if (selected) {
+                      if (selectedCatIds.length > 1) selectedCatIds.remove(c.id);
+                    } else {
+                      selectedCatIds.add(c.id);
+                    }
+                  }),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: selected ? Colors.white : Colors.white.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: selected ? Colors.white : Colors.white38),
+                    ),
+                    child: Text(
+                      '${c.emoji} ${c.name}',
+                      style: TextStyle(
+                        color: selected ? AppConstants.primaryColor : Colors.white,
+                        fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
             ),
             const SizedBox(height: 12),
-            _FormField(controller: nameCtrl,  label: 'Nombre del platillo', icon: Icons.fastfood_outlined, isDark: true),
+            _FormField(controller: nameCtrl,  label: 'Nombre del platillo', icon: Icons.fastfood_outlined, isDark: false),
             const SizedBox(height: 12),
-            _FormField(controller: descCtrl,  label: 'Descripción',         icon: Icons.notes, maxLines: 2, isDark: true),
+            _FormField(controller: descCtrl,  label: 'Descripción',         icon: Icons.notes, maxLines: 2, isDark: false),
             const SizedBox(height: 12),
-            _FormField(controller: priceCtrl, label: 'Precio (MXN)',        icon: Icons.attach_money, keyboardType: TextInputType.number, isDark: true),
+            _FormField(controller: priceCtrl, label: 'Precio (MXN)',        icon: Icons.attach_money, keyboardType: TextInputType.number, isDark: false),
             const SizedBox(height: 12),
 
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-              decoration: BoxDecoration(color: const Color(0xFF2A2A2A), borderRadius: BorderRadius.circular(12)),
+              decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(12)),
               child: Row(children: [
                 Icon(Icons.storefront_outlined, color: Colors.white.withValues(alpha: 0.5), size: 20),
                 const SizedBox(width: 10),
@@ -766,7 +789,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
                       appData.addExtraProduct(SharedProduct(
                         id: newId, name: name, description: desc,
                         price: price, isAvailable: available,
-                        categoryId: selectedCatId, restaurantId: _restaurantId,
+                        categoryIds: List<String>.from(selectedCatIds), restaurantId: _restaurantId,
                         imagePath: pickedImagePath,
                       ));
                     }
@@ -774,7 +797,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
                     appData.updateExtraProduct(SharedProduct(
                       id: existing.id, name: name, description: desc,
                       price: price, isAvailable: available,
-                      categoryId: existing.categoryId, restaurantId: _restaurantId,
+                      categoryIds: List<String>.from(selectedCatIds), restaurantId: _restaurantId,
                       imagePath: pickedImagePath,
                     ));
                     appData.setProductAvailability(existing.id, available);
@@ -794,7 +817,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
                   await SupabaseService.saveProduct(
                     id: newId, name: name, description: desc,
                     price: price, isAvailable: available,
-                    categoryId: selectedCatId,
+                    categoryId: selectedCatIds.first,
                     restaurantId: _restaurantId,
                     imageUrl: urlForDb,
                   );
@@ -819,12 +842,13 @@ class _DuenoScreenState extends State<DuenoScreen> {
 
     Future<void> pickPhoto() async {
       final picker = ImagePicker();
-      final xfile = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80, maxWidth: 400);
+      final xfile = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80, maxWidth: 800);
       if (xfile == null) return;
       final bytes = await xfile.readAsBytes();
-      final url = await SupabaseService.uploadProfilePhotoBytes(bytes, 'restaurant_1');
+      final url = await SupabaseService.uploadProfilePhotoBytes(bytes, 'restaurant_$_restaurantId');
       if (url == null) return;
       await AuthService.saveRestaurantSettings(photo: url);
+      await SupabaseService.updateRestaurantLogo(_restaurantId, url);
       if (mounted) setState(() => _restPhoto = url);
     }
 
@@ -846,7 +870,44 @@ class _DuenoScreenState extends State<DuenoScreen> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 40),
       children: [
-        // ── Foto del restaurante ────────────────────────────────────────────
+        // ── Logo / banner del restaurante ──────────────────────────────────
+        GestureDetector(
+          onTap: pickPhoto,
+          child: Container(
+            width: double.infinity, height: 100,
+            decoration: BoxDecoration(
+              color: _surface2,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.white30),
+            ),
+            clipBehavior: Clip.hardEdge,
+            child: _restPhoto.isNotEmpty
+                ? Stack(fit: StackFit.expand, children: [
+                    Image.network(_restPhoto, fit: BoxFit.contain,
+                        errorBuilder: (_, _, _) => Center(child: Text(_restEmoji, style: const TextStyle(fontSize: 50)))),
+                    Positioned(bottom: 8, right: 8,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(20)),
+                        child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                          Icon(Icons.edit, color: Colors.white, size: 13),
+                          SizedBox(width: 4),
+                          Text('Cambiar logo', style: TextStyle(color: Colors.white, fontSize: 11)),
+                        ]),
+                      ),
+                    ),
+                  ])
+                : Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    Icon(Icons.add_photo_alternate_outlined, color: Colors.white54, size: 36),
+                    const SizedBox(height: 6),
+                    const Text('Agregar logo del restaurante', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                    const Text('Esta imagen la ven los clientes en la lista', style: TextStyle(color: Colors.white38, fontSize: 11)),
+                  ]),
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // ── Foto de perfil circular ─────────────────────────────────────────
         Center(
           child: GestureDetector(
             onTap: pickPhoto,

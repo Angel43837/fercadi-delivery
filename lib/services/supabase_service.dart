@@ -319,6 +319,11 @@ class SupabaseService {
     }
   }
 
+  static Future<void> updateRestaurantLogo(String restaurantId, String imageUrl) async {
+    if (useMock) return;
+    await _client.from('restaurants').update({'image_url': imageUrl}).eq('id', restaurantId);
+  }
+
   // ── Likes de productos (realtime) ────────────────────────────────────────────
 
   static Future<Map<String, int>> getProductLikeCounts() async {

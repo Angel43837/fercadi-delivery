@@ -125,10 +125,35 @@ class _MenuScreenState extends State<MenuScreen> {
                   color: AppConstants.primaryColor))
           : Column(
               children: [
+                if (widget.restaurant.imageUrl != null &&
+                    widget.restaurant.imageUrl!.isNotEmpty)
+                  _buildLogoHeader(),
                 _buildCategoryTabs(),
                 Expanded(child: _buildProductList()),
               ],
             ),
+    );
+  }
+
+  Widget _buildLogoHeader() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Center(
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: SizedBox(
+            width: 160,
+            height: 60,
+            child: Image.network(
+              widget.restaurant.imageUrl!,
+              width: 160,
+              height: 60,
+              fit: BoxFit.contain,
+              errorBuilder: (_, e, s) => const Icon(Icons.storefront_rounded, color: Colors.black12, size: 36),
+            ),
+          ),
+        ),
+      ),
     );
   }
 

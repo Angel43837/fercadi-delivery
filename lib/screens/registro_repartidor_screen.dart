@@ -72,6 +72,69 @@ class _RegistroRepartidorScreenState extends State<RegistroRepartidorScreen> {
     }
   }
 
+  void _mostrarRecuperacion() {
+    final ctrl = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _dark,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Text('Recuperar contraseña',
+            style: TextStyle(color: _white, fontWeight: FontWeight.bold)),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text('Ingresa tu correo y te enviaremos un enlace para crear una nueva contraseña.',
+              style: TextStyle(color: _white.withValues(alpha: 0.7), fontSize: 13, height: 1.5)),
+          const SizedBox(height: 16),
+          TextField(
+            controller: ctrl,
+            keyboardType: TextInputType.emailAddress,
+            style: const TextStyle(color: _white),
+            decoration: InputDecoration(
+              labelText: 'Correo electrónico',
+              labelStyle: TextStyle(color: _white.withValues(alpha: 0.6)),
+              prefixIcon: const Icon(Icons.email_outlined, color: Colors.white54),
+              filled: true,
+              fillColor: _white.withValues(alpha: 0.1),
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide.none),
+              focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: _orange)),
+            ),
+          ),
+        ]),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('Cancelar',
+                style: TextStyle(color: _white.withValues(alpha: 0.5))),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final email = ctrl.text.trim();
+              if (email.isEmpty) return;
+              try {
+                await Supabase.instance.client.auth.resetPasswordForEmail(email);
+              } catch (_) {}
+              if (ctx.mounted) Navigator.pop(ctx);
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text('Revisa tu correo — te enviamos el enlace 📧'),
+                  backgroundColor: Colors.green,
+                ));
+              }
+            },
+            style: ElevatedButton.styleFrom(
+                backgroundColor: _orange, foregroundColor: _white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+            child: const Text('Enviar enlace'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _msg(String text, {bool error = false}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -160,26 +223,16 @@ class _RegistroRepartidorScreenState extends State<RegistroRepartidorScreen> {
                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
             Center(
-              child: GestureDetector(
-                onTap: () => context.go('/login'),
-                child: RichText(
-                  text: TextSpan(
-                    text: '¿Ya tienes cuenta? ',
-                    style: TextStyle(color: _white.withValues(alpha: 0.7),
-                        fontSize: 13),
-                    children: const [
-                      TextSpan(text: 'Inicia sesión',
-                          style: TextStyle(color: _white,
-                              fontWeight: FontWeight.bold,
-                              decoration: TextDecoration.underline)),
-                    ],
-                  ),
-                ),
+              child: TextButton.icon(
+                onPressed: _mostrarRecuperacion,
+                icon: const Icon(Icons.lock_reset, color: Colors.white70, size: 18),
+                label: const Text('¿Olvidaste tu contraseña?',
+                    style: TextStyle(color: Colors.white70, fontSize: 13)),
               ),
             ),
-            const SizedBox(height: 48),
+            const SizedBox(height: 32),
           ]),
         ),
       ),
@@ -263,7 +316,7 @@ class _RegistroRepartidorScreenState extends State<RegistroRepartidorScreen> {
               SizedBox(
                 width: double.infinity, height: 52,
                 child: ElevatedButton(
-                  onPressed: () => context.go('/login'),
+                  onPressed: () => context.go('/moto'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: _white,
                     foregroundColor: _orange,
@@ -271,7 +324,7 @@ class _RegistroRepartidorScreenState extends State<RegistroRepartidorScreen> {
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(14)),
                   ),
-                  child: const Text('Ir al inicio de sesión',
+                  child: const Text('Iniciar sesión',
                       style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                 ),
               ),

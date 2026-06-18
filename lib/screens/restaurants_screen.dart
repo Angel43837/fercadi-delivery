@@ -746,6 +746,26 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                   ? AppConstants.surface2Color
                   : Colors.white.withValues(alpha: 0.3),
             ),
+            if (r.imageUrl != null && r.imageUrl!.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Center(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: SizedBox(
+                      width: 160,
+                      height: 60,
+                      child: Image.network(
+                        r.imageUrl!,
+                        width: 160,
+                        height: 60,
+                        fit: BoxFit.contain,
+                        errorBuilder: (_, e, s) => const Icon(Icons.storefront_rounded, color: Colors.black12, size: 36),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             if (isLoading)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 24),
@@ -754,11 +774,26 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
               )
             else if (cats.isNotEmpty) ...[
               _buildCategoryTabs(r.id, cats, selIdx),
+              _buildPromoBanner(r.id),
               _buildProducts(r, cats, selIdx, appData),
               const SizedBox(height: 8),
             ],
           ]),
       ]),
+    );
+  }
+
+  // ── Promo carousel ────────────────────────────────────────────────────
+
+  Widget _buildPromoBanner(String restaurantId) {
+    final images = [
+      'https://picsum.photos/seed/${restaurantId}a/700/220',
+      'https://picsum.photos/seed/${restaurantId}b/700/220',
+      'https://picsum.photos/seed/${restaurantId}c/700/220',
+    ];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      child: _PromoCarousel(images: images),
     );
   }
 
@@ -864,7 +899,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
         final qty = _productQty[p.id] ?? 1;
         final asProduct = Product(
           id: p.id,
-          categoryId: p.categoryId,
+          categoryId: p.categoryIds.first,
           name: p.name,
           description: p.description.isEmpty ? null : p.description,
           price: p.price,
@@ -1195,5 +1230,122 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
         ]),
       ),
     );
+  }
+}
+
+// ── Carrusel de imágenes promocionales ────────────────────────────────────────
+
+class _PromoCarousel extends StatefulWidget {
+  final List<String> images;
+  const _PromoCarousel({required this.images});
+
+  @override
+  State<_PromoCarousel> createState() => _PromoCarouselState();
+}
+
+class _PromoCarouselState extends State<_PromoCarousel> {
+  final _ctrl = PageController();
+  int _current = 0;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (!mounted) return;
+      final next = (_current + 1) % widget.images.length;
+      _ctrl.animateToPage(next,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeInOut);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(children: [
+      ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: SizedBox(
+          height: 230,
+          child: PageView.builder(
+            controller: _ctrl,
+            itemCount: widget.images.length,
+            onPageChanged: (i) => setState(() => _current = i),
+            itemBuilder: (_, i) {
+              final promoTexts = [
+                '🔥 ¡Ofertas del día!',
+                '🚀 Entrega rápida',
+                '⭐ Lo más pedido',
+              ];
+              return Stack(fit: StackFit.expand, children: [
+                Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        const Color(0xFFE64A19),
+                        const Color(0xFFFF8A65),
+                      ],
+                      begin: i.isEven ? Alignment.topLeft : Alignment.topRight,
+                      end: i.isEven ? Alignment.bottomRight : Alignment.bottomLeft,
+                    ),
+                  ),
+                ),
+                Image.network(
+                  widget.images[i],
+                  width: double.infinity,
+                  height: 230,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, e, s) => const SizedBox.shrink(),
+                ),
+                Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Colors.transparent, Colors.black.withValues(alpha: 0.5)],
+                    ),
+                  ),
+                ),
+                Positioned(
+                  bottom: 16,
+                  left: 16,
+                  right: 16,
+                  child: Text(
+                    promoTexts[i % promoTexts.length],
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      shadows: [Shadow(color: Colors.black54, blurRadius: 8)],
+                    ),
+                  ),
+                ),
+              ]);
+            },
+          ),
+        ),
+      ),
+      const SizedBox(height: 6),
+      Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: List.generate(widget.images.length, (i) => AnimatedContainer(
+          duration: const Duration(milliseconds: 250),
+          margin: const EdgeInsets.symmetric(horizontal: 3),
+          width: _current == i ? 18 : 6,
+          height: 6,
+          decoration: BoxDecoration(
+            color: _current == i ? Colors.white : Colors.white38,
+            borderRadius: BorderRadius.circular(3),
+          ),
+        )),
+      ),
+    ]);
   }
 }

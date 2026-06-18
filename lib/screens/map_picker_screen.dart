@@ -11,6 +11,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart' as ll;
 import '../core/constants.dart';
+import '../services/geocoding_service.dart';
 
 class MapPickerScreen extends StatefulWidget {
   final ll.LatLng? initial;
@@ -27,7 +28,9 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
   bool _locating = false;
   bool _userInteracted = false;
   bool _disposed = false;
+  bool _searching = false;
   StreamSubscription<Position>? _gpsSub;
+  final _searchCtrl = TextEditingController();
 
   @override
   void initState() {
@@ -45,7 +48,40 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
     _gpsSub?.cancel();
     _mapCtrl?.dispose();
     _mapCtrl = null;
+    _searchCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _searchAddress() async {
+    final query = _searchCtrl.text.trim();
+    if (query.isEmpty) return;
+    setState(() => _searching = true);
+    try {
+      final result = await GeocodingService.searchAddress(query);
+      if (!mounted) return;
+      if (result == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se encontró esa dirección')),
+        );
+        return;
+      }
+      final pos = LatLng(result.lat, result.lng);
+      setState(() {
+        _center = pos;
+        _userInteracted = true;
+      });
+      _mapCtrl?.animateCamera(CameraUpdate.newCameraPosition(
+        CameraPosition(target: pos, zoom: 17.0),
+      ));
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Error al buscar la dirección')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _searching = false);
+    }
   }
 
   Future<void> _goToGps() async {
@@ -71,12 +107,10 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
       ).listen((pos) {
         if (_disposed || !mounted) return;
         if (pos.accuracy < _gpsAccuracy) {
-          final gps = LatLng(pos.latitude, pos.longitude);
-          setState(() {
-            _center = gps;
-            _gpsAccuracy = pos.accuracy;
-          });
+          setState(() => _gpsAccuracy = pos.accuracy);
           if (!_userInteracted) {
+            final gps = LatLng(pos.latitude, pos.longitude);
+            setState(() => _center = gps);
             final zoom = pos.accuracy < 10 ? 19.0
                        : pos.accuracy < 25 ? 18.0
                        : pos.accuracy < 60 ? 17.0
@@ -161,18 +195,59 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                     spreadRadius: 2,
                   )],
                 ),
-                child: Icon(Icons.location_on, color: AppConstants.primaryColor, size: 52),
+                child: Icon(Icons.location_on, color: AppConstants.primaryColor, size: 36),
               ),
               const SizedBox(height: 26),
             ]),
           ),
         ),
 
-        // ── Instrucción + precisión GPS ───────────────────────────────────────
+        // ── Buscador de dirección + Instrucción + precisión GPS ──────────────
         SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
             child: Column(mainAxisSize: MainAxisSize.min, children: [
+              // Barra de búsqueda
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 8)],
+                ),
+                child: Row(children: [
+                  const SizedBox(width: 12),
+                  const Icon(Icons.search, color: Colors.black54, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: _searchCtrl,
+                      style: const TextStyle(color: Colors.black87, fontSize: 14),
+                      decoration: const InputDecoration(
+                        hintText: 'Busca tu calle o colonia...',
+                        hintStyle: TextStyle(color: Colors.black38, fontSize: 14),
+                        border: InputBorder.none,
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      onSubmitted: (_) => _searchAddress(),
+                      textInputAction: TextInputAction.search,
+                    ),
+                  ),
+                  if (_searching)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 12),
+                      child: SizedBox(width: 18, height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: AppConstants.primaryColor)),
+                    )
+                  else
+                    IconButton(
+                      icon: const Icon(Icons.arrow_forward, color: AppConstants.primaryColor, size: 20),
+                      onPressed: _searchAddress,
+                      tooltip: 'Buscar',
+                    ),
+                ]),
+              ),
+              const SizedBox(height: 8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 decoration: BoxDecoration(

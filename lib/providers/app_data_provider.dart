@@ -56,7 +56,7 @@ class SharedProduct {
   String description;
   double price;
   bool isAvailable;
-  final String categoryId;
+  final List<String> categoryIds;
   final String restaurantId;
   String? imagePath;
 
@@ -66,7 +66,7 @@ class SharedProduct {
     required this.description,
     required this.price,
     required this.isAvailable,
-    required this.categoryId,
+    required this.categoryIds,
     required this.restaurantId,
     this.imagePath,
   });
@@ -229,7 +229,7 @@ class AppDataProvider extends ChangeNotifier {
           String restaurantId, String categoryId) =>
       _extraProducts
           .where((p) =>
-              p.restaurantId == restaurantId && p.categoryId == categoryId)
+              p.restaurantId == restaurantId && p.categoryIds.contains(categoryId))
           .toList();
 
   List<SharedProduct> extraProductsForRestaurant(String restaurantId) =>

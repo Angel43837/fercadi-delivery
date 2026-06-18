@@ -2,6 +2,7 @@
 // Punto de entrada de la app Grupo Fercadi.
 // Inicializa notificaciones, conecta Supabase y lanza la app con los providers globales.
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:provider/provider.dart';
@@ -33,8 +34,8 @@ void main() async {
         await Stripe.instance.applySettings();
       } catch (_) {}
 
-      // Inicializa notificaciones push locales
-      await NotificationService.init();
+      // flutter_local_notifications no soporta web
+      if (!kIsWeb) await NotificationService.init();
 
       // Solo conecta Supabase si no estamos en modo demo (useMock = false)
       if (!SupabaseService.useMock) {
