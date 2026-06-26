@@ -68,12 +68,22 @@ class _SplashScreenState extends State<SplashScreen>
     ]);
     if (!mounted) return;
     final session = results[1] as dynamic;
+
     if (session == null) { context.go('/login'); return; }
 
     // La sesión guarda la ruta directamente (ej. '/dueno', '/repartidor')
     final candidateRoute = session.role;
-    if (!SupabaseService.useMock &&
-        (candidateRoute == '/admin' || candidateRoute == '/repartidor' || candidateRoute == '/dueno')) {
+
+    // Dueño y repartidor ya tienen sus propias sesiones independientes —
+    // si quedó un session_role viejo con esos valores, limpiarlo y mandar al login de usuario.
+    if (candidateRoute == '/dueno' || candidateRoute == '/repartidor') {
+      await AuthService.clearSession();
+      if (!mounted) return;
+      context.go('/login');
+      return;
+    }
+
+    if (!SupabaseService.useMock && (candidateRoute == '/admin' || candidateRoute == '/flota')) {
       final supabaseSession = await _waitForSupabaseSession();
       if (!mounted) return;
       if (supabaseSession == null) {
@@ -83,11 +93,9 @@ class _SplashScreenState extends State<SplashScreen>
         return;
       }
       final liveRole = supabaseSession.user.userMetadata?['role'] as String?;
-      final verifiedRoute = liveRole == 'repartidor' ? '/repartidor'
-                          : liveRole == 'dueno'      ? '/dueno'
-                          : liveRole == 'admin'      ? '/admin'
-                          : '/login';
-      context.go(verifiedRoute);
+      if (liveRole == 'admin') { context.go('/admin'); return; }
+      if (liveRole == 'jefe_flota') { context.go('/flota'); return; }
+      context.go('/login');
       return;
     }
     context.go(candidateRoute);

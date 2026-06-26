@@ -23,6 +23,8 @@ import 'screens/registro_repartidor_screen.dart';
 import 'screens/registro_restaurante_screen.dart';
 import 'screens/dueno_login_screen.dart';
 import 'screens/repartidor_login_screen.dart';
+import 'screens/flota_screen.dart';
+import 'screens/flota_login_screen.dart';
 
 // Router global de la app — se pasa a MaterialApp.router en main.dart
 final appRouter = GoRouter(
@@ -105,6 +107,16 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/moto',
       builder: (_, _) => const RepartidorLoginScreen(),
+    ),
+    // Login exclusivo para jefes de flota (tema oscuro azul)
+    GoRoute(
+      path: '/flota-login',
+      builder: (_, _) => const FlotaLoginScreen(),
+    ),
+    // Panel del jefe de flota — ve riders, ubicaciones y ganancias
+    GoRoute(
+      path: '/flota',
+      builder: (_, _) => const FlotaScreen(),
     ),
     // Formulario de registro para nuevos restaurantes / dueños
     GoRoute(

@@ -14,10 +14,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
+import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -28,6 +30,7 @@ import '../services/location_service.dart';
 import '../services/notification_service.dart';
 import '../services/supabase_service.dart';
 import '../services/auth_service.dart';
+import 'rating_dialog.dart';
 
 // Posiciones fijas por restaurante
 const _restaurantInfo = {
@@ -133,6 +136,11 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   Timer? _pollTimer;
   LatLng? _geocodedCustomerPos;
 
+  // Ruta azul/amarilla en el mapa
+  List<LatLng> _routePoints = [];
+  Color _routeColor = const Color(0xFFFFB300);
+  LatLng? _lastRouteFetchPos;
+
   @override
   void initState() {
     super.initState();
@@ -184,9 +192,26 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         ).listen((pos) {
           if (!mounted) return;
           setState(() => _myPos = pos);
+          // Transmite presencia al jefe de flota siempre que el GPS esté activo
+          SupabaseService.broadcastRiderPresence(pos.latitude, pos.longitude);
           if (_activeOrder != null) {
-            try { _mapCtrl.move(LatLng(pos.latitude, pos.longitude), 15.5); } catch (_) {}
+            final current = LatLng(pos.latitude, pos.longitude);
+            try { _mapCtrl.move(current, 15.5); } catch (_) {}
             SupabaseService.broadcastLocation(pos.latitude, pos.longitude);
+            // Re-trazar ruta cada 200 m de movimiento
+            final prevPos = _lastRouteFetchPos;
+            final moved = prevPos == null ||
+                const Distance()(prevPos, current) > 200;
+            if (moved) {
+              _lastRouteFetchPos = current;
+              final dest = _step >= 2
+                  ? (_geocodedCustomerPos ?? _activeOrder!.customerPos)
+                  : _activeOrder!.restaurantPos;
+              final color = _step >= 2
+                  ? const Color(0xFF2196F3)
+                  : const Color(0xFFFFB300);
+              _fetchRoute(current, dest, color: color);
+            }
           }
         });
       }
@@ -210,10 +235,16 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
       _geocodedCustomerPos = order.hasExactCoords ? order.customerPos : null;
       _pendingOrders.removeWhere((o) => o.id == order.id);
       _step = 0;
+      _routePoints = [];
+      _lastRouteFetchPos = null;
     });
     SupabaseService.updateOrderStatus(order.id, 'accepted');
     SupabaseService.startLocationBroadcast(order.id);
     if (!order.hasExactCoords) _geocodeCustomer(order.address);
+    final from = _myPos != null
+        ? LatLng(_myPos!.latitude, _myPos!.longitude)
+        : order.restaurantPos;
+    _fetchRoute(from, order.restaurantPos, color: const Color(0xFFFFB300));
   }
 
   void _rechazarPedido(_Order order) {
@@ -223,6 +254,29 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     });
   }
 
+  Future<void> _fetchRoute(LatLng from, LatLng to, {required Color color}) async {
+    _routeColor = color;
+    try {
+      final url = Uri.parse(
+        'https://router.project-osrm.org/route/v1/driving/'
+        '${from.longitude},${from.latitude};${to.longitude},${to.latitude}'
+        '?overview=full&geometries=geojson',
+      );
+      final res = await http.get(url, headers: {'User-Agent': 'GOGOFood/1.0'})
+          .timeout(const Duration(seconds: 10));
+      if (!mounted || res.statusCode != 200) return;
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      final routes = data['routes'] as List?;
+      if (routes == null || routes.isEmpty) return;
+      final coords = routes[0]['geometry']['coordinates'] as List;
+      setState(() {
+        _routePoints = coords
+            .map((c) => LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble()))
+            .toList();
+      });
+    } catch (_) {}
+  }
+
   Future<void> _geocodeCustomer(String address) async {
     final result = await LocationService.geocodeAddress(address);
     if (!mounted || result == null) return;
@@ -230,7 +284,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     try { _mapCtrl.move(_geocodedCustomerPos!, 15.0); } catch (_) {}
   }
 
-  void _avanzarStep() {
+  Future<void> _avanzarStep() async {
     if (_step < 2) {
       setState(() => _step++);
       if (_step == 2) {
@@ -240,26 +294,34 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
             SupabaseService.broadcastLocation(_myPos!.latitude, _myPos!.longitude);
           }
         });
+        // Ruta azul al cliente
+        final clientPos = _geocodedCustomerPos ?? _activeOrder!.customerPos;
+        final from = _myPos != null
+            ? LatLng(_myPos!.latitude, _myPos!.longitude)
+            : _activeOrder!.restaurantPos;
+        setState(() { _routePoints = []; _lastRouteFetchPos = null; });
+        _fetchRoute(from, clientPos, color: const Color(0xFF2196F3));
       }
     } else {
       _broadcastTimer?.cancel();
       _broadcastTimer = null;
-      SupabaseService.updateOrderStatus(_activeOrder!.id, 'delivered');
+      final orderId = _activeOrder!.id;
+      final ganancia = _activeOrder!.total * 0.15;
+      SupabaseService.updateOrderStatus(orderId, 'delivered');
       SupabaseService.stopLocationBroadcast();
+      NotificationService.entregaCompletada(ganancia);
       setState(() {
         _entregasHoy++;
-        _gananciaHoy += _activeOrder!.total * 0.15;
+        _gananciaHoy += ganancia;
         _activeOrder = null;
         _step = 0;
+        _routePoints = [];
+        _lastRouteFetchPos = null;
       });
       _loadOrders();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('¡Pedido entregado! Excelente trabajo 🎉'),
-          backgroundColor: Colors.green[700],
-          duration: const Duration(seconds: 3),
-        ),
-      );
+      if (mounted) {
+        await showRatingDialog(context, orderId: orderId, isDriver: true);
+      }
     }
   }
 
@@ -416,6 +478,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                       ? ClipOval(child: _photoPath!.startsWith('http')
                           ? Image.network(_photoPath!, fit: BoxFit.cover, width: 48, height: 48,
                               errorBuilder: (_, e, s) => const Icon(Icons.delivery_dining, color: AppConstants.primaryColor, size: 26))
+                          : kIsWeb ? const Icon(Icons.delivery_dining, color: AppConstants.primaryColor, size: 26)
                           : Image.file(File(_photoPath!), fit: BoxFit.cover, width: 48, height: 48,
                               errorBuilder: (_, e, s) => const Icon(Icons.delivery_dining, color: AppConstants.primaryColor, size: 26)))
                       : const Icon(Icons.delivery_dining, color: AppConstants.primaryColor, size: 26),
@@ -649,6 +712,18 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.example.landing_test',
               ),
+              if (_routePoints.isNotEmpty)
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: _routePoints,
+                      strokeWidth: 5.0,
+                      color: _routeColor,
+                      borderColor: Colors.white.withValues(alpha: 0.6),
+                      borderStrokeWidth: 2.0,
+                    ),
+                  ],
+                ),
               MarkerLayer(markers: [
                 Marker(
                   point: order.restaurantPos,
@@ -806,18 +881,10 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         ),
       ),
 
-      // ── Botón de acción ────────────────────────────────────────────────────
+      // ── Botón de acción flotante ───────────────────────────────────────────
       Container(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-        decoration: BoxDecoration(
-          color: isDark ? AppConstants.surfaceColor : Colors.white,
-          boxShadow: [
-            BoxShadow(
-                color: Colors.black.withValues(alpha: 0.25),
-                blurRadius: 10,
-                offset: const Offset(0, -3))
-          ],
-        ),
+        color: Colors.transparent,
         child: SafeArea(
           child: SizedBox(
             width: double.infinity,
