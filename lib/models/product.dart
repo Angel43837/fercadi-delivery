@@ -1,17 +1,15 @@
-// product.dart
-// Modelo de datos para un platillo/producto del menú.
-// Corresponde a la tabla "products" en Supabase.
-// images es una lista de URLs adicionales para el carrusel de fotos en el detalle.
-
 class Product {
   final String id;
-  final String categoryId;  // A qué categoría del menú pertenece
+  final String categoryId;
   final String name;
   final String? description;
-  final double price;          // Precio en MXN
-  final String? imageUrl;      // Foto principal del platillo
-  final bool isAvailable;      // Si se puede ordenar en este momento
-  final List<String> images;   // Fotos adicionales para el carrusel
+  final double price;
+  final String? imageUrl;
+  final bool isAvailable;
+  final List<String> images;
+  final int? promoDiscountPercent;
+  final bool promoIs2x1;
+  final DateTime? promoExpiresAt;
 
   const Product({
     required this.id,
@@ -22,9 +20,21 @@ class Product {
     this.imageUrl,
     this.isAvailable = true,
     this.images = const [],
+    this.promoDiscountPercent,
+    this.promoIs2x1 = false,
+    this.promoExpiresAt,
   });
 
-  // Crea un Product desde un Map de JSON (respuesta de Supabase)
+  bool get isPromoActive =>
+      promoExpiresAt != null &&
+      promoExpiresAt!.isAfter(DateTime.now()) &&
+      (promoDiscountPercent != null || promoIs2x1);
+
+  double get promoPrice {
+    if (!isPromoActive || promoDiscountPercent == null) return price;
+    return price * (1 - promoDiscountPercent! / 100);
+  }
+
   factory Product.fromJson(Map<String, dynamic> json) => Product(
         id: json['id'] as String,
         categoryId: json['category_id'] as String,
@@ -34,5 +44,10 @@ class Product {
         imageUrl: json['image_url'] as String?,
         isAvailable: json['is_available'] as bool? ?? true,
         images: const [],
+        promoDiscountPercent: json['promo_discount_percent'] as int?,
+        promoIs2x1: json['promo_is_2x1'] as bool? ?? false,
+        promoExpiresAt: json['promo_expires_at'] != null
+            ? DateTime.parse(json['promo_expires_at'] as String).toLocal()
+            : null,
       );
 }

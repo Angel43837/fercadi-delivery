@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -45,7 +44,7 @@ class _RepartidorLoginScreenState extends State<RepartidorLoginScreen> {
         setState(() => _error = 'Esta cuenta no está registrada como repartidor');
         return;
       }
-      await AuthService.saveSession(email, '/repartidor');
+      await AuthService.saveRepartidorSession(email);
       if (mounted) context.go('/repartidor');
     } catch (_) {
       setState(() => _error = 'Correo o contraseña incorrectos');
@@ -56,7 +55,6 @@ class _RepartidorLoginScreenState extends State<RepartidorLoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (kIsWeb) return _buildWebAviso(context);
     return Scaffold(
       backgroundColor: _orange,
       body: SafeArea(
@@ -167,71 +165,6 @@ class _RepartidorLoginScreenState extends State<RepartidorLoginScreen> {
               ),
               const SizedBox(height: 20),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildWebAviso(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _orange,
-      body: SafeArea(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 40),
-            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Container(
-                width: 100, height: 100,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(28),
-                ),
-                child: const Icon(Icons.delivery_dining, size: 60, color: _orange),
-              ),
-              const SizedBox(height: 28),
-              const Text('Zona Repartidores',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.white)),
-              const SizedBox(height: 12),
-              const Text(
-                '¿Quieres repartir con GOGO Food?\nRegístrate aquí y descarga la app para empezar.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white70, fontSize: 15, height: 1.5),
-              ),
-              const SizedBox(height: 36),
-              SizedBox(
-                width: double.infinity,
-                height: 56,
-                child: ElevatedButton.icon(
-                  onPressed: () => context.go('/registro-repartidor'),
-                  icon: const Icon(Icons.person_add_outlined),
-                  label: const Text('Registrarme como repartidor',
-                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: _orange,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                    elevation: 0,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: Colors.white24),
-                ),
-                child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.storefront_outlined, color: Colors.white54, size: 20),
-                  SizedBox(width: 10),
-                  Text('Próximamente en Google Play 🛒',
-                      style: TextStyle(color: Colors.white54, fontSize: 13)),
-                ]),
-              ),
-            ]),
           ),
         ),
       ),

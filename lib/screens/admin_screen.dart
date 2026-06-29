@@ -32,6 +32,10 @@ class _AdminScreenState extends State<AdminScreen> {
   bool _loadingRestaurants = false;
   Timer? _pollTimer;
 
+  // Eventos tab
+  String _eventSearch = '';
+  String? _eventStatusFilter;
+
   @override
   void initState() {
     super.initState();
@@ -120,6 +124,7 @@ class _AdminScreenState extends State<AdminScreen> {
               _buildPedidos(),
               _buildRestaurantes(appData),
               _buildUsuarios(),
+              _buildEventos(),
             ],
           ),
         ),
@@ -481,6 +486,166 @@ class _AdminScreenState extends State<AdminScreen> {
     );
   }
 
+  // ── Eventos ──────────────────────────────────────────────────────────────────
+
+  Widget _buildEventos() {
+    final statuses = ['pending', 'accepted', 'delivering', 'delivered', 'cancelled'];
+    final statusLabels = {
+      'pending':    'Pendiente',
+      'accepted':   'Aceptado',
+      'delivering': 'En camino',
+      'delivered':  'Entregado',
+      'cancelled':  'Cancelado',
+    };
+    final statusColors = {
+      'pending':    const Color(0xFFFFB300),
+      'accepted':   AppConstants.primaryColor,
+      'delivering': const Color(0xFF2196F3),
+      'delivered':  Colors.green,
+      'cancelled':  Colors.red,
+    };
+
+    var filtered = _realOrders.where((o) {
+      Map<String, dynamic> delivery = {};
+      try { delivery = jsonDecode(o['customer_name'] as String? ?? '{}') as Map<String, dynamic>; } catch (_) {}
+      final name = (delivery['name'] as String? ?? '').toLowerCase();
+      final matchSearch = _eventSearch.isEmpty || name.contains(_eventSearch.toLowerCase());
+      final matchStatus = _eventStatusFilter == null || o['status'] == _eventStatusFilter;
+      return matchSearch && matchStatus;
+    }).toList();
+
+    return Column(
+      children: [
+        // buscador + filtro
+        Container(
+          color: AppConstants.surfaceColor,
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          child: Column(children: [
+            // buscador
+            TextField(
+              style: const TextStyle(color: Colors.white, fontSize: 13),
+              decoration: InputDecoration(
+                hintText: 'Buscar por nombre de cliente...',
+                hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 12),
+                prefixIcon: Icon(Icons.search, color: Colors.white.withValues(alpha: 0.4), size: 18),
+                filled: true,
+                fillColor: AppConstants.surface2Color,
+                contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+              ),
+              onChanged: (v) => setState(() => _eventSearch = v),
+            ),
+            const SizedBox(height: 8),
+            // filtros de estado
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(children: [
+                _EventChip(label: 'Todos', selected: _eventStatusFilter == null, color: Colors.white,
+                    onTap: () => setState(() => _eventStatusFilter = null)),
+                ...statuses.map((s) => _EventChip(
+                  label: statusLabels[s]!,
+                  selected: _eventStatusFilter == s,
+                  color: statusColors[s]!,
+                  onTap: () => setState(() => _eventStatusFilter = _eventStatusFilter == s ? null : s),
+                )),
+              ]),
+            ),
+          ]),
+        ),
+        // lista
+        Expanded(
+          child: _loadingOrders
+              ? const Center(child: CircularProgressIndicator(color: AppConstants.primaryColor))
+              : filtered.isEmpty
+                  ? Center(
+                      child: Text('Sin eventos',
+                          style: TextStyle(color: Colors.white.withValues(alpha: 0.4))))
+                  : ListView.builder(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: filtered.length,
+                      itemBuilder: (_, i) {
+                        final o = filtered[i];
+                        final status = o['status'] as String? ?? 'pending';
+                        Map<String, dynamic> delivery = {};
+                        try { delivery = jsonDecode(o['customer_name'] as String? ?? '{}') as Map<String, dynamic>; } catch (_) {}
+                        final name    = delivery['name'] as String? ?? 'Cliente';
+                        final address = delivery['address'] as String? ?? '—';
+                        final total   = (o['total'] as num?)?.toDouble() ?? 0;
+                        final color   = statusColors[status] ?? Colors.grey;
+                        final label   = statusLabels[status] ?? status;
+                        final createdAt = o['created_at'] as String? ?? '';
+                        String timeStr = '';
+                        try {
+                          final dt = DateTime.parse(createdAt).toLocal();
+                          timeStr = '${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}';
+                        } catch (_) {}
+
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: AppConstants.surfaceColor,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border(left: BorderSide(color: color, width: 3)),
+                          ),
+                          child: Row(children: [
+                            // estado
+                            Container(
+                              width: 36, height: 36,
+                              decoration: BoxDecoration(
+                                color: color.withValues(alpha: 0.12),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                status == 'pending'    ? Icons.hourglass_top :
+                                status == 'accepted'   ? Icons.check_circle_outline :
+                                status == 'delivering' ? Icons.delivery_dining :
+                                status == 'delivered'  ? Icons.check_circle :
+                                Icons.cancel,
+                                color: color, size: 18,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                Row(children: [
+                                  Expanded(
+                                    child: Text(name,
+                                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: color.withValues(alpha: 0.15),
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    child: Text(label,
+                                        style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
+                                  ),
+                                ]),
+                                const SizedBox(height: 3),
+                                Text(address,
+                                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11)),
+                              ]),
+                            ),
+                            const SizedBox(width: 8),
+                            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                              Text('\$${total.toStringAsFixed(0)}',
+                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                              if (timeStr.isNotEmpty)
+                                Text(timeStr,
+                                    style: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 10)),
+                            ]),
+                          ]),
+                        );
+                      },
+                    ),
+        ),
+      ],
+    );
+  }
+
   // ── Bottom Nav ───────────────────────────────────────────────────────────────
 
   Widget _buildBottomNav() {
@@ -492,10 +657,11 @@ class _AdminScreenState extends State<AdminScreen> {
       child: SafeArea(
         top: false,
         child: Row(children: [
-          _NavItem(icon: Icons.dashboard_outlined,   label: 'Resumen',      index: 0, current: _tab, onTap: (i) => setState(() => _tab = i)),
+          _NavItem(icon: Icons.dashboard_outlined,    label: 'Resumen',      index: 0, current: _tab, onTap: (i) => setState(() => _tab = i)),
           _NavItem(icon: Icons.receipt_long_outlined, label: 'Pedidos',      index: 1, current: _tab, onTap: (i) => setState(() => _tab = i)),
           _NavItem(icon: Icons.storefront_outlined,   label: 'Restaurantes', index: 2, current: _tab, onTap: (i) => setState(() => _tab = i)),
           _NavItem(icon: Icons.people_outline,        label: 'Usuarios',     index: 3, current: _tab, onTap: (i) => setState(() => _tab = i)),
+          _NavItem(icon: Icons.event_note_outlined,   label: 'Eventos',      index: 4, current: _tab, onTap: (i) => setState(() => _tab = i)),
         ]),
       ),
     );
@@ -817,6 +983,36 @@ class _FilterChip extends StatelessWidget {
         duration: const Duration(milliseconds: 180),
         margin: const EdgeInsets.only(right: 8),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? color : color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: selected ? color : color.withValues(alpha: 0.3)),
+        ),
+        child: Text(label,
+            style: TextStyle(
+                color: selected ? Colors.white : color.withValues(alpha: 0.8),
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.bold : FontWeight.normal)),
+      ),
+    );
+  }
+}
+
+class _EventChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final Color color;
+  final VoidCallback onTap;
+  const _EventChip({required this.label, required this.selected, required this.color, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        margin: const EdgeInsets.only(right: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
         decoration: BoxDecoration(
           color: selected ? color : color.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(20),

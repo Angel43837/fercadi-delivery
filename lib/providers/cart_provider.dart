@@ -53,6 +53,13 @@ class CartProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  void updateNotes(String productId, String notes) {
+    final matches = _items.where((i) => i.product.id == productId);
+    if (matches.isEmpty) return;
+    matches.first.notes = notes;
+    notifyListeners();
+  }
+
   void clear() {
     _items.clear();
     _restaurantId = null;

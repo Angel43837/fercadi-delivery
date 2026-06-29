@@ -13,6 +13,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 class AuthService {
   static const _keyRole         = 'session_role';
   static const _keyEmail        = 'session_email';
+  // Sesiones independientes para roles no-cliente (no interfieren con el splash del usuario)
+  static const _keyDuenoEmail      = 'dueno_session_email';
+  static const _keyRepartidorEmail = 'moto_session_email';
   static const _keyDisplayName  = 'profile_display_name';
   static const _keyPayment      = 'profile_payment';
   static const _keyAvatarColor  = 'profile_avatar_color';
@@ -65,6 +68,42 @@ class AuthService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_keyEmail);
     await prefs.remove(_keyRole);
+    try { await Supabase.instance.client.auth.signOut(); } catch (_) {}
+  }
+
+  // ── Sesión del dueño (independiente del cliente) ────────────────────────────
+
+  static Future<void> saveDuenoSession(String email) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyDuenoEmail, email);
+  }
+
+  static Future<String?> getDuenoSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_keyDuenoEmail);
+  }
+
+  static Future<void> clearDuenoSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_keyDuenoEmail);
+    try { await Supabase.instance.client.auth.signOut(); } catch (_) {}
+  }
+
+  // ── Sesión del repartidor (independiente del cliente) ────────────────────────
+
+  static Future<void> saveRepartidorSession(String email) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyRepartidorEmail, email);
+  }
+
+  static Future<String?> getRepartidorSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_keyRepartidorEmail);
+  }
+
+  static Future<void> clearRepartidorSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_keyRepartidorEmail);
     try { await Supabase.instance.client.auth.signOut(); } catch (_) {}
   }
 

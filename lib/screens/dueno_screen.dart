@@ -19,6 +19,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:latlong2/latlong.dart';
 import '../core/constants.dart';
 import '../providers/app_data_provider.dart';
+import 'package:go_router/go_router.dart';
+import '../models/restaurant_banner.dart';
 import '../services/auth_service.dart';
 import '../services/location_service.dart';
 import '../services/notification_service.dart';
@@ -33,6 +35,9 @@ class _Product {
   bool isAvailable;
   List<String> categoryIds;
   String? imagePath;
+  int? promoDiscountPercent;
+  bool promoIs2x1;
+  DateTime? promoExpiresAt;
 
   _Product({
     required this.id,
@@ -42,7 +47,15 @@ class _Product {
     required this.isAvailable,
     required this.categoryIds,
     this.imagePath,
+    this.promoDiscountPercent,
+    this.promoIs2x1 = false,
+    this.promoExpiresAt,
   });
+
+  bool get isPromoActive =>
+      promoExpiresAt != null &&
+      promoExpiresAt!.isAfter(DateTime.now()) &&
+      (promoDiscountPercent != null || promoIs2x1);
 }
 
 class _Category {
@@ -62,15 +75,15 @@ class DuenoScreen extends StatefulWidget {
 class _DuenoScreenState extends State<DuenoScreen> {
   int _tab = 0;
   AppOrderStatus? _filterStatus;
-  bool _isDark = true;
+  bool _isDark = false;
 
-  Color get _bg       => AppConstants.primaryColor;
-  Color get _surface  => const Color(0xFFE64A19);
-  Color get _surface2 => const Color(0xFFD84315);
+  Color get _bg       => _isDark ? const Color(0xFF121212) : const Color(0xFFFF5722);
+  Color get _surface  => _isDark ? const Color(0xFF1E1E1E) : const Color(0xFFE64A19);
+  Color get _surface2 => _isDark ? const Color(0xFF2A2A2A) : const Color(0xFFD84315);
   Color get _text     => Colors.white;
   Color get _textMid  => Colors.white.withValues(alpha: 0.75);
   Color get _textLow  => Colors.white.withValues(alpha: 0.45);
-  Color get _inputFill => const Color(0xFFD84315);
+  Color get _inputFill => _isDark ? const Color(0xFF2A2A2A) : const Color(0xFFD84315);
 
   // Pedidos reales de Supabase
   List<Map<String, dynamic>> _realOrders = [];
@@ -94,6 +107,10 @@ class _DuenoScreenState extends State<DuenoScreen> {
   final _restDescCtrl    = TextEditingController();
   final _restPhoneCtrl   = TextEditingController();
   final _restAddressCtrl = TextEditingController();
+
+  // Banners
+  List<RestaurantBanner> _bannerList = [];
+  bool _loadingBanners = false;
 
   List<_Category> _categories = const [
     _Category(id: 'c1',  name: 'Platillos',  emoji: '🍽️'),
@@ -126,6 +143,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
     if (!SupabaseService.useMock) {
       _loadCategories();
       _loadProductsFromSupabase();
+      _loadBanners();
     }
     _loadRealOrders();
     _ordersChannel = SupabaseService.subscribeToOrders(_loadRealOrders);
@@ -177,7 +195,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
 
   Future<void> _loadRealOrders() async {
     try {
-      final data = await SupabaseService.getActiveOrders();
+      final data = await SupabaseService.getActiveOrders(restaurantId: _restaurantId);
       if (!mounted) return;
 
       // Detectar pedidos nuevos pendientes para notificar
@@ -250,6 +268,9 @@ class _DuenoScreenState extends State<DuenoScreen> {
         isAvailable: p.isAvailable,
         categoryIds: [p.categoryId],
         imagePath: p.imageUrl,
+        promoDiscountPercent: p.promoDiscountPercent,
+        promoIs2x1: p.promoIs2x1,
+        promoExpiresAt: p.promoExpiresAt,
       )).toList();
     });
   }
@@ -272,6 +293,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
               _buildPedidos(),
               _buildMenu(appData),
               _buildPerfilRestaurante(),
+              _buildBanners(),
             ],
           ),
         ),
@@ -312,6 +334,14 @@ class _DuenoScreenState extends State<DuenoScreen> {
             ),
             tooltip: _isDark ? 'Modo claro' : 'Modo oscuro',
             onPressed: () => setState(() => _isDark = !_isDark),
+          ),
+          IconButton(
+            icon: Icon(Icons.logout, color: _textMid, size: 20),
+            tooltip: 'Cerrar sesión',
+            onPressed: () async {
+              await AuthService.clearDuenoSession();
+              if (mounted) context.go('/restaurante');
+            },
           ),
           GestureDetector(
             onTap: () => appData.setRestaurantOpen(_restaurantId, !isOpen),
@@ -553,6 +583,12 @@ class _DuenoScreenState extends State<DuenoScreen> {
     String? pickedImagePath = existing?.imagePath;
     final picker = ImagePicker();
 
+    // Promo state
+    bool isPromoMode = existing?.isPromoActive ?? false;
+    int? selectedDiscount = existing?.promoDiscountPercent;
+    bool is2x1 = existing?.promoIs2x1 ?? false;
+    int selectedDurationHours = 2;
+
     Future<void> pickImage(ImageSource source, StateSetter setModal) async {
       final messenger = ScaffoldMessenger.of(context);
       final xfile = await picker.pickImage(source: source, imageQuality: 80);
@@ -595,7 +631,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: AppConstants.primaryColor,
+      backgroundColor: const Color(0xFFFF5722),
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => StatefulBuilder(
@@ -707,6 +743,197 @@ class _DuenoScreenState extends State<DuenoScreen> {
             ),
             const SizedBox(height: 14),
 
+            // ── Normal / Promo toggle ────────────────────────────────────────
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Row(children: [
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => setModal(() => isPromoMode = false),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      color: !isPromoMode ? Colors.white : Colors.white12,
+                      child: Text('Normal',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: !isPromoMode ? AppConstants.primaryColor : Colors.white,
+                          fontWeight: FontWeight.bold, fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => setModal(() => isPromoMode = true),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      color: isPromoMode ? Colors.white : Colors.white12,
+                      child: Text('Promo',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: isPromoMode ? AppConstants.primaryColor : Colors.white,
+                          fontWeight: FontWeight.bold, fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ]),
+            ),
+
+            // ── Promo config (solo cuando isPromoMode == true) ──────────────
+            if (isPromoMode) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+
+                  // Preview del platillo
+                  Row(children: [
+                    if (pickedImagePath != null)
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: SizedBox(
+                          width: 54, height: 54,
+                          child: (kIsWeb || pickedImagePath!.startsWith('http'))
+                              ? Image.network(pickedImagePath!, fit: BoxFit.cover,
+                                  errorBuilder: (_, _, _) => Container(color: Colors.white12))
+                              : Image.file(File(pickedImagePath!), fit: BoxFit.cover),
+                        ),
+                      )
+                    else
+                      Container(
+                        width: 54, height: 54,
+                        decoration: BoxDecoration(
+                          color: Colors.white12,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(Icons.fastfood, color: Colors.white38, size: 28),
+                      ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text(
+                          nameCtrl.text.trim().isEmpty ? 'Nombre del platillo' : nameCtrl.text.trim(),
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                          maxLines: 1, overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          selectedCatIds.map((id) {
+                            try { return _categories.firstWhere((c) => c.id == id).name; } catch (_) { return ''; }
+                          }).where((s) => s.isNotEmpty).join(', '),
+                          style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12),
+                        ),
+                      ]),
+                    ),
+                  ]),
+
+                  const SizedBox(height: 14),
+                  Text('Descuento', style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 13, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+
+                  // Botones de descuento 5%…50% + 2x1
+                  Wrap(
+                    spacing: 8, runSpacing: 8,
+                    children: [
+                      ...[5, 10, 15, 20, 25, 30, 35, 40, 45, 50].map((pct) {
+                        final sel = selectedDiscount == pct;
+                        return GestureDetector(
+                          onTap: () => setModal(() => selectedDiscount = sel ? null : pct),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 150),
+                            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+                            decoration: BoxDecoration(
+                              color: sel ? Colors.white : Colors.white12,
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: sel ? Colors.white : Colors.white38),
+                            ),
+                            child: Text('-$pct%',
+                              style: TextStyle(
+                                color: sel ? AppConstants.primaryColor : Colors.white,
+                                fontWeight: sel ? FontWeight.bold : FontWeight.normal,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+                      GestureDetector(
+                        onTap: () => setModal(() => is2x1 = !is2x1),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
+                          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+                          decoration: BoxDecoration(
+                            color: is2x1 ? Colors.white : Colors.white12,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: is2x1 ? Colors.white : Colors.white38),
+                          ),
+                          child: Text('2x1',
+                            style: TextStyle(
+                              color: is2x1 ? AppConstants.primaryColor : Colors.white,
+                              fontWeight: is2x1 ? FontWeight.bold : FontWeight.normal,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 14),
+                  Text('Duración', style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 13, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+
+                  Wrap(
+                    spacing: 8, runSpacing: 8,
+                    children: [
+                      {'h': 1, 'label': '1h'},
+                      {'h': 2, 'label': '2h'},
+                      {'h': 3, 'label': '3h'},
+                      {'h': 5, 'label': '5h'},
+                      {'h': 12, 'label': '12h'},
+                      {'h': 24, 'label': '1 día'},
+                      {'h': 48, 'label': '2 días'},
+                      {'h': 120, 'label': '5 días'},
+                    ].map((opt) {
+                      final h = opt['h'] as int;
+                      final label = opt['label'] as String;
+                      final sel = selectedDurationHours == h;
+                      return GestureDetector(
+                        onTap: () => setModal(() => selectedDurationHours = h),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
+                          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+                          decoration: BoxDecoration(
+                            color: sel ? Colors.white : Colors.white12,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: sel ? Colors.white : Colors.white38),
+                          ),
+                          child: Text(label,
+                            style: TextStyle(
+                              color: sel ? AppConstants.primaryColor : Colors.white,
+                              fontWeight: sel ? FontWeight.bold : FontWeight.normal,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ]),
+              ),
+            ],
+
+            const SizedBox(height: 14),
+
             Text('Categorías', style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 13, fontWeight: FontWeight.w600)),
             const SizedBox(height: 8),
             Wrap(
@@ -814,12 +1041,22 @@ class _DuenoScreenState extends State<DuenoScreen> {
                   final urlForDb = (pickedImagePath?.startsWith('http') == true)
                       ? pickedImagePath
                       : null;
+
+                  final promoDiscount  = isPromoMode ? selectedDiscount : null;
+                  final promo2x1       = isPromoMode && is2x1;
+                  final promoExpires   = isPromoMode && (promoDiscount != null || promo2x1)
+                      ? DateTime.now().add(Duration(hours: selectedDurationHours))
+                      : null;
+
                   await SupabaseService.saveProduct(
                     id: newId, name: name, description: desc,
                     price: price, isAvailable: available,
                     categoryId: selectedCatIds.first,
                     restaurantId: _restaurantId,
                     imageUrl: urlForDb,
+                    promoDiscountPercent: promoDiscount,
+                    promoIs2x1: promo2x1,
+                    promoExpiresAt: promoExpires,
                   );
                   if (!SupabaseService.useMock) await _loadProductsFromSupabase();
 
@@ -836,6 +1073,321 @@ class _DuenoScreenState extends State<DuenoScreen> {
       ),
     );
   }
+
+  Future<void> _loadBanners() async {
+    if (!mounted) return;
+    setState(() => _loadingBanners = true);
+    final banners = await SupabaseService.getBanners(_restaurantId);
+    if (!mounted) return;
+    setState(() { _bannerList = banners; _loadingBanners = false; });
+  }
+
+  Widget _buildBanners() {
+    final colors = [
+      const Color(0xFFE53935), const Color(0xFF43A047),
+      const Color(0xFF1E88E5), const Color(0xFFFF6F00),
+    ];
+    final colorLabels = ['Rojo', 'Verde', 'Azul', 'Naranja'];
+
+    Future<void> showAddSheet([RestaurantBanner? existing]) async {
+      String imageUrl     = existing?.imageUrl ?? '';
+      String title        = existing?.title ?? '';
+      String subtitle     = existing?.subtitle ?? '';
+      String badge        = existing?.badge ?? '';
+      Color  badgeColor   = existing?.badgeColor ?? colors[0];
+      String? productId   = existing?.productId;
+      int? discount       = existing?.discountPercent;
+
+      final titleCtrl    = TextEditingController(text: title);
+      final subtitleCtrl = TextEditingController(text: subtitle);
+      final badgeCtrl    = TextEditingController(text: badge);
+      final imageCtrl    = TextEditingController(text: imageUrl);
+      final discountCtrl = TextEditingController(text: discount?.toString() ?? '');
+
+      await showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: _surface,
+        shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+        builder: (ctx) => StatefulBuilder(builder: (ctx, setModal) {
+          return Padding(
+            padding: EdgeInsets.only(
+                left: 20, right: 20, top: 20,
+                bottom: MediaQuery.of(ctx).viewInsets.bottom + 24),
+            child: SingleChildScrollView(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(existing == null ? 'Nuevo banner' : 'Editar banner',
+                    style: TextStyle(color: _text, fontSize: 18, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 16),
+
+                // Preview de imagen
+                if (imageCtrl.text.isNotEmpty)
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.network(imageCtrl.text, height: 120, width: double.infinity,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) => const SizedBox.shrink()),
+                  ),
+                const SizedBox(height: 8),
+
+                // URL de imagen
+                _field(imageCtrl, 'URL de imagen', _inputFill, _text, _textMid,
+                    onChanged: (v) { setModal(() {}); }),
+                const SizedBox(height: 10),
+
+                // Subir imagen
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    final picker = ImagePicker();
+                    final xfile = await picker.pickImage(
+                        source: ImageSource.gallery, imageQuality: 80, maxWidth: 1200);
+                    if (xfile == null) return;
+                    final bytes = await xfile.readAsBytes();
+                    final url = await SupabaseService.uploadProfilePhotoBytes(
+                        bytes, 'banner_${_restaurantId}_${DateTime.now().millisecondsSinceEpoch}');
+                    if (url == null) return;
+                    setModal(() => imageCtrl.text = url);
+                  },
+                  icon: const Icon(Icons.upload, size: 16),
+                  label: const Text('Subir foto', style: TextStyle(fontSize: 13)),
+                  style: OutlinedButton.styleFrom(
+                      foregroundColor: _text,
+                      side: BorderSide(color: Colors.white30)),
+                ),
+                const SizedBox(height: 10),
+
+                _field(titleCtrl, 'Título', _inputFill, _text, _textMid),
+                const SizedBox(height: 10),
+                _field(subtitleCtrl, 'Subtítulo', _inputFill, _text, _textMid),
+                const SizedBox(height: 10),
+                _field(badgeCtrl, 'Badge (ej. "20% OFF", "NUEVO")', _inputFill, _text, _textMid),
+                const SizedBox(height: 14),
+
+                // Color del badge
+                Text('Color del badge', style: TextStyle(color: _textMid, fontSize: 12)),
+                const SizedBox(height: 6),
+                Row(children: List.generate(4, (i) => GestureDetector(
+                  onTap: () => setModal(() => badgeColor = colors[i]),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    margin: const EdgeInsets.only(right: 10),
+                    width: 34, height: 34,
+                    decoration: BoxDecoration(
+                      color: colors[i],
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                          color: badgeColor == colors[i] ? Colors.white : Colors.transparent,
+                          width: 3),
+                    ),
+                    child: badgeColor == colors[i]
+                        ? const Icon(Icons.check, color: Colors.white, size: 16)
+                        : null,
+                  ),
+                ))),
+                const SizedBox(height: 14),
+
+                // Producto vinculado
+                Text('Producto vinculado (opcional)', style: TextStyle(color: _textMid, fontSize: 12)),
+                const SizedBox(height: 6),
+                DropdownButtonFormField<String?>(
+                  value: productId,
+                  dropdownColor: _surface2,
+                  style: TextStyle(color: _text, fontSize: 13),
+                  decoration: InputDecoration(
+                    filled: true, fillColor: _inputFill,
+                    hintText: 'Sin producto vinculado',
+                    hintStyle: TextStyle(color: _textLow, fontSize: 13),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide.none),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  ),
+                  items: [
+                    DropdownMenuItem<String?>(value: null,
+                        child: Text('— Sin producto —', style: TextStyle(color: _textLow))),
+                    ..._products.map((p) => DropdownMenuItem<String?>(
+                        value: p.id, child: Text(p.name, overflow: TextOverflow.ellipsis))),
+                  ],
+                  onChanged: (v) => setModal(() { productId = v; }),
+                ),
+                const SizedBox(height: 10),
+
+                // Descuento
+                if (productId != null) ...[
+                  _field(discountCtrl, 'Descuento % (ej. 10)', _inputFill, _text, _textMid,
+                      keyboardType: TextInputType.number),
+                  const SizedBox(height: 6),
+                  Text('Deja vacío si no hay descuento', style: TextStyle(color: _textLow, fontSize: 11)),
+                  const SizedBox(height: 10),
+                ],
+
+                const SizedBox(height: 6),
+                SizedBox(width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: AppConstants.primaryColor,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: const StadiumBorder()),
+                    onPressed: () async {
+                      if (imageCtrl.text.trim().isEmpty) return;
+                      final banner = RestaurantBanner(
+                        id: existing?.id ?? '',
+                        restaurantId: _restaurantId,
+                        imageUrl: imageCtrl.text.trim(),
+                        title: titleCtrl.text.trim(),
+                        subtitle: subtitleCtrl.text.trim(),
+                        badge: badgeCtrl.text.trim(),
+                        badgeColor: badgeColor,
+                        productId: productId,
+                        discountPercent: int.tryParse(discountCtrl.text.trim()),
+                        sortOrder: existing?.sortOrder ?? _bannerList.length,
+                      );
+                      Navigator.pop(ctx);
+                      await SupabaseService.upsertBanner(banner);
+                      _loadBanners();
+                    },
+                    child: const Text('Guardar banner',
+                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            )),
+          );
+        }),
+      );
+    }
+
+    return Stack(children: [
+      _loadingBanners
+          ? const Center(child: CircularProgressIndicator(color: Colors.white))
+          : _bannerList.isEmpty
+              ? Center(child: Padding(
+                  padding: const EdgeInsets.all(32),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.campaign_outlined, size: 64, color: Colors.white30),
+                    const SizedBox(height: 16),
+                    Text('Sin banners todavía',
+                        style: TextStyle(color: _textMid, fontSize: 16, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 8),
+                    Text('Toca + para agregar tu primer banner promocional',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: _textLow, fontSize: 13)),
+                  ]),
+                ))
+              : ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
+                  itemCount: _bannerList.length,
+                  itemBuilder: (_, i) {
+                    final b = _bannerList[i];
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                          color: _surface2, borderRadius: BorderRadius.circular(16)),
+                      clipBehavior: Clip.antiAlias,
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        // Imagen
+                        Stack(children: [
+                          Image.network(b.imageUrl, height: 110, width: double.infinity,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, _, _) => Container(
+                                  height: 110, color: Colors.white10,
+                                  child: const Center(child: Icon(Icons.broken_image, color: Colors.white30)))),
+                          // Badge overlay
+                          if (b.badge.isNotEmpty)
+                            Positioned(top: 10, left: 10,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                decoration: BoxDecoration(
+                                    color: b.badgeColor, borderRadius: BorderRadius.circular(6)),
+                                child: Text(b.badge,
+                                    style: const TextStyle(color: Colors.white,
+                                        fontSize: 11, fontWeight: FontWeight.bold)),
+                              ),
+                            ),
+                        ]),
+                        // Info
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                          child: Row(children: [
+                            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              if (b.title.isNotEmpty)
+                                Text(b.title, style: TextStyle(color: _text,
+                                    fontSize: 14, fontWeight: FontWeight.bold)),
+                              if (b.subtitle.isNotEmpty)
+                                Text(b.subtitle, style: TextStyle(color: _textMid, fontSize: 12)),
+                              if (b.productId != null) ...[
+                                const SizedBox(height: 4),
+                                Row(children: [
+                                  Icon(Icons.link, size: 12, color: _textLow),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    _products.firstWhere((p) => p.id == b.productId,
+                                        orElse: () => _Product(id: '', name: '—', description: '',
+                                            price: 0, isAvailable: true, categoryIds: [])).name,
+                                    style: TextStyle(color: _textLow, fontSize: 11)),
+                                  if (b.discountPercent != null) ...[
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                          color: Colors.green.withValues(alpha: 0.2),
+                                          borderRadius: BorderRadius.circular(4)),
+                                      child: Text('-${b.discountPercent}%',
+                                          style: const TextStyle(color: Colors.greenAccent,
+                                              fontSize: 10, fontWeight: FontWeight.bold)),
+                                    ),
+                                  ],
+                                ]),
+                              ],
+                            ])),
+                            Row(children: [
+                              IconButton(
+                                icon: Icon(Icons.edit_outlined, color: _textMid, size: 20),
+                                onPressed: () => showAddSheet(b),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
+                                onPressed: () async {
+                                  await SupabaseService.deleteBanner(b.id);
+                                  _loadBanners();
+                                },
+                              ),
+                            ]),
+                          ]),
+                        ),
+                      ]),
+                    );
+                  },
+                ),
+      Positioned(
+        bottom: 20, right: 20,
+        child: FloatingActionButton(
+          backgroundColor: AppConstants.primaryColor,
+          onPressed: () => showAddSheet(),
+          child: const Icon(Icons.add, color: Colors.white),
+        ),
+      ),
+    ]);
+  }
+
+  static Widget _field(TextEditingController ctrl, String hint, Color fill, Color text, Color hintColor,
+      {void Function(String)? onChanged, TextInputType keyboardType = TextInputType.text}) =>
+      TextField(
+        controller: ctrl,
+        style: TextStyle(color: text, fontSize: 14),
+        keyboardType: keyboardType,
+        onChanged: onChanged,
+        decoration: InputDecoration(
+          filled: true, fillColor: fill,
+          hintText: hint, hintStyle: TextStyle(color: hintColor, fontSize: 13),
+          border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        ),
+      );
 
   Widget _buildPerfilRestaurante() {
     const emojis = ['🍴', '🍔', '🌮', '🍕', '🍣', '🥗', '🍜', '🥩', '☕', '🧁'];
@@ -1098,6 +1650,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
           _NavItem(icon: Icons.dashboard_outlined,     label: 'Resumen',      index: 0, current: _tab, onTap: (i) => setState(() => _tab = i), isDark: _isDark),
           _NavItem(icon: Icons.receipt_long_outlined,  label: 'Pedidos',      index: 1, current: _tab, onTap: (i) => setState(() => _tab = i), badge: pendingCount, isDark: _isDark),
           _NavItem(icon: Icons.menu_book_outlined,     label: 'Menú',         index: 2, current: _tab, onTap: (i) => setState(() => _tab = i), isDark: _isDark),
+          _NavItem(icon: Icons.campaign_outlined,      label: 'Banners',      index: 4, current: _tab, onTap: (i) => setState(() => _tab = i), isDark: _isDark),
           _NavItem(icon: Icons.storefront_outlined,    label: 'Restaurante',  index: 3, current: _tab, onTap: (i) => setState(() => _tab = i), isDark: _isDark),
         ]),
       ),
@@ -1116,8 +1669,8 @@ class _StatCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final surface = isDark ? const Color(0xFFE64A19) : Colors.white;
-    final textLow = isDark ? Colors.white.withValues(alpha: 0.45) : Colors.black45;
+    final surface = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE64A19);
+    final textLow = isDark ? Colors.white.withValues(alpha: 0.45) : Colors.white.withValues(alpha: 0.7);
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(color: surface, borderRadius: BorderRadius.circular(16)),
@@ -1140,7 +1693,7 @@ class _StatusLegend extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final textLow = isDark ? Colors.white.withValues(alpha: 0.4) : Colors.black45;
+    final textLow = isDark ? Colors.white.withValues(alpha: 0.4) : Colors.white.withValues(alpha: 0.7);
     return Column(children: [
       Text('$count', style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 18)),
       Text(label, style: TextStyle(color: textLow, fontSize: 10)),
@@ -1251,17 +1804,25 @@ class _RealOrderCard extends StatelessWidget {
     final total   = (order['total'] as num?)?.toDouble() ?? 0;
     final items   = (order['order_items'] as List<dynamic>? ?? []);
 
+    const modalBg   = Color(0xFFFF5722);
+    const cardBg    = Color(0xFFE64A19);
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF1E1E1E),
+      backgroundColor: modalBg,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.of(ctx).padding.bottom + 24),
-        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+      builder: (ctx) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.6,
+        minChildSize: 0.35,
+        maxChildSize: 0.92,
+        builder: (ctx2, scrollCtrl) => SingleChildScrollView(
+          controller: scrollCtrl,
+          padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.of(ctx).padding.bottom + 24),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           Center(child: Container(width: 36, height: 4,
-              decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)))),
+              decoration: BoxDecoration(color: Colors.white38, borderRadius: BorderRadius.circular(2)))),
           const SizedBox(height: 16),
           Row(children: [
             Expanded(child: Text(name,
@@ -1269,22 +1830,22 @@ class _RealOrderCard extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
-                color: (status == 'pending' ? const Color(0xFFFFB300) : Colors.green).withValues(alpha: 0.15),
+                color: Colors.white.withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Text(status == 'pending' ? 'Pendiente' : 'Aceptado',
                   style: TextStyle(
-                    color: status == 'pending' ? const Color(0xFFFFB300) : Colors.green,
+                    color: status == 'pending' ? const Color(0xFFFFE082) : const Color(0xFFB9F6CA),
                     fontWeight: FontWeight.bold, fontSize: 12)),
             ),
           ]),
           const SizedBox(height: 4),
-          Text(phone,   style: const TextStyle(color: Colors.white54, fontSize: 13)),
+          Text(phone,   style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 13)),
           const SizedBox(height: 2),
-          Text(address, style: const TextStyle(color: Colors.white54, fontSize: 13)),
+          Text(address, style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 13)),
           const SizedBox(height: 2),
           Text('Pago: ${payment == 'cash' ? '💵 Efectivo' : payment == 'card' ? '💳 Tarjeta' : 'OXXO'}',
-              style: const TextStyle(color: Colors.white38, fontSize: 12)),
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12)),
           const SizedBox(height: 16),
           const Text('Productos pedidos', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
           const SizedBox(height: 10),
@@ -1293,39 +1854,59 @@ class _RealOrderCard extends StatelessWidget {
             final product = i['products'] as Map<String, dynamic>?;
             final pname   = product?['name'] as String? ?? 'Producto';
             final price   = (i['price'] as num?)?.toDouble() ?? 0;
+            final notes   = i['notes'] as String? ?? '';
             return Container(
               margin: const EdgeInsets.only(bottom: 8),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
-                color: const Color(0xFF2A2A2A),
+                color: cardBg,
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Row(children: [
-                Container(
-                  width: 28, height: 28,
-                  decoration: BoxDecoration(
-                    color: AppConstants.primaryColor.withValues(alpha: 0.15),
-                    shape: BoxShape.circle,
-                  ),
-                  alignment: Alignment.center,
-                  child: Text('$qty', style: const TextStyle(
-                      color: AppConstants.primaryColor, fontWeight: FontWeight.bold, fontSize: 13)),
-                ),
-                const SizedBox(width: 12),
-                Expanded(child: Text(pname,
-                    style: const TextStyle(color: Colors.white, fontSize: 14))),
-                Text('\$${(price * qty).toStringAsFixed(0)}',
-                    style: const TextStyle(color: Colors.white70, fontSize: 13)),
-              ]),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    Container(
+                      width: 28, height: 28,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.2),
+                        shape: BoxShape.circle,
+                      ),
+                      alignment: Alignment.center,
+                      child: Text('$qty', style: const TextStyle(
+                          color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(child: Text(pname,
+                        style: const TextStyle(color: Colors.white, fontSize: 14))),
+                    Text('\$${(price * qty).toStringAsFixed(0)}',
+                        style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 13)),
+                  ]),
+                  if (notes.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Row(children: [
+                      Icon(Icons.notes, size: 12, color: Colors.white.withValues(alpha: 0.7)),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(notes,
+                            style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.9),
+                                fontSize: 11, fontStyle: FontStyle.italic)),
+                      ),
+                    ]),
+                  ],
+                ],
+              ),
             );
           }),
-          const Divider(color: Colors.white12, height: 24),
+          Divider(color: Colors.white.withValues(alpha: 0.2), height: 24),
           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            const Text('Total', style: TextStyle(color: Colors.white70, fontSize: 14)),
+            Text('Total', style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 14)),
             Text('\$${total.toStringAsFixed(0)} MXN',
                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
           ]),
         ]),
+        ),
       ),
     );
   }

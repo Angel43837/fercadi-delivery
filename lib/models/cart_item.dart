@@ -7,10 +7,10 @@ import 'product.dart';
 
 class CartItem {
   final Product product;
-  int quantity;  // Cantidad seleccionada (mínimo 1)
+  int quantity;
+  String notes;
 
-  CartItem({required this.product, this.quantity = 1});
+  CartItem({required this.product, this.quantity = 1, this.notes = ''});
 
-  // Precio total de este ítem (precio unitario × cantidad)
   double get total => product.price * quantity;
 }

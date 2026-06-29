@@ -5,7 +5,6 @@ import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../core/constants.dart';
 import '../services/auth_service.dart';
 
 class RegistroRestauranteScreen extends StatefulWidget {
@@ -32,7 +31,7 @@ class _RegistroRestauranteScreenState extends State<RegistroRestauranteScreen> {
   double? _detectedLat;
   double? _detectedLng;
 
-  static const _orange  = AppConstants.primaryColor;
+  static const _orange  = Color(0xFFFF5722);
   static const _dark    = Color(0xFFE64A19); // naranja oscuro para inputs
   static const _white   = Colors.white;
   static const _hint    = Color(0xFFFFCCBB); // crema suave
@@ -94,7 +93,7 @@ class _RegistroRestauranteScreenState extends State<RegistroRestauranteScreen> {
       await AuthService.saveRestaurantSettings(
         name: restName, desc: desc, phone: phone, address: address,
       );
-      await AuthService.saveSession(email, '/dueno');
+      await AuthService.saveDuenoSession(email);
 
       if (!mounted) return;
       setState(() { _registrado = true; _nombreRest = restName; });

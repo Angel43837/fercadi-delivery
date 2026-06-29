@@ -44,7 +44,7 @@ class _DuenoLoginScreenState extends State<DuenoLoginScreen> {
         setState(() => _error = 'Esta cuenta no es de un restaurante');
         return;
       }
-      await AuthService.saveSession(email, '/dueno');
+      await AuthService.saveDuenoSession(email);
       if (mounted) context.go('/dueno');
     } catch (e) {
       setState(() => _error = 'Correo o contraseña incorrectos');

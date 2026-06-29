@@ -76,4 +76,11 @@ class NotificationService {
         title: '🛵 ¡Repartidor en camino!',
         body: 'Tu pedido ya viene. ¡Prepárate para recibirlo!',
       );
+
+  static Future<void> entregaCompletada(double ganancia) =>
+      show(
+        id: 6,
+        title: '🎉 ¡Entrega completada!',
+        body: 'Ganaste \$${ganancia.toStringAsFixed(0)} MXN. ¡Sigue así!',
+      );
 }

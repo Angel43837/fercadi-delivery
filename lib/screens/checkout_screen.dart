@@ -268,6 +268,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           'product_id': i.product.id,
           'quantity': i.quantity,
           'price': i.product.price,
+          if (i.notes.isNotEmpty) 'notes': i.notes,
         }).toList(),
       );
     } catch (e) {
@@ -686,15 +687,31 @@ class _OrderItemRow extends StatelessWidget {
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: Text(item.product.name, style: TextStyle(color: textMain, fontSize: 14)),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(item.product.name, style: TextStyle(color: textMain, fontSize: 14)),
+                  ),
+                  Text(
+                    '${item.quantity}x  \$${item.total.toStringAsFixed(0)}',
+                    style: TextStyle(color: textSub, fontSize: 14),
+                  ),
+                ],
               ),
-              Text(
-                '${item.quantity}x  \$${item.total.toStringAsFixed(0)}',
-                style: TextStyle(color: textSub, fontSize: 14),
-              ),
+              if (item.notes.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Row(children: [
+                  Icon(Icons.notes, size: 12, color: textSub),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(item.notes,
+                        style: TextStyle(color: textSub, fontSize: 11, fontStyle: FontStyle.italic)),
+                  ),
+                ]),
+              ],
             ],
           ),
         ),

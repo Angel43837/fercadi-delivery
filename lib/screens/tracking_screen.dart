@@ -16,9 +16,10 @@ import '../services/location_service.dart';
 import '../services/notification_service.dart';
 import '../services/order_history_service.dart';
 import '../services/supabase_service.dart';
+import 'rating_dialog.dart';
 
 Future<BitmapDescriptor> _buildMarkerIcon(IconData icon, Color bg) async {
-  const size = 80.0;
+  const size = 48.0;
   final recorder = ui.PictureRecorder();
   final canvas = Canvas(recorder);
 
@@ -198,6 +199,9 @@ class _TrackingScreenState extends State<TrackingScreen> {
       setState(() => _orderStatus = s);
       if (s == 'delivered') {
         await OrderHistoryService.clearActiveOrder();
+        if (mounted) {
+          await showRatingDialog(context, orderId: widget.orderId, isDriver: false);
+        }
       }
     } catch (_) {}
   }

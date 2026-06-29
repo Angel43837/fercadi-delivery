@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../core/constants.dart';
 
 class RegistroRepartidorScreen extends StatefulWidget {
   const RegistroRepartidorScreen({super.key});
@@ -20,7 +19,7 @@ class _RegistroRepartidorScreenState extends State<RegistroRepartidorScreen> {
   bool _registrado   = false;
   String _nombre     = '';
 
-  static const _orange = AppConstants.primaryColor;
+  static const _orange = Color(0xFFFF5722);
   static const _dark   = Color(0xFFE64A19);
   static const _white  = Colors.white;
 

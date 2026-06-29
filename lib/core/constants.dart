@@ -15,7 +15,7 @@ class AppConstants {
   static const String sentryDsn = String.fromEnvironment('SENTRY_DSN', defaultValue: '');
 
   // Colores principales — tema oscuro con naranja
-  static const Color primaryColor  = Color(0xFFFF5722); // Naranja principal
+  static const Color primaryColor  = Color(0xFFF4510C); // Naranja principal
   static const Color bgColor       = Color(0xFF121212); // Fondo oscurou
   static const Color surfaceColor  = Color(0xFF1E1E1E); // Tarjetas
   static const Color surface2Color = Color(0xFF2A2A2A); // Sub-tarjetas

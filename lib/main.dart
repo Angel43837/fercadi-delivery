@@ -5,6 +5,7 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
+import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:provider/provider.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -17,16 +18,16 @@ import 'services/supabase_service.dart';
 import 'services/notification_service.dart';
 
 void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  if (kIsWeb) usePathUrlStrategy();
   await SentryFlutter.init(
     (options) {
       options.dsn = AppConstants.sentryDsn;
-      // Solo enviar errores reales en producción — en debug solo se imprimen localmente
       options.environment = AppConstants.sentryDsn.isEmpty ? 'development' : 'production';
-      options.tracesSampleRate = 0.3; // Captura 30% de las sesiones para performance
-      options.attachScreenshot = true; // Adjunta captura de pantalla cuando hay un error
+      options.tracesSampleRate = 0.3;
+      if (!kIsWeb) options.attachScreenshot = true; // No soportado en web
     },
     appRunner: () async {
-      WidgetsFlutterBinding.ensureInitialized();
 
       // Inicializa Stripe
       try {
@@ -75,7 +76,7 @@ class FercadiApp extends StatelessWidget {
             brightness: Brightness.dark,
             scaffoldBackgroundColor: AppConstants.bgColor,
             colorScheme: const ColorScheme.dark(
-              primary: AppConstants.primaryColor,
+              primary: Color.fromARGB(255, 255, 0, 0),
               surface: AppConstants.surfaceColor,
               onSurface: Colors.white,
             ),
@@ -104,7 +105,7 @@ class FercadiApp extends StatelessWidget {
               primary: AppConstants.primaryColor,
               surface: AppConstants.primaryColor,
               onSurface: Colors.white,
-            ),
+            ),  
             appBarTheme: const AppBarTheme(
               backgroundColor: AppConstants.primaryColor,
               foregroundColor: Colors.white,
