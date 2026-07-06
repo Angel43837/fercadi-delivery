@@ -49,13 +49,39 @@ class CartScreen extends StatelessWidget {
           : Column(
               children: [
                 Expanded(
-                  child: ListView.builder(
+                  child: ListView(
                     padding: const EdgeInsets.all(16),
-                    itemCount: cart.items.length,
-                    itemBuilder: (context, i) {
-                      final item = cart.items[i];
-                      return _CartItemTile(item: item, isDark: isDark, cardBg: cardBg, cardText: cardText, cardSub: cardSub);
-                    },
+                    children: [
+                      for (final entry in cart.itemsByRestaurant.entries) ...[
+                        if (cart.itemsByRestaurant.length > 1)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8, top: 4),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.storefront_outlined,
+                                    size: 15, color: AppConstants.primaryColor),
+                                const SizedBox(width: 6),
+                                Text(
+                                  entry.value.first.restaurantName,
+                                  style: const TextStyle(
+                                    color: AppConstants.primaryColor,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        for (final item in entry.value)
+                          _CartItemTile(
+                            item: item,
+                            isDark: isDark,
+                            cardBg: cardBg,
+                            cardText: cardText,
+                            cardSub: cardSub,
+                          ),
+                      ],
+                    ],
                   ),
                 ),
                 _OrderSummary(cart: cart),

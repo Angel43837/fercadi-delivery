@@ -4,7 +4,10 @@
 // Para navegar entre pantallas se usa: context.go('/ruta') o context.push('/ruta').
 // Las rutas que necesitan datos extras los reciben por state.extra (ej. producto, restaurante).
 
+import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:go_router/go_router.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'models/restaurant.dart';
 import 'models/product.dart';
 import 'screens/splash_screen.dart';
@@ -25,34 +28,85 @@ import 'screens/dueno_login_screen.dart';
 import 'screens/repartidor_login_screen.dart';
 import 'screens/flota_screen.dart';
 import 'screens/flota_login_screen.dart';
+import 'screens/repartidor_plus_screen.dart';
+import 'screens/registro_rider_plus_screen.dart';
+
+// Notifica a GoRouter cada vez que el estado de autenticación de Supabase cambia.
+// Con refreshListenable el router re-evalúa el redirect al restaurar la sesión del
+// localStorage en web — sin esto hay una condición de carrera en la carga inicial.
+class _SupabaseAuthNotifier extends ChangeNotifier {
+  late final StreamSubscription<AuthState> _sub;
+  _SupabaseAuthNotifier() {
+    _sub = Supabase.instance.client.auth.onAuthStateChange.listen((_) {
+      notifyListeners();
+    });
+  }
+  @override
+  void dispose() { _sub.cancel(); super.dispose(); }
+}
+
+// Rutas que solo el cliente puede ver
+const _clientRoutes = {
+  '/restaurants', '/menu', '/product-detail',
+  '/cart', '/checkout', '/tracking', '/history', '/profile',
+};
+
+String _roleHome(String role) {
+  switch (role) {
+    case 'repartidor_plus': return '/rider';
+    case 'repartidor':      return '/repartidor';
+    case 'dueno':           return '/dueno';
+    case 'admin':           return '/admin';
+    case 'jefe_flota':      return '/flota';
+    default:                return '/restaurants';
+  }
+}
 
 // Router global de la app — se pasa a MaterialApp.router en main.dart
 final appRouter = GoRouter(
-  initialLocation: '/', // Siempre arranca en el splash
+  initialLocation: '/',
+  refreshListenable: _SupabaseAuthNotifier(),
+  redirect: (context, state) {
+    final loc = state.matchedLocation;
+
+    // Rutas públicas sin restricción
+    const open = {
+      '/', '/login', '/moto', '/repartidor-login', '/dueno-login',
+      '/restaurante', '/registro-repartidor', '/registro-rider',
+      '/registro-restaurante', '/flota-login',
+    };
+    if (open.contains(loc)) return null;
+
+    final user = Supabase.instance.client.auth.currentUser;
+    // Sin sesión en rutas protegidas → splash, que espera a Supabase y redirige según rol
+    if (user == null) return '/';
+
+    final role = (user.userMetadata?['role'] as String?) ?? 'cliente';
+
+    // Bloquear rutas de cliente a usuarios con otro rol
+    if (_clientRoutes.contains(loc) &&
+        (role == 'repartidor_plus' || role == 'repartidor' ||
+         role == 'dueno'           || role == 'admin'       || role == 'jefe_flota')) {
+      return _roleHome(role);
+    }
+
+    // Bloquear rutas exclusivas de cada rol al resto
+    if (loc == '/rider'      && role != 'repartidor_plus') return _roleHome(role);
+    if (loc == '/repartidor' && role != 'repartidor')      return _roleHome(role);
+    if (loc == '/dueno'      && role != 'dueno' && role != 'admin') return _roleHome(role);
+    if (loc == '/admin'      && role != 'admin')           return _roleHome(role);
+    if (loc == '/flota'      && role != 'jefe_flota')      return _roleHome(role);
+
+    return null;
+  },
   routes: [
-    // Pantalla de carga con el logo (3 segundos, luego redirige según sesión)
-    GoRoute(
-      path: '/',
-      builder: (_, _) => const SplashScreen(),
-    ),
-    // Login / registro con email, Google o Facebook
-    GoRoute(
-      path: '/login',
-      builder: (_, _) => const LoginScreen(),
-    ),
-    // Pantalla principal del cliente — lista de restaurantes
-    GoRoute(
-      path: '/restaurants',
-      builder: (_, _) => const RestaurantsScreen(),
-    ),
-    // Menú de un restaurante específico (recibe objeto Restaurant por extra)
+    GoRoute(path: '/',          builder: (_, _) => const SplashScreen()),
+    GoRoute(path: '/login',     builder: (_, _) => const LoginScreen()),
+    GoRoute(path: '/restaurants', builder: (_, _) => const RestaurantsScreen()),
     GoRoute(
       path: '/menu',
-      builder: (context, state) =>
-          MenuScreen(restaurant: state.extra as Restaurant),
+      builder: (context, state) => MenuScreen(restaurant: state.extra as Restaurant),
     ),
-    // Detalle de un producto con carrusel de imágenes y selector de cantidad
-    // Recibe: { product: Product, restaurantId: String }
     GoRoute(
       path: '/product-detail',
       builder: (context, state) {
@@ -63,68 +117,22 @@ final appRouter = GoRouter(
         );
       },
     ),
-    // Carrito de compras del cliente
-    GoRoute(
-      path: '/cart',
-      builder: (_, _) => const CartScreen(),
-    ),
-    // Pantalla de confirmación y pago del pedido
-    GoRoute(
-      path: '/checkout',
-      builder: (_, _) => const CheckoutScreen(),
-    ),
-    // Panel del repartidor — muestra pedidos pendientes y mapa GPS en tiempo real
-    GoRoute(
-      path: '/repartidor',
-      builder: (_, _) => const RepartidorScreen(),
-    ),
-    // Panel del dueño del restaurante — gestiona pedidos y configura el restaurante
-    GoRoute(
-      path: '/dueno',
-      builder: (_, _) => const DuenoScreen(),
-    ),
-    // Historial de pedidos anteriores del cliente
-    GoRoute(
-      path: '/history',
-      builder: (_, _) => const OrderHistoryScreen(),
-    ),
-    // Perfil del usuario — nombre, foto, dirección, método de pago, tarjeta
-    GoRoute(
-      path: '/profile',
-      builder: (_, _) => const ProfileScreen(),
-    ),
-    // Formulario de registro para nuevos repartidores
-    GoRoute(
-      path: '/registro-repartidor',
-      builder: (_, _) => const RegistroRepartidorScreen(),
-    ),
-    // Login exclusivo para dueños de restaurante (tema naranja)
-    GoRoute(
-      path: '/restaurante',
-      builder: (_, _) => const DuenoLoginScreen(),
-    ),
-    // Login exclusivo para repartidores — deben registrarse primero
-    GoRoute(
-      path: '/moto',
-      builder: (_, _) => const RepartidorLoginScreen(),
-    ),
-    // Login exclusivo para jefes de flota (tema oscuro azul)
-    GoRoute(
-      path: '/flota-login',
-      builder: (_, _) => const FlotaLoginScreen(),
-    ),
-    // Panel del jefe de flota — ve riders, ubicaciones y ganancias
-    GoRoute(
-      path: '/flota',
-      builder: (_, _) => const FlotaScreen(),
-    ),
-    // Formulario de registro para nuevos restaurantes / dueños
-    GoRoute(
-      path: '/registro-restaurante',
-      builder: (_, _) => const RegistroRestauranteScreen(),
-    ),
-    // Pantalla de seguimiento en tiempo real del pedido en camino
-    // Recibe: { restaurantName, address, total, orderId, lat?, lng? }
+    GoRoute(path: '/cart',      builder: (_, _) => const CartScreen()),
+    GoRoute(path: '/checkout',  builder: (_, _) => const CheckoutScreen()),
+    GoRoute(path: '/repartidor', builder: (_, _) => const RepartidorScreen()),
+    GoRoute(path: '/dueno',     builder: (_, _) => const DuenoScreen()),
+    GoRoute(path: '/history',   builder: (_, _) => const OrderHistoryScreen()),
+    GoRoute(path: '/profile',   builder: (_, _) => const ProfileScreen()),
+    GoRoute(path: '/registro-repartidor', builder: (_, _) => const RegistroRepartidorScreen()),
+    GoRoute(path: '/restaurante',  builder: (_, _) => const DuenoLoginScreen()),
+    GoRoute(path: '/dueno-login',  builder: (_, _) => const DuenoLoginScreen()),
+    GoRoute(path: '/moto',         builder: (_, _) => const RepartidorLoginScreen()),
+    GoRoute(path: '/repartidor-login', builder: (_, _) => const RepartidorLoginScreen()),
+    GoRoute(path: '/rider',        builder: (_, _) => const RepartidorPlusScreen()),
+    GoRoute(path: '/registro-rider', builder: (_, _) => const RegistroRiderPlusScreen()),
+    GoRoute(path: '/flota-login',  builder: (_, _) => const FlotaLoginScreen()),
+    GoRoute(path: '/flota',        builder: (_, _) => const FlotaScreen()),
+    GoRoute(path: '/registro-restaurante', builder: (_, _) => const RegistroRestauranteScreen()),
     GoRoute(
       path: '/tracking',
       builder: (context, state) {

@@ -43,9 +43,10 @@ class _LoginScreenState extends State<LoginScreen> {
         final user  = data.session?.user;
         final role  = user?.userMetadata?['role'] as String?;
         final email = user?.email ?? '';
-        final route = role == 'repartidor' ? '/repartidor'
-                    : role == 'dueno'      ? '/dueno'
-                    : role == 'admin'      ? '/admin'
+        final route = role == 'repartidor'      ? '/repartidor'
+                    : role == 'repartidor_plus' ? '/rider'
+                    : role == 'dueno'           ? '/dueno'
+                    : role == 'admin'           ? '/admin'
                     : '/restaurants';
         await AuthService.saveSession(email, route);
         if (mounted) context.go(route);
@@ -95,8 +96,9 @@ class _LoginScreenState extends State<LoginScreen> {
           _showMessage('Usa la app de Administrador para acceder.', isError: true);
           return;
         }
-        final route = role == 'repartidor' ? '/repartidor'
-                    : role == 'dueno'      ? '/dueno'
+        final route = role == 'repartidor'      ? '/repartidor'
+                    : role == 'repartidor_plus' ? '/rider'
+                    : role == 'dueno'           ? '/dueno'
                     : '/restaurants';
         await AuthService.saveSession(_emailController.text.trim(), route);
         if (!mounted) return;

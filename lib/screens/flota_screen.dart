@@ -52,6 +52,30 @@ class _FlotaScreenState extends State<FlotaScreen> {
     _pollTimer = Timer.periodic(const Duration(seconds: 10), (_) => _loadAll());
   }
 
+  static const _mockRiders = [
+    {'rider_id': 'mock-1', 'rider_name': 'Carlos Mendoza', 'rider_email': 'carlos@gogo.mx'},
+    {'rider_id': 'mock-2', 'rider_name': 'Luis Ramírez',   'rider_email': 'luis@gogo.mx'},
+    {'rider_id': 'mock-3', 'rider_name': 'Ana García',     'rider_email': 'ana@gogo.mx'},
+  ];
+
+  static final _mockLocations = {
+    'mock-1': {'lat': 19.8975, 'lng': -100.4438, 'last_seen': DateTime.now().toIso8601String()},
+    'mock-2': {'lat': 19.8960, 'lng': -100.4460, 'last_seen': DateTime.now().toIso8601String()},
+    'mock-3': {'lat': 19.8950, 'lng': -100.4420, 'last_seen': DateTime.now().subtract(const Duration(minutes: 30)).toIso8601String()},
+  };
+
+  static final _mockOrders = {
+    'mock-1': List.generate(3, (_) => {'status': 'delivered', 'delivery_fee': 35}),
+    'mock-2': List.generate(5, (_) => {'status': 'delivered', 'delivery_fee': 35}),
+    'mock-3': List.generate(2, (_) => {'status': 'delivered', 'delivery_fee': 35}),
+  };
+
+  static final _mockActivos = <String, Map<String, dynamic>?>{
+    'mock-1': {'address': 'Col. Centro, Maravatío'},
+    'mock-2': null,
+    'mock-3': null,
+  };
+
   Future<void> _loadAll() async {
     if (_jefeId == null) return;
     final riders = await SupabaseService.getFlotaRiders(_jefeId!);
@@ -65,12 +89,18 @@ class _FlotaScreenState extends State<FlotaScreen> {
       activos[riderId] = await SupabaseService.getRiderActiveOrder(riderId);
     }
 
+    // Merge mock riders for demo
+    final allRiders = [..._mockRiders.map((m) => Map<String, dynamic>.from(m)), ...riders];
+    final allLocations = {..._mockLocations.map((k, v) => MapEntry(k, Map<String, dynamic>.from(v))), ...locations};
+    final allOrders = {..._mockOrders.map((k, v) => MapEntry(k, v.map((o) => Map<String, dynamic>.from(o)).toList())), ...orders};
+    final allActivos = {..._mockActivos, ...activos};
+
     if (!mounted) return;
     setState(() {
-      _riders = riders;
-      _locations = locations;
-      _ordersHoy = orders;
-      _pedidoActivo = activos;
+      _riders = allRiders;
+      _locations = allLocations;
+      _ordersHoy = allOrders;
+      _pedidoActivo = allActivos;
       _loading = false;
     });
   }
@@ -112,6 +142,12 @@ class _FlotaScreenState extends State<FlotaScreen> {
 
     return Scaffold(
       backgroundColor: _bg,
+      floatingActionButton: _jefeId == null ? null : FloatingActionButton.extended(
+        onPressed: _showCrearRepartidorDialog,
+        backgroundColor: _accent,
+        icon: const Icon(Icons.person_add_rounded, color: Colors.white),
+        label: const Text('Nuevo repartidor', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+      ),
       body: SafeArea(
         child: Column(children: [
           _buildHeader(),
@@ -132,6 +168,119 @@ class _FlotaScreenState extends State<FlotaScreen> {
                       ),
           ),
         ]),
+      ),
+    );
+  }
+
+  Future<void> _showCrearRepartidorDialog() async {
+    final nameCtrl  = TextEditingController();
+    final emailCtrl = TextEditingController();
+    final passCtrl  = TextEditingController();
+    String? error;
+    bool loading = false;
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) => AlertDialog(
+          backgroundColor: _surface,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Row(children: [
+            Icon(Icons.person_add_rounded, color: _accent, size: 22),
+            SizedBox(width: 10),
+            Text('Nuevo repartidor', style: TextStyle(color: Colors.white, fontSize: 17)),
+          ]),
+          content: SizedBox(
+            width: 340,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              _dialogField(nameCtrl,  'Nombre',              Icons.badge_outlined,    false),
+              const SizedBox(height: 12),
+              _dialogField(emailCtrl, 'Correo electrónico',  Icons.email_outlined,    false),
+              const SizedBox(height: 12),
+              _dialogField(passCtrl,  'Contraseña',          Icons.lock_outline,      true),
+              if (error != null) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.redAccent.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(children: [
+                    const Icon(Icons.error_outline, color: Colors.redAccent, size: 16),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(error!, style: const TextStyle(color: Colors.redAccent, fontSize: 12))),
+                  ]),
+                ),
+              ],
+            ]),
+          ),
+          actions: [
+            TextButton(
+              onPressed: loading ? null : () => Navigator.pop(ctx),
+              child: Text('Cancelar', style: TextStyle(color: Colors.white.withValues(alpha: 0.4))),
+            ),
+            ElevatedButton(
+              onPressed: loading ? null : () async {
+                final name  = nameCtrl.text.trim();
+                final email = emailCtrl.text.trim();
+                final pass  = passCtrl.text.trim();
+                if (name.isEmpty || email.isEmpty || pass.isEmpty) {
+                  setS(() => error = 'Completa todos los campos');
+                  return;
+                }
+                if (pass.length < 6) {
+                  setS(() => error = 'La contraseña debe tener al menos 6 caracteres');
+                  return;
+                }
+                setS(() { loading = true; error = null; });
+                final err = await SupabaseService.createRepartidorFlota(
+                  name: name, email: email, password: pass, jefeId: _jefeId!,
+                );
+                if (err != null) {
+                  setS(() { loading = false; error = err; });
+                  return;
+                }
+                if (ctx.mounted) Navigator.pop(ctx);
+                await _loadAll();
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                    content: Text('Repartidor "$name" creado — correo: $email'),
+                    backgroundColor: const Color(0xFF22C55E),
+                    duration: const Duration(seconds: 5),
+                  ));
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _accent,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              child: loading
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : const Text('Crear', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      ),
+    );
+    nameCtrl.dispose(); emailCtrl.dispose(); passCtrl.dispose();
+  }
+
+  Widget _dialogField(TextEditingController ctrl, String hint, IconData icon, bool obscure) {
+    return TextField(
+      controller: ctrl,
+      obscureText: obscure,
+      style: const TextStyle(color: Colors.white),
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: const TextStyle(color: Color(0xFF6B7280)),
+        prefixIcon: Icon(icon, color: _accent, size: 20),
+        filled: true,
+        fillColor: _card,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFF2A2D3E))),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFF2A2D3E))),
+        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: _accent)),
       ),
     );
   }

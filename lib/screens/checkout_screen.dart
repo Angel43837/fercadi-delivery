@@ -46,15 +46,19 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   bool _loading = false;
   LatLng? _selectedPos;
   List<Map<String, dynamic>> _savedAddresses = [];
-  Restaurant? _restaurant;
+  final Map<String, Restaurant> _restaurants = {}; // restaurantId → Restaurant
+
+  Restaurant? get _primaryRestaurant =>
+      _restaurants.values.firstOrNull;
 
   double get _deliveryFee {
-    if (_restaurant?.lat == null || _restaurant?.lng == null || _selectedPos == null) {
+    final r = _primaryRestaurant;
+    if (r?.lat == null || r?.lng == null || _selectedPos == null) {
       return LocationService.calcularCostoEnvio(null);
     }
     final distanciaKm = Geolocator.distanceBetween(
-          _restaurant!.lat!,
-          _restaurant!.lng!,
+          r!.lat!,
+          r.lng!,
           _selectedPos!.latitude,
           _selectedPos!.longitude,
         ) /
@@ -66,15 +70,18 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   void initState() {
     super.initState();
     _loadSavedAddresses();
-    _loadRestaurant();
+    _loadRestaurants();
   }
 
-  Future<void> _loadRestaurant() async {
-    final restaurantId = context.read<CartProvider>().restaurantId;
-    if (restaurantId == null) return;
-    final restaurant = await SupabaseService.getRestaurantById(restaurantId);
-    if (!mounted) return;
-    setState(() => _restaurant = restaurant);
+  Future<void> _loadRestaurants() async {
+    final ids = context.read<CartProvider>().itemsByRestaurant.keys.toList();
+    for (final id in ids) {
+      final restaurant = await SupabaseService.getRestaurantById(id);
+      if (!mounted) return;
+      if (restaurant != null) {
+        setState(() => _restaurants[id] = restaurant);
+      }
+    }
   }
 
   Future<void> _loadSavedAddresses() async {
@@ -239,66 +246,83 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       }
     }
 
-    final restaurantId = cart.restaurantId;
-    if (restaurantId == null || restaurantId.isEmpty) {
+    final byRestaurant = cart.itemsByRestaurant;
+    if (byRestaurant.isEmpty) {
       if (mounted) {
         setState(() => _loading = false);
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Error: carrito sin restaurante. Vuelve e intenta de nuevo.'),
+          content: Text('Error: carrito vacío. Vuelve e intenta de nuevo.'),
           backgroundColor: Colors.redAccent,
         ));
       }
       return;
     }
 
-    String orderId = 'local';
-    try {
-      orderId = await SupabaseService.createOrder(
-        restaurantId: restaurantId,
-        total: orderTotal,
-        deliveryFee: deliveryFee,
-        customerName: _nameCtrl.text.trim(),
-        customerPhone: _phoneCtrl.text.trim(),
-        address: _addressCtrl.text.trim(),
-        paymentMethod: _payment.name,
-        lat: _selectedPos?.latitude,
-        lng: _selectedPos?.longitude,
-        clientFcmToken: FcmService.token,
-        items: cart.items.map((i) => {
-          'product_id': i.product.id,
-          'quantity': i.quantity,
-          'price': i.product.price,
-          if (i.notes.isNotEmpty) 'notes': i.notes,
-        }).toList(),
-      );
-    } catch (e) {
-      if (mounted) {
-        setState(() => _loading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al enviar pedido: $e'),
-            backgroundColor: Colors.redAccent,
-          ),
+    // Create one order per restaurant; share the same delivery fee split equally
+    final perOrderFee = deliveryFee / byRestaurant.length;
+    String firstOrderId = 'local';
+    String firstRestaurantName = byRestaurant.values.first.first.restaurantName;
+    bool anyError = false;
+
+    for (final entry in byRestaurant.entries) {
+      final rid = entry.key;
+      final rItems = entry.value;
+      final rSubtotal = rItems.fold(0.0, (s, i) => s + i.total);
+      try {
+        final oid = await SupabaseService.createOrder(
+          restaurantId: rid,
+          total: rSubtotal + perOrderFee,
+          deliveryFee: perOrderFee,
+          customerName: _nameCtrl.text.trim(),
+          customerPhone: _phoneCtrl.text.trim(),
+          address: _addressCtrl.text.trim(),
+          paymentMethod: _payment.name,
+          lat: _selectedPos?.latitude,
+          lng: _selectedPos?.longitude,
+          clientFcmToken: FcmService.token,
+          items: rItems.map((i) => {
+            'product_id': i.product.id,
+            'quantity': i.quantity,
+            'price': i.product.price,
+            if (i.notes.isNotEmpty) 'notes': i.notes,
+          }).toList(),
         );
-      } else {
-        _loading = false;
+        if (firstOrderId == 'local') {
+          firstOrderId = oid;
+          firstRestaurantName = rItems.first.restaurantName;
+        }
+      } catch (e) {
+        anyError = true;
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Error en pedido de ${rItems.first.restaurantName}: $e'),
+            backgroundColor: Colors.redAccent,
+          ));
+        }
       }
+    }
+
+    if (anyError && firstOrderId == 'local') {
+      if (mounted) setState(() => _loading = false);
       return;
     }
 
     if (!mounted) return;
     setState(() => _loading = false);
+    final restaurantLabel = byRestaurant.length > 1
+        ? 'Varios restaurantes'
+        : firstRestaurantName;
     final orderData = <String, dynamic>{
-      'restaurantName': cart.restaurantName ?? 'Tu restaurante',
+      'restaurantName': restaurantLabel,
       'address': _addressCtrl.text.trim(),
       'total': orderTotal,
-      'orderId': orderId,
+      'orderId': firstOrderId,
       if (_selectedPos != null) 'lat': _selectedPos!.latitude,
       if (_selectedPos != null) 'lng': _selectedPos!.longitude,
     };
     await OrderHistoryService.add(
-      orderId: orderId,
-      restaurantName: cart.restaurantName ?? 'Restaurante',
+      orderId: firstOrderId,
+      restaurantName: restaurantLabel,
       total: orderTotal,
       address: _addressCtrl.text.trim(),
     );
@@ -309,8 +333,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       lng: _selectedPos?.longitude,
     );
     await OrderHistoryService.saveActiveOrder(
-      orderId: orderId,
-      restaurantName: cart.restaurantName ?? 'Restaurante',
+      orderId: firstOrderId,
+      restaurantName: restaurantLabel,
       total: orderTotal,
       address: _addressCtrl.text.trim(),
       lat: _selectedPos?.latitude,

@@ -74,16 +74,19 @@ class _SplashScreenState extends State<SplashScreen>
     // La sesión guarda la ruta directamente (ej. '/dueno', '/repartidor')
     final candidateRoute = session.role;
 
-    // Dueño y repartidor ya tienen sus propias sesiones independientes —
-    // si quedó un session_role viejo con esos valores, limpiarlo y mandar al login de usuario.
-    if (candidateRoute == '/dueno' || candidateRoute == '/repartidor') {
+    // Dueño, repartidor y flota tienen login propio — nunca llegan aquí por SharedPreferences.
+    // Si quedó un valor viejo, limpiarlo y mandar al login del cliente.
+    if (candidateRoute == '/dueno' ||
+        candidateRoute == '/repartidor' ||
+        candidateRoute == '/rider' ||
+        candidateRoute == '/flota') {
       await AuthService.clearSession();
       if (!mounted) return;
       context.go('/login');
       return;
     }
 
-    if (!SupabaseService.useMock && (candidateRoute == '/admin' || candidateRoute == '/flota')) {
+    if (!SupabaseService.useMock && candidateRoute == '/admin') {
       final supabaseSession = await _waitForSupabaseSession();
       if (!mounted) return;
       if (supabaseSession == null) {
@@ -94,7 +97,6 @@ class _SplashScreenState extends State<SplashScreen>
       }
       final liveRole = supabaseSession.user.userMetadata?['role'] as String?;
       if (liveRole == 'admin') { context.go('/admin'); return; }
-      if (liveRole == 'jefe_flota') { context.go('/flota'); return; }
       context.go('/login');
       return;
     }

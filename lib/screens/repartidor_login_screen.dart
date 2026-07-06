@@ -39,13 +39,18 @@ class _RepartidorLoginScreenState extends State<RepartidorLoginScreen> {
         password: pass,
       );
       final role = res.user?.userMetadata?['role'] as String?;
-      if (role != 'repartidor') {
+      if (role != 'repartidor' && role != 'repartidor_plus') {
         await Supabase.instance.client.auth.signOut();
         setState(() => _error = 'Esta cuenta no está registrada como repartidor');
         return;
       }
       await AuthService.saveRepartidorSession(email);
-      if (mounted) context.go('/repartidor');
+      if (!mounted) return;
+      if (role == 'repartidor_plus') {
+        context.go('/rider');
+      } else {
+        context.go('/repartidor');
+      }
     } catch (_) {
       setState(() => _error = 'Correo o contraseña incorrectos');
     } finally {
@@ -159,8 +164,18 @@ class _RepartidorLoginScreenState extends State<RepartidorLoginScreen> {
               Center(
                 child: TextButton(
                   onPressed: () => context.go('/registro-repartidor'),
-                  child: const Text('¿Primera vez? Regístrate aquí',
+                  child: const Text('¿Repartidor de restaurante? Regístrate',
                       style: TextStyle(color: Colors.white70, fontSize: 13)),
+                ),
+              ),
+              Center(
+                child: TextButton(
+                  onPressed: () => context.go('/registro-rider'),
+                  child: const Text('¿Repartidor independiente? Únete a GOGO Riders',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600)),
                 ),
               ),
               const SizedBox(height: 20),

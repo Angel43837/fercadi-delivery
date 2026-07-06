@@ -387,30 +387,51 @@ class SupabaseService {
 
   // ── Flota de repartidores ──────────────────────────────────────────────────
 
-  // Crea una cuenta de jefe_flota o rider_flota desde el admin
-  static Future<void> createFlotaUser({
+  // Crea repartidor (sin gamificación) y lo vincula al jefe de flota.
+  // Requiere que AppConstants.supabaseServiceRoleKey esté configurado en constants.dart.
+  // ⚠️ Nunca poner la clave real en constantes.dart si está en git — usar variables de entorno o Edge Function.
+  // Retorna null si todo OK, o el mensaje de error si falla.
+  static Future<String?> createRepartidorFlota({
+    required String name,
     required String email,
     required String password,
-    required String name,
-    required String role, // 'jefe_flota' | 'rider_flota'
-    String? jefeId, // solo para rider_flota
+    required String jefeId,
   }) async {
+    const key = AppConstants.supabaseServiceRoleKey;
+    if (key.isEmpty) {
+      return 'Función no disponible: configura supabaseServiceRoleKey en AppConstants o usa una Edge Function.';
+    }
     try {
-      final res = await _client.auth.admin.createUser(AdminUserAttributes(
-        email: email,
-        password: password,
-        userMetadata: {'role': role, 'name': name},
-        emailConfirm: true,
-      ));
-      if (jefeId != null && res.user != null) {
-        await _client.from('flota_members').insert({
-          'jefe_id': jefeId,
-          'rider_id': res.user!.id,
-          'rider_name': name,
-          'rider_email': email,
-        });
+      final res = await http.post(
+        Uri.parse('${AppConstants.supabaseUrl}/auth/v1/admin/users'),
+        headers: {
+          'Authorization': 'Bearer $key',
+          'apikey': key,
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'email': email,
+          'password': password,
+          'user_metadata': {'role': 'repartidor', 'name': name},
+          'email_confirm': true,
+        }),
+      );
+      if (res.statusCode != 200 && res.statusCode != 201) {
+        final body = jsonDecode(res.body) as Map<String, dynamic>;
+        return body['msg'] as String? ?? body['message'] as String? ?? 'Error al crear usuario';
       }
-    } catch (_) {}
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      final userId = data['id'] as String;
+      await _client.from('flota_members').insert({
+        'jefe_id': jefeId,
+        'rider_id': userId,
+        'rider_name': name,
+        'rider_email': email,
+      });
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
   }
 
   // Devuelve los riders vinculados a un jefe
@@ -985,7 +1006,7 @@ class SupabaseService {
     // Muestra pedidos sin repartidor asignado (pending) + pedidos asignados a este repartidor
     final data = await _client
         .from('orders')
-        .select('*, order_items(quantity, price, notes, products(id, name))')
+        .select('*, restaurants(name, address), order_items(quantity, price, notes, products(id, name))')
         .or('status.eq.pending,and(status.eq.accepted,repartidor_id.eq.$userId)')
         .order('created_at', ascending: false);
     return (data as List).cast<Map<String, dynamic>>();
@@ -1052,6 +1073,56 @@ class SupabaseService {
         'comment':   comment.isEmpty ? null : comment,
         'tip':       tip,
         'is_driver': isDriver,
+      });
+    } catch (_) {}
+  }
+
+  // ── Rider Stats ───────────────────────────────────────────────────────────
+
+  static Future<Map<String, dynamic>> getRiderStats(String riderId) async {
+    if (useMock) return {};
+    try {
+      final data = await _client
+          .from('rider_stats')
+          .select()
+          .eq('rider_id', riderId)
+          .maybeSingle();
+      return (data as Map<String, dynamic>?) ?? {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  // Incrementa stats del rider vía RPC atómica en el servidor.
+  // SQL requerido (ejecutar una vez en Supabase > SQL Editor):
+  //
+  // CREATE OR REPLACE FUNCTION increment_rider_stats(
+  //   p_rider_id uuid, p_coins_add int DEFAULT 0,
+  //   p_repartos_add int DEFAULT 0, p_dinero_add numeric DEFAULT 0
+  // ) RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
+  // BEGIN
+  //   INSERT INTO rider_stats (rider_id, coins, repartos, dinero, updated_at)
+  //   VALUES (p_rider_id, p_coins_add, p_repartos_add, p_dinero_add, now())
+  //   ON CONFLICT (rider_id) DO UPDATE SET
+  //     coins     = rider_stats.coins     + EXCLUDED.coins,
+  //     repartos  = rider_stats.repartos  + EXCLUDED.repartos,
+  //     dinero    = rider_stats.dinero    + EXCLUDED.dinero,
+  //     updated_at = now();
+  // END; $$;
+  // GRANT EXECUTE ON FUNCTION increment_rider_stats TO authenticated;
+  static Future<void> incrementRiderStats(
+    String riderId, {
+    int coinsAdd = 0,
+    int repartosAdd = 0,
+    double dineroAdd = 0,
+  }) async {
+    if (useMock) return;
+    try {
+      await _client.rpc('increment_rider_stats', params: {
+        'p_rider_id':     riderId,
+        'p_coins_add':    coinsAdd,
+        'p_repartos_add': repartosAdd,
+        'p_dinero_add':   dineroAdd,
       });
     } catch (_) {}
   }

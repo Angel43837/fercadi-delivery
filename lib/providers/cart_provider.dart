@@ -1,44 +1,49 @@
-// cart_provider.dart
-// Maneja el estado del carrito de compras usando Provider (ChangeNotifier).
-// Solo permite ítems de UN restaurante a la vez — si el usuario agrega de otro,
-// el carrito se limpia automáticamente para evitar pedidos de múltiples lugares.
-// Se accede desde cualquier pantalla con: context.read<CartProvider>()
-
 import 'package:flutter/material.dart';
 import '../models/product.dart';
 import '../models/cart_item.dart';
 
 class CartProvider extends ChangeNotifier {
   final List<CartItem> _items = [];
-  String? _restaurantId;    // ID del restaurante del carrito actual
-  String? _restaurantName;  // Nombre del restaurante (para mostrarlo en el carrito)
+  final Map<String, String> _restaurantNames = {}; // restaurantId → name
 
   List<CartItem> get items => List.unmodifiable(_items);
   int get count => _items.fold(0, (sum, item) => sum + item.quantity);
   double get total => _items.fold(0.0, (sum, item) => sum + item.total);
-  String? get restaurantId => _restaurantId;
-  String? get restaurantName => _restaurantName;
 
-  // Agrega un producto al carrito. Si es de otro restaurante, limpia primero el carrito.
-  void addProduct(Product product, String restaurantId, String restaurantName) {
-    if (_restaurantId != null && _restaurantId != restaurantId) {
-      _items.clear();
+  // Backwards-compat: first restaurant id/name, or null when cart is empty
+  String? get restaurantId => _restaurantNames.keys.firstOrNull;
+  String? get restaurantName => _restaurantNames.values.firstOrNull;
+
+  Map<String, List<CartItem>> get itemsByRestaurant {
+    final Map<String, List<CartItem>> grouped = {};
+    for (final item in _items) {
+      grouped.putIfAbsent(item.restaurantId, () => []).add(item);
     }
-    _restaurantId = restaurantId;
-    _restaurantName = restaurantName;
+    return grouped;
+  }
 
-    final existing = _items.where((i) => i.product.id == product.id);
+  void addProduct(Product product, String restaurantId, String restaurantName) {
+    _restaurantNames[restaurantId] = restaurantName;
+
+    final existing = _items.where(
+      (i) => i.product.id == product.id && i.restaurantId == restaurantId,
+    );
     if (existing.isNotEmpty) {
       existing.first.quantity++;
     } else {
-      _items.add(CartItem(product: product));
+      _items.add(CartItem(
+        product: product,
+        restaurantId: restaurantId,
+        restaurantName: restaurantName,
+      ));
     }
     notifyListeners();
   }
 
   void removeProduct(String productId) {
     _items.removeWhere((i) => i.product.id == productId);
-    if (_items.isEmpty) _restaurantId = null;
+    final activeIds = _items.map((i) => i.restaurantId).toSet();
+    _restaurantNames.removeWhere((id, _) => !activeIds.contains(id));
     notifyListeners();
   }
 
@@ -62,8 +67,7 @@ class CartProvider extends ChangeNotifier {
 
   void clear() {
     _items.clear();
-    _restaurantId = null;
-    _restaurantName = null;
+    _restaurantNames.clear();
     notifyListeners();
   }
 }

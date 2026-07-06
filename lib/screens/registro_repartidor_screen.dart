@@ -51,7 +51,7 @@ class _RegistroRepartidorScreenState extends State<RegistroRepartidorScreen> {
       final res = await Supabase.instance.client.auth.signUp(
         email: email,
         password: pass,
-        data: {'role': 'repartidor', 'name': name},
+        data: {'role': 'repartidor_plus', 'name': name},
       );
       if (res.user == null) {
         _msg('No se pudo crear la cuenta', error: true); return;
@@ -315,7 +315,7 @@ class _RegistroRepartidorScreenState extends State<RegistroRepartidorScreen> {
               SizedBox(
                 width: double.infinity, height: 52,
                 child: ElevatedButton(
-                  onPressed: () => context.go('/moto'),
+                  onPressed: () => context.go('/rider'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: _white,
                     foregroundColor: _orange,
