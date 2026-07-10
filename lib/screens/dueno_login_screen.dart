@@ -38,7 +38,7 @@ class _DuenoLoginScreenState extends State<DuenoLoginScreen> {
         email: email,
         password: pass,
       );
-      final role = res.user?.userMetadata?['role'] as String?;
+      final role = (res.user?.appMetadata['role'] ?? res.user?.userMetadata?['role']) as String?;
       if (role != 'dueno') {
         await Supabase.instance.client.auth.signOut();
         setState(() => _error = 'Esta cuenta no es de un restaurante');

@@ -25,14 +25,22 @@ CREATE OR REPLACE FUNCTION is_dueno()
 RETURNS boolean AS $$
   SELECT
     (auth.jwt() ->> 'email') = 'admin@fercadi.com'
-    OR (auth.jwt() -> 'user_metadata' ->> 'role') = 'dueno';
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'dueno';
 $$ LANGUAGE sql STABLE SECURITY DEFINER;
 
 CREATE OR REPLACE FUNCTION is_repartidor()
 RETURNS boolean AS $$
   SELECT
     (auth.jwt() ->> 'email') = 'admin@fercadi.com'
-    OR (auth.jwt() -> 'user_metadata' ->> 'role') = 'repartidor';
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'repartidor'
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'repartidor_plus';
+$$ LANGUAGE sql STABLE SECURITY DEFINER;
+
+CREATE OR REPLACE FUNCTION is_jefe_flota()
+RETURNS boolean AS $$
+  SELECT
+    (auth.jwt() ->> 'email') = 'admin@fercadi.com'
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'jefe_flota';
 $$ LANGUAGE sql STABLE SECURITY DEFINER;
 
 -- ── 3. RESTAURANTS ───────────────────────────────────────────
@@ -96,7 +104,7 @@ CREATE POLICY "read_orders"
     OR is_repartidor()
     OR (
       is_dueno()
-      AND restaurant_id = (auth.jwt() -> 'user_metadata' ->> 'restaurant_id')
+      AND restaurant_id = (auth.jwt() -> 'app_metadata' ->> 'restaurant_id')
     )
     OR (
       -- El cliente puede ver su pedido por ID (no necesita ver todos)
@@ -114,7 +122,7 @@ CREATE POLICY "update_orders"
     OR is_repartidor()
     OR (
       is_dueno()
-      AND restaurant_id = (auth.jwt() -> 'user_metadata' ->> 'restaurant_id')
+      AND restaurant_id = (auth.jwt() -> 'app_metadata' ->> 'restaurant_id')
     )
   );
 
@@ -176,6 +184,83 @@ CREATE POLICY "delete_restaurant_likes"
   ON restaurant_likes FOR DELETE USING (
     user_email = (auth.jwt() ->> 'email')
   );
+
+-- ── 11. RESTAURANT_BANNERS ───────────────────────────────────
+
+ALTER TABLE restaurant_banners ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "read_restaurant_banners"  ON restaurant_banners;
+DROP POLICY IF EXISTS "write_restaurant_banners" ON restaurant_banners;
+
+CREATE POLICY "read_restaurant_banners"
+  ON restaurant_banners FOR SELECT USING (true);
+
+CREATE POLICY "write_restaurant_banners"
+  ON restaurant_banners FOR ALL USING (is_dueno()) WITH CHECK (is_dueno());
+
+-- ── 12. FLOTA_MEMBERS ────────────────────────────────────────
+
+ALTER TABLE flota_members ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "read_flota_members"  ON flota_members;
+DROP POLICY IF EXISTS "write_flota_members" ON flota_members;
+
+CREATE POLICY "read_flota_members"
+  ON flota_members FOR SELECT USING (
+    is_admin()
+    OR is_jefe_flota()
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'repartidor'
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'repartidor_plus'
+  );
+
+CREATE POLICY "write_flota_members"
+  ON flota_members FOR ALL USING (is_admin() OR is_jefe_flota())
+  WITH CHECK (is_admin() OR is_jefe_flota());
+
+-- ── 13. RIDER_LOCATIONS ──────────────────────────────────────
+
+ALTER TABLE rider_locations ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "read_rider_locations"   ON rider_locations;
+DROP POLICY IF EXISTS "insert_rider_locations" ON rider_locations;
+DROP POLICY IF EXISTS "update_rider_locations" ON rider_locations;
+
+CREATE POLICY "read_rider_locations"
+  ON rider_locations FOR SELECT USING (
+    is_admin()
+    OR is_jefe_flota()
+  );
+
+CREATE POLICY "insert_rider_locations"
+  ON rider_locations FOR INSERT WITH CHECK (
+    auth.uid() IS NOT NULL
+    AND rider_id = auth.uid()
+  );
+
+CREATE POLICY "update_rider_locations"
+  ON rider_locations FOR UPDATE USING (
+    rider_id = auth.uid()
+  );
+
+-- ── 14. PLATFORM_CONFIG ──────────────────────────────────────
+
+ALTER TABLE platform_config ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "read_platform_config"  ON platform_config;
+DROP POLICY IF EXISTS "write_platform_config" ON platform_config;
+
+CREATE POLICY "read_platform_config"
+  ON platform_config FOR SELECT USING (true);
+
+CREATE POLICY "write_platform_config"
+  ON platform_config FOR ALL USING (is_admin()) WITH CHECK (is_admin());
+
+-- ── 15. Asignar rol a un usuario (ejecutar como service_role) ──
+-- IMPORTANTE: usar raw_app_meta_data, NO raw_user_meta_data
+--
+-- UPDATE auth.users
+-- SET raw_app_meta_data = raw_app_meta_data || '{"role": "dueno"}'::jsonb
+-- WHERE email = 'correo@ejemplo.com';
 
 -- ── 10. Confirmar que RLS está activo ────────────────────────
 -- Ejecuta esto para verificar:

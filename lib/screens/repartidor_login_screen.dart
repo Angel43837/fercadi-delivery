@@ -38,7 +38,7 @@ class _RepartidorLoginScreenState extends State<RepartidorLoginScreen> {
         email: email,
         password: pass,
       );
-      final role = res.user?.userMetadata?['role'] as String?;
+      final role = (res.user?.appMetadata['role'] ?? res.user?.userMetadata?['role']) as String?;
       if (role != 'repartidor' && role != 'repartidor_plus') {
         await Supabase.instance.client.auth.signOut();
         setState(() => _error = 'Esta cuenta no está registrada como repartidor');

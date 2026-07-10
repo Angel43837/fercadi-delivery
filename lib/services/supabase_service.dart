@@ -412,7 +412,8 @@ class SupabaseService {
         body: jsonEncode({
           'email': email,
           'password': password,
-          'user_metadata': {'role': 'repartidor', 'name': name},
+          'user_metadata': {'name': name},
+          'app_metadata':  {'role': 'repartidor'},
           'email_confirm': true,
         }),
       );
@@ -1138,5 +1139,18 @@ class SupabaseService {
         )
         .subscribe();
     return channel;
+  }
+
+  // ── Configuración de la plataforma ────────────────────────────────────────
+
+  static Future<Map<String, String>> getPlatformConfig() async {
+    if (useMock) return {'tarifa_base': '15.0', 'tarifa_por_km': '5.0'};
+    final rows = await _client.from('platform_config').select('key, value');
+    return {for (final r in rows as List) r['key'] as String: r['value'] as String};
+  }
+
+  static Future<void> setPlatformConfig(String key, String value) async {
+    if (useMock) return;
+    await _client.from('platform_config').upsert({'key': key, 'value': value});
   }
 }

@@ -95,7 +95,7 @@ class _SplashScreenState extends State<SplashScreen>
         context.go('/login');
         return;
       }
-      final liveRole = supabaseSession.user.userMetadata?['role'] as String?;
+      final liveRole = (supabaseSession.user.appMetadata['role'] ?? supabaseSession.user.userMetadata?['role']) as String?;
       if (liveRole == 'admin') { context.go('/admin'); return; }
       context.go('/login');
       return;

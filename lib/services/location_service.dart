@@ -6,6 +6,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:geolocator/geolocator.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class LocationService {
   // Centro del municipio de Maravatío, Michoacán
@@ -16,8 +17,26 @@ class LocationService {
   static const double _radioMetros = 30000;
 
   // Tarifa de envío: cuota base + costo por kilómetro recorrido
-  static const double tarifaBase = 15.0;   // MXN, se cobra siempre
-  static const double tarifaPorKm = 5.0;   // MXN por cada km entre restaurante y cliente
+  // Valores por defecto usados si Supabase no está disponible
+  static double tarifaBase = 15.0;   // MXN, se cobra siempre
+  static double tarifaPorKm = 5.0;   // MXN por cada km entre restaurante y cliente
+
+  // Carga las tarifas desde Supabase (platform_config). Se llama en main.dart al iniciar.
+  static Future<void> loadTarifas() async {
+    try {
+      final rows = await Supabase.instance.client
+          .from('platform_config')
+          .select('key, value');
+      for (final row in rows as List) {
+        final v = double.tryParse(row['value'] as String? ?? '');
+        if (v == null) continue;
+        if (row['key'] == 'tarifa_base')   tarifaBase   = v;
+        if (row['key'] == 'tarifa_por_km') tarifaPorKm  = v;
+      }
+    } catch (_) {
+      // Si falla, se usan los valores por defecto definidos arriba
+    }
+  }
 
   // Calcula el costo de envío en MXN dada la distancia en km.
   // Si no se conoce la distancia (faltan coordenadas), regresa solo la tarifa base.

@@ -81,7 +81,7 @@ final appRouter = GoRouter(
     // Sin sesión en rutas protegidas → splash, que espera a Supabase y redirige según rol
     if (user == null) return '/';
 
-    final role = (user.userMetadata?['role'] as String?) ?? 'cliente';
+    final role = ((user.appMetadata['role'] ?? user.userMetadata?['role']) as String?) ?? 'cliente';
 
     // Bloquear rutas de cliente a usuarios con otro rol
     if (_clientRoutes.contains(loc) &&

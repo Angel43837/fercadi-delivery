@@ -12,6 +12,7 @@ import 'package:provider/provider.dart';
 import '../core/constants.dart';
 import '../providers/app_data_provider.dart';
 import '../services/auth_service.dart';
+import '../services/location_service.dart';
 import '../services/supabase_service.dart';
 
 // ── Pantalla principal ───────────────────────────────────────────────────────
@@ -35,6 +36,11 @@ class _AdminScreenState extends State<AdminScreen> {
   // Eventos tab
   String _eventSearch = '';
   String? _eventStatusFilter;
+
+  // Config tab
+  final _tarifaBaseCtrl   = TextEditingController();
+  final _tarifaKmCtrl     = TextEditingController();
+  bool _savingConfig = false;
 
   @override
   void initState() {
@@ -125,6 +131,7 @@ class _AdminScreenState extends State<AdminScreen> {
               _buildRestaurantes(appData),
               _buildUsuarios(),
               _buildEventos(),
+              _buildConfig(),
             ],
           ),
         ),
@@ -646,6 +653,105 @@ class _AdminScreenState extends State<AdminScreen> {
     );
   }
 
+  // ── Config ───────────────────────────────────────────────────────────────────
+
+  Widget _buildConfig() {
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        const Text('Configuración', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 20),
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: AppConstants.surfaceColor,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              const Icon(Icons.local_shipping_outlined, color: AppConstants.primaryColor, size: 20),
+              const SizedBox(width: 8),
+              const Text('Tarifas de Envío', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+            ]),
+            const SizedBox(height: 6),
+            Text(
+              'Costo = Tarifa base + (Tarifa por km × distancia)',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 12),
+            ),
+            const SizedBox(height: 20),
+            _ConfigField(
+              label: 'Tarifa base (MXN)',
+              hint: 'Ej. 15.0',
+              controller: _tarifaBaseCtrl,
+              current: '\$${LocationService.tarifaBase.toStringAsFixed(2)}',
+            ),
+            const SizedBox(height: 14),
+            _ConfigField(
+              label: 'Tarifa por km (MXN/km)',
+              hint: 'Ej. 5.0',
+              controller: _tarifaKmCtrl,
+              current: '\$${LocationService.tarifaPorKm.toStringAsFixed(2)}/km',
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppConstants.primaryColor,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                onPressed: _savingConfig ? null : _saveConfig,
+                child: _savingConfig
+                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Text('Guardar tarifas', style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ]),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _saveConfig() async {
+    final base = double.tryParse(_tarifaBaseCtrl.text.trim());
+    final km   = double.tryParse(_tarifaKmCtrl.text.trim());
+    if (base == null && km == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ingresa al menos un valor válido'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    setState(() => _savingConfig = true);
+    try {
+      if (base != null) {
+        await SupabaseService.setPlatformConfig('tarifa_base', base.toString());
+        LocationService.tarifaBase = base;
+      }
+      if (km != null) {
+        await SupabaseService.setPlatformConfig('tarifa_por_km', km.toString());
+        LocationService.tarifaPorKm = km;
+      }
+      if (mounted) {
+        _tarifaBaseCtrl.clear();
+        _tarifaKmCtrl.clear();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Tarifas actualizadas'), backgroundColor: Colors.green),
+        );
+        setState(() {});
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red[700]),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _savingConfig = false);
+    }
+  }
+
   // ── Bottom Nav ───────────────────────────────────────────────────────────────
 
   Widget _buildBottomNav() {
@@ -662,6 +768,7 @@ class _AdminScreenState extends State<AdminScreen> {
           _NavItem(icon: Icons.storefront_outlined,   label: 'Restaurantes', index: 2, current: _tab, onTap: (i) => setState(() => _tab = i)),
           _NavItem(icon: Icons.people_outline,        label: 'Usuarios',     index: 3, current: _tab, onTap: (i) => setState(() => _tab = i)),
           _NavItem(icon: Icons.event_note_outlined,   label: 'Eventos',      index: 4, current: _tab, onTap: (i) => setState(() => _tab = i)),
+          _NavItem(icon: Icons.tune_outlined,         label: 'Config',       index: 5, current: _tab, onTap: (i) => setState(() => _tab = i)),
         ]),
       ),
     );
@@ -1025,6 +1132,37 @@ class _EventChip extends StatelessWidget {
                 fontWeight: selected ? FontWeight.bold : FontWeight.normal)),
       ),
     );
+  }
+}
+
+class _ConfigField extends StatelessWidget {
+  final String label, hint, current;
+  final TextEditingController controller;
+  const _ConfigField({required this.label, required this.hint, required this.controller, required this.current});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Text(label, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+        const Spacer(),
+        Text('Actual: $current', style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 12)),
+      ]),
+      const SizedBox(height: 6),
+      TextField(
+        controller: controller,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        style: const TextStyle(color: Colors.white),
+        decoration: InputDecoration(
+          hintText: hint,
+          hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.3)),
+          filled: true,
+          fillColor: const Color(0xFF2A2A2A),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        ),
+      ),
+    ]);
   }
 }
 

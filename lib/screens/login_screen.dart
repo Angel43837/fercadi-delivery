@@ -41,7 +41,7 @@ class _LoginScreenState extends State<LoginScreen> {
     _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((data) async {
       if (data.event == AuthChangeEvent.signedIn && mounted) {
         final user  = data.session?.user;
-        final role  = user?.userMetadata?['role'] as String?;
+        final role  = (user?.appMetadata['role'] ?? user?.userMetadata?['role']) as String?;
         final email = user?.email ?? '';
         final route = role == 'repartidor'      ? '/repartidor'
                     : role == 'repartidor_plus' ? '/rider'
@@ -90,7 +90,7 @@ class _LoginScreenState extends State<LoginScreen> {
           email: _emailController.text.trim(),
           password: _passwordController.text,
         );
-        final role = res.user?.userMetadata?['role'] as String?;
+        final role = (res.user?.appMetadata['role'] ?? res.user?.userMetadata?['role']) as String?;
         if (role == 'admin') {
           await Supabase.instance.client.auth.signOut();
           _showMessage('Usa la app de Administrador para acceder.', isError: true);

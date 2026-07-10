@@ -16,6 +16,7 @@ import 'providers/theme_provider.dart';
 import 'router.dart';
 import 'services/supabase_service.dart';
 import 'services/notification_service.dart';
+import 'services/location_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -46,6 +47,8 @@ void main() async {
         );
         // Crea los buckets de Storage si no existen (fotos de perfil, productos)
         SupabaseService.ensureStorageBuckets();
+        // Carga tarifas de envío desde Supabase (con fallback a valores por defecto)
+        LocationService.loadTarifas();
       }
 
       runApp(const FercadiApp());
