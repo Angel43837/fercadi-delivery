@@ -488,7 +488,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
                   order: filtered[i],
                   isDark: _isDark,
                   onAccept: () async {
-                    await SupabaseService.updateOrderStatus(
+                    await SupabaseService.adminUpdateOrderStatus(
                         filtered[i]['id'] as String, 'accepted');
                     _loadRealOrders();
                   },

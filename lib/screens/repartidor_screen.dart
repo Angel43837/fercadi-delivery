@@ -32,13 +32,8 @@ import '../services/supabase_service.dart';
 import '../services/auth_service.dart';
 import 'rating_dialog.dart';
 
-// Posiciones fijas por restaurante
-const _restaurantInfo = {
-  '1': (name: 'McDonalds',  icon: '🍔', pos: LatLng(19.9020, -100.4510)),
-  '2': (name: 'Starbucks',  icon: '☕', pos: LatLng(19.8980, -100.4460)),
-  '3': (name: 'Sushi Roll', icon: '🍣', pos: LatLng(19.8950, -100.4500)),
-};
-const _defaultClientPos = LatLng(19.8900, -100.4370);
+const _defaultClientPos     = LatLng(19.8900, -100.4370);
+const _defaultRestaurantPos = LatLng(19.8969, -100.4447); // Centro Maravatío
 
 class _Order {
   final String id;
@@ -68,8 +63,8 @@ class _Order {
   });
 
   factory _Order.fromMap(Map<String, dynamic> m) {
-    final rid = m['restaurant_id'] as String? ?? '1';
-    final info = _restaurantInfo[rid] ?? _restaurantInfo['1']!;
+    final restaurantData = m['restaurants'] as Map<String, dynamic>?;
+    final restaurantName = restaurantData?['name'] as String? ?? 'Restaurante';
 
     Map<String, dynamic> delivery = {};
     try { delivery = jsonDecode(m['customer_name'] as String? ?? '{}') as Map<String, dynamic>; } catch (_) {}
@@ -91,9 +86,9 @@ class _Order {
 
     return _Order(
       id: m['id'] as String,
-      restaurantName: info.name,
-      restaurantIcon: info.icon,
-      restaurantPos: info.pos,
+      restaurantName: restaurantName,
+      restaurantIcon: '🍽️',
+      restaurantPos: _defaultRestaurantPos,
       customerName: delivery['name'] as String? ?? 'Cliente',
       customerPhone: delivery['phone'] as String? ?? '—',
       address: delivery['address'] as String? ?? 'Dirección no especificada',
@@ -135,6 +130,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   RealtimeChannel? _ordersChannel;
   Timer? _pollTimer;
   LatLng? _geocodedCustomerPos;
+  bool _geocodeFailed = false;
 
   // Ruta azul/amarilla en el mapa
   List<LatLng> _routePoints = [];
@@ -233,6 +229,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     setState(() {
       _activeOrder = order;
       _geocodedCustomerPos = order.hasExactCoords ? order.customerPos : null;
+      _geocodeFailed = false;
       _pendingOrders.removeWhere((o) => o.id == order.id);
       _step = 0;
       _routePoints = [];
@@ -279,8 +276,15 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
 
   Future<void> _geocodeCustomer(String address) async {
     final result = await LocationService.geocodeAddress(address);
-    if (!mounted || result == null) return;
-    setState(() => _geocodedCustomerPos = LatLng(result.lat, result.lng));
+    if (!mounted) return;
+    if (result == null) {
+      setState(() => _geocodeFailed = true);
+      return;
+    }
+    setState(() {
+      _geocodedCustomerPos = LatLng(result.lat, result.lng);
+      _geocodeFailed = false;
+    });
     try { _mapCtrl.move(_geocodedCustomerPos!, 15.0); } catch (_) {}
   }
 
@@ -765,6 +769,27 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                     ]),
                   ),
                 ),
+              ),
+            ),
+          if (_geocodeFailed)
+            Positioned(
+              bottom: 8, left: 8, right: 8,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFB300),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(children: [
+                  const Icon(Icons.location_off_outlined, color: Colors.black87, size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Dirección no encontrada en el mapa. Usa el texto de la dirección.',
+                      style: const TextStyle(color: Colors.black87, fontSize: 11),
+                    ),
+                  ),
+                ]),
               ),
             ),
           SafeArea(

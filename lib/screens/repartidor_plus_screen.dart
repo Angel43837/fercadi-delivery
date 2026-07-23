@@ -683,9 +683,43 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
     final nombreCapital = _nombre.isNotEmpty
         ? _nombre[0].toUpperCase() + _nombre.substring(1)
         : _nombre;
-    return Stack(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: [
-        // Fila principal: avatar+nombre abajo-izq, coins abajo-der
+        // Fila superior: espaciador + botones
+        Row(
+          children: [
+            const Spacer(),
+            GestureDetector(
+              onTap: () => context.push('/tienda-rider', extra: _coins),
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.storefront_rounded,
+                    color: Colors.white70, size: 18),
+              ),
+            ),
+            const SizedBox(width: 6),
+            GestureDetector(
+              onTap: _logout,
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.logout_rounded,
+                    color: Colors.white70, size: 18),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        // Fila inferior: avatar+nombre izq, coins der
         Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
@@ -716,45 +750,24 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
               ],
             ),
             const Spacer(),
-            // Coins alineados con "Maravatío, Mich."
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Text('Coins',
                     style: TextStyle(color: Colors.white70, fontSize: 11)),
-                Row(
-                  children: [
-                    Text(
-                      _formatMoney(_coins.toDouble()),
-                      style: const TextStyle(
-                          color: _gold,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(width: 4),
-                    const Text('🪙', style: TextStyle(fontSize: 14)),
-                  ],
-                ),
+                Row(children: [
+                  Text(
+                    _formatMoney(_coins.toDouble()),
+                    style: const TextStyle(
+                        color: _gold, fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(width: 4),
+                  const Text('🪙', style: TextStyle(fontSize: 14)),
+                ]),
               ],
             ),
           ],
-        ),
-        // Logout arriba derecha
-        Positioned(
-          top: 0, right: 0,
-          child: GestureDetector(
-            onTap: _logout,
-            child: Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: Colors.white24,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(Icons.logout_rounded,
-                  color: Colors.white70, size: 18),
-            ),
-          ),
         ),
       ],
     );

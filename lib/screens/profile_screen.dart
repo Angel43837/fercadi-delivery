@@ -646,20 +646,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   router.go('/login');
                 },
               ),
-              Divider(height: 1, color: cardDiv, indent: 16, endIndent: 16),
-              ListTile(
-                leading: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(color: Colors.red.withValues(alpha: 0.12), shape: BoxShape.circle),
-                  child: const Icon(Icons.restart_alt, color: Colors.redAccent, size: 20),
-                ),
-                title: const Text('Reiniciar aplicación',
-                    style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600)),
-                subtitle: Text('Borra todos tus datos y empieza de cero',
-                    style: TextStyle(color: cardSub, fontSize: 12)),
-                trailing: Icon(Icons.chevron_right, color: cardChev),
-                onTap: () => _confirmarReinicio(),
-              ),
             ]),
           ),
           const SizedBox(height: 40),
@@ -668,37 +654,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  void _confirmarReinicio() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppConstants.surfaceColor,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('¿Reiniciar todo?',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-        content: Text(
-          'Se borrarán tu sesión, datos de perfil, historial de pedidos y direcciones guardadas.\n\nEsta acción no se puede deshacer.',
-          style: TextStyle(color: Colors.white.withValues(alpha: 0.6), height: 1.5),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text('Cancelar', style: TextStyle(color: Colors.white.withValues(alpha: 0.5))),
-          ),
-          TextButton(
-            onPressed: () async {
-              final router = GoRouter.of(context);
-              Navigator.pop(ctx);
-              await AuthService.clearAll();
-              if (!mounted) return;
-              router.go('/login');
-            },
-            child: const Text('Sí, reiniciar', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
-          ),
-        ],
-      ),
-    );
-  }
 
   InputDecoration _inputDeco(String hint, IconData icon) {
     final isDark = Theme.of(context).brightness == Brightness.dark;

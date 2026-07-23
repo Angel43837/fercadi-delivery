@@ -278,6 +278,22 @@ class AuthService {
     } catch (_) {}
   }
 
+  static Future<void> removeAddress(String address) async {
+    final list = await getSavedAddresses();
+    list.removeWhere((a) => a['address'] == address);
+    final encoded = jsonEncode(list);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(await _userKey(_keySavedAddresses), encoded);
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user != null) {
+        await Supabase.instance.client.auth.updateUser(
+          UserAttributes(data: {'saved_addresses': encoded}),
+        );
+      }
+    } catch (_) {}
+  }
+
   static Future<Map<String, dynamic>?> getDefaultAddress() async {
     final list = await getSavedAddresses();
     return list.isNotEmpty ? list.first : null;
@@ -288,7 +304,7 @@ class AuthService {
   static Future<String> getRestaurantId() async {
     final user = Supabase.instance.client.auth.currentUser;
     if (user != null) {
-      final id = user.userMetadata?['restaurant_id'] as String?;
+      final id = (user.appMetadata['restaurant_id'] ?? user.userMetadata?['restaurant_id']) as String?;
       if (id != null && id.isNotEmpty) return id;
     }
     final prefs = await SharedPreferences.getInstance();

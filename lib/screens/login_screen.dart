@@ -91,12 +91,8 @@ class _LoginScreenState extends State<LoginScreen> {
           password: _passwordController.text,
         );
         final role = (res.user?.appMetadata['role'] ?? res.user?.userMetadata?['role']) as String?;
-        if (role == 'admin') {
-          await Supabase.instance.client.auth.signOut();
-          _showMessage('Usa la app de Administrador para acceder.', isError: true);
-          return;
-        }
-        final route = role == 'repartidor'      ? '/repartidor'
+        final route = role == 'admin'           ? '/admin'
+                    : role == 'repartidor'      ? '/repartidor'
                     : role == 'repartidor_plus' ? '/rider'
                     : role == 'dueno'           ? '/dueno'
                     : '/restaurants';

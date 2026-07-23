@@ -1,16 +1,14 @@
 // tracking_screen.dart
 // Pantalla de seguimiento del pedido en tiempo real.
-// El cliente ve el mapa con Google Maps mostrando:
-//   - Su dirección de entrega (pin de destino)
-//   - La posición actual del repartidor (pin en movimiento)
-// La posición del repartidor se actualiza cada 5 segundos por polling a Supabase.
-// También muestra el estado del pedido y envía notificaciones locales al cambiar.
+// El cliente ve el mapa con flutter_map (OpenStreetMap) mostrando:
+//   - La posición del restaurante y la dirección de entrega
+//   - La posición actual del repartidor (se actualiza cada 4 segundos)
 
 import 'dart:async';
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:go_router/go_router.dart';
+import 'package:latlong2/latlong.dart' as ll;
 import '../core/constants.dart';
 import '../services/location_service.dart';
 import '../services/notification_service.dart';
@@ -18,52 +16,9 @@ import '../services/order_history_service.dart';
 import '../services/supabase_service.dart';
 import 'rating_dialog.dart';
 
-Future<BitmapDescriptor> _buildMarkerIcon(IconData icon, Color bg) async {
-  const size = 48.0;
-  final recorder = ui.PictureRecorder();
-  final canvas = Canvas(recorder);
-
-  // Círculo de fondo
-  canvas.drawCircle(
-    const Offset(size / 2, size / 2),
-    size / 2,
-    Paint()..color = bg,
-  );
-  // Borde blanco
-  canvas.drawCircle(
-    const Offset(size / 2, size / 2),
-    size / 2,
-    Paint()
-      ..color = Colors.white
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 5,
-  );
-
-  // Ícono centrado
-  final tp = TextPainter(textDirection: TextDirection.ltr)
-    ..text = TextSpan(
-      text: String.fromCharCode(icon.codePoint),
-      style: TextStyle(
-        fontSize: size * 0.52,
-        fontFamily: icon.fontFamily,
-        package: icon.fontPackage,
-        color: Colors.white,
-      ),
-    )
-    ..layout();
-  tp.paint(canvas,
-      Offset((size - tp.width) / 2, (size - tp.height) / 2));
-
-  final img = await recorder
-      .endRecording()
-      .toImage(size.toInt(), size.toInt());
-  final bytes = await img.toByteData(format: ui.ImageByteFormat.png);
-  return BitmapDescriptor.bytes(bytes!.buffer.asUint8List());
-}
-
-const _kRestaurantPos = LatLng(19.9020, -100.4510);
-const _kCustomerPos   = LatLng(19.8900, -100.4370);
-const _kCenter        = LatLng(19.8960, -100.4440);
+const _kRestaurantPos = ll.LatLng(19.9020, -100.4510);
+const _kCustomerPos   = ll.LatLng(19.8900, -100.4370);
+const _kCenter        = ll.LatLng(19.8960, -100.4440);
 
 class TrackingScreen extends StatefulWidget {
   final String restaurantName;
@@ -88,26 +43,25 @@ class TrackingScreen extends StatefulWidget {
 }
 
 class _TrackingScreenState extends State<TrackingScreen> {
-  GoogleMapController? _mapCtrl;
+  final _mapCtrl = MapController();
   Timer? _pollTimer;
 
-  LatLng _motoPos     = _kRestaurantPos;
-  LatLng _customerPos = _kCustomerPos;
-
+  ll.LatLng _motoPos     = _kRestaurantPos;
+  ll.LatLng _customerPos = _kCustomerPos;
   String _orderStatus = 'pending';
-
-  BitmapDescriptor? _iconRestaurant;
-  BitmapDescriptor? _iconCustomer;
-  BitmapDescriptor? _iconRepartidor;
+  bool _geocodeFailed = false;
 
   int get _step {
     switch (_orderStatus) {
       case 'accepted':   return 1;
       case 'delivering': return 2;
       case 'delivered':  return 3;
+      case 'cancelled':  return 0;
       default:           return 0;
     }
   }
+
+  bool get _isCancelled => _orderStatus == 'cancelled';
 
   static final _statusData = [
     (icon: Icons.hourglass_top_rounded, label: 'Pedido recibido',              color: const Color(0xFFFFB300)),
@@ -116,36 +70,9 @@ class _TrackingScreenState extends State<TrackingScreen> {
     (icon: Icons.check_circle_rounded,  label: '¡Pedido entregado!',           color: Colors.green),
   ];
 
-  Set<Marker> get _markers {
-    final ms = <Marker>{
-      Marker(
-        markerId: const MarkerId('restaurant'),
-        position: _kRestaurantPos,
-        icon: _iconRestaurant ?? BitmapDescriptor.defaultMarkerWithHue(340),
-        infoWindow: const InfoWindow(title: 'Restaurante'),
-      ),
-      Marker(
-        markerId: const MarkerId('customer'),
-        position: _customerPos,
-        icon: _iconCustomer ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
-        infoWindow: const InfoWindow(title: 'Tu domicilio'),
-      ),
-    };
-    if (_step >= 1) {
-      ms.add(Marker(
-        markerId: const MarkerId('repartidor'),
-        position: _motoPos,
-        icon: _iconRepartidor ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
-        infoWindow: const InfoWindow(title: 'Repartidor'),
-      ));
-    }
-    return ms;
-  }
-
   @override
   void initState() {
     super.initState();
-    _loadIcons();
     _pollStatus();
     _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) {
       _pollStatus();
@@ -154,39 +81,34 @@ class _TrackingScreenState extends State<TrackingScreen> {
     _geocodeAddress();
   }
 
-  Future<void> _loadIcons() async {
-    final r = await _buildMarkerIcon(Icons.storefront_rounded, AppConstants.primaryColor);
-    final c = await _buildMarkerIcon(Icons.home_rounded, const Color(0xFF2196F3));
-    final d = await _buildMarkerIcon(Icons.delivery_dining, const Color(0xFFFF6D00));
-    if (!mounted) return;
-    setState(() {
-      _iconRestaurant  = r;
-      _iconCustomer    = c;
-      _iconRepartidor  = d;
-    });
-  }
-
   Future<void> _pollLocation() async {
     final loc = await SupabaseService.getRepartidorLocation(widget.orderId);
     if (!mounted || loc == null) return;
-    final pos = LatLng(loc.lat, loc.lng);
+    final pos = ll.LatLng(loc.lat, loc.lng);
     setState(() => _motoPos = pos);
-    if (_step >= 1) {
-      _mapCtrl?.animateCamera(CameraUpdate.newLatLngZoom(pos, 15.5));
-    }
+    if (_step >= 1) _mapCtrl.move(pos, 15.5);
   }
 
   Future<void> _geocodeAddress() async {
     if (widget.lat != null && widget.lng != null) {
-      setState(() => _customerPos = LatLng(widget.lat!, widget.lng!));
-      _mapCtrl?.animateCamera(CameraUpdate.newLatLngZoom(_customerPos, 15.0));
+      setState(() => _customerPos = ll.LatLng(widget.lat!, widget.lng!));
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _mapCtrl.move(_customerPos, 15.0);
+      });
       return;
     }
     if (widget.address.trim().isEmpty) return;
     final result = await LocationService.geocodeAddress(widget.address);
-    if (!mounted || result == null) return;
-    setState(() => _customerPos = LatLng(result.lat, result.lng));
-    _mapCtrl?.animateCamera(CameraUpdate.newLatLngZoom(_customerPos, 15.0));
+    if (!mounted) return;
+    if (result == null) {
+      setState(() => _geocodeFailed = true);
+      return;
+    }
+    setState(() {
+      _customerPos = ll.LatLng(result.lat, result.lng);
+      _geocodeFailed = false;
+    });
+    _mapCtrl.move(_customerPos, 15.0);
   }
 
   Future<void> _pollStatus() async {
@@ -197,11 +119,18 @@ class _TrackingScreenState extends State<TrackingScreen> {
       if (s == 'delivering') NotificationService.repartidorEnCamino();
       if (s == 'delivered')  NotificationService.pedidoEntregado();
       setState(() => _orderStatus = s);
+      if (s == 'delivered' || s == 'cancelled') {
+        _pollTimer?.cancel();
+        _pollTimer = null;
+      }
       if (s == 'delivered') {
         await OrderHistoryService.clearActiveOrder();
         if (mounted) {
           await showRatingDialog(context, orderId: widget.orderId, isDriver: false);
         }
+      }
+      if (s == 'cancelled') {
+        await OrderHistoryService.clearActiveOrder();
       }
     } catch (_) {}
   }
@@ -209,7 +138,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
   @override
   void dispose() {
     _pollTimer?.cancel();
-    _mapCtrl?.dispose();
+    _mapCtrl.dispose();
     super.dispose();
   }
 
@@ -247,6 +176,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
   }
 
   String get _eta {
+    if (_isCancelled) return 'El pedido fue cancelado';
     switch (_step) {
       case 0: return 'Esperando confirmación';
       case 1: return 'El repartidor va al restaurante';
@@ -257,20 +187,67 @@ class _TrackingScreenState extends State<TrackingScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final sd = _statusData[_step];
+    final sd = _isCancelled
+        ? (icon: Icons.cancel_outlined, label: 'Pedido cancelado', color: Colors.redAccent)
+        : _statusData[_step];
 
     return Scaffold(
       body: Stack(children: [
-        // ── Mapa Google Maps ──────────────────────────────────────────────────
-        GoogleMap(
-          initialCameraPosition: const CameraPosition(target: _kCenter, zoom: 14.5),
-          onMapCreated: (ctrl) => setState(() => _mapCtrl = ctrl),
-          markers: _markers,
-          zoomControlsEnabled: false,
-          mapToolbarEnabled: false,
-          myLocationButtonEnabled: false,
-          compassEnabled: false,
+        // ── Mapa OpenStreetMap (flutter_map — funciona en web y móvil) ──────────
+        FlutterMap(
+          mapController: _mapCtrl,
+          options: const MapOptions(initialCenter: _kCenter, initialZoom: 14.5),
+          children: [
+            TileLayer(
+              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+              userAgentPackageName: 'com.fercadi.app',
+            ),
+            MarkerLayer(markers: [
+              Marker(
+                point: _kRestaurantPos,
+                child: const _MapPin(icon: Icons.storefront_rounded, color: AppConstants.primaryColor),
+              ),
+              // Solo mostrar pin del cliente si tenemos coordenadas exactas
+              if (!_geocodeFailed)
+                Marker(
+                  point: _customerPos,
+                  child: const _MapPin(icon: Icons.home_rounded, color: Color(0xFF2196F3)),
+                ),
+              if (_step >= 1)
+                Marker(
+                  point: _motoPos,
+                  child: _PulsingPin(color: const Color(0xFFFF6D00)),
+                ),
+            ]),
+          ],
         ),
+
+        // ── Aviso dirección sin coordenadas exactas ────────────────────────────
+        if (_geocodeFailed)
+          Positioned(
+            bottom: 210,
+            left: 16,
+            right: 16,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppConstants.surfaceColor,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.4), blurRadius: 10)],
+              ),
+              child: Row(children: [
+                const Icon(Icons.local_shipping_outlined, color: AppConstants.primaryColor, size: 20),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text(
+                    'Tu repartidor llevará el pedido usando la dirección que escribiste.',
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                ),
+              ]),
+            ),
+          ),
 
         // ── Tarjeta de estado (arriba) ────────────────────────────────────────
         SafeArea(
@@ -310,160 +287,240 @@ class _TrackingScreenState extends State<TrackingScreen> {
                     ],
                   ),
                 ),
-                if (_step == 1) _PulsingDot(color: sd.color),
+                if (_step >= 1 && _step < 3)
+                  _PulsingDot(color: sd.color),
               ]),
             ),
           ),
         ),
 
-        // ── Tarjeta del pedido (abajo) ────────────────────────────────────────
-        Positioned(
-          left: 0, right: 0, bottom: 0,
+        // ── Panel inferior ────────────────────────────────────────────────────
+        Align(
+          alignment: Alignment.bottomCenter,
           child: Container(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+            margin: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
             decoration: BoxDecoration(
               color: AppConstants.surfaceColor,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+              borderRadius: BorderRadius.circular(24),
               boxShadow: [
-                BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.5),
-                    blurRadius: 16,
-                    offset: const Offset(0, -4)),
+                BoxShadow(color: Colors.black.withValues(alpha: 0.5), blurRadius: 20),
               ],
             ),
-            child: SafeArea(
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Container(
+                width: 36, height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Row(children: [
                 Container(
-                  width: 36, height: 4,
+                  padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(2),
+                    color: AppConstants.primaryColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
                   ),
+                  child: const Icon(Icons.storefront_outlined,
+                      color: AppConstants.primaryColor, size: 22),
                 ),
-                const SizedBox(height: 14),
-                Row(children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: AppConstants.primaryColor.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(Icons.storefront_outlined,
-                        color: AppConstants.primaryColor, size: 22),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(widget.restaurantName,
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 15)),
-                        const SizedBox(height: 2),
-                        Text(widget.address,
-                            style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.5), fontSize: 12),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis),
-                      ],
-                    ),
-                  ),
-                  Text('\$${widget.total.toStringAsFixed(0)} MXN',
-                      style: const TextStyle(
-                          color: AppConstants.primaryColor,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16)),
-                ]),
-                const SizedBox(height: 14),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: LinearProgressIndicator(
-                    value: _step / 3,
-                    backgroundColor: AppConstants.surface2Color,
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                      _step == 3 ? Colors.green : AppConstants.primaryColor,
-                    ),
-                    minHeight: 6,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Row(
-                  children: List.generate(_statusData.length, (i) {
-                    final done   = i < _step;
-                    final active = i == _step;
-                    final sd     = _statusData[i];
-                    final color  = done ? Colors.green : active ? sd.color : Colors.white.withValues(alpha: 0.2);
-                    return Expanded(
-                      child: Column(children: [
-                        Container(
-                          width: 30, height: 30,
-                          decoration: BoxDecoration(
-                            color: (done || active)
-                                ? color.withValues(alpha: 0.15)
-                                : AppConstants.surface2Color,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                                color: (done || active) ? color : Colors.transparent,
-                                width: 1.5),
-                          ),
-                          child: Icon(done ? Icons.check : sd.icon, color: color, size: 14),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          i == 0 ? 'Recibido' : i == 1 ? 'Preparando' : i == 2 ? 'En camino' : 'Entregado',
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(widget.restaurantName,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15)),
+                      const SizedBox(height: 2),
+                      Text(widget.address,
                           style: TextStyle(
-                              fontSize: 9,
-                              color: (done || active)
-                                  ? Colors.white.withValues(alpha: 0.7)
-                                  : Colors.white.withValues(alpha: 0.2)),
-                          textAlign: TextAlign.center,
-                        ),
-                      ]),
-                    );
-                  }),
+                              color: Colors.white.withValues(alpha: 0.5), fontSize: 12),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis),
+                    ],
+                  ),
                 ),
-                const SizedBox(height: 10),
-                if (_step == 0) ...[
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: _confirmarCancelacion,
-                      icon: const Icon(Icons.cancel_outlined, size: 18, color: Colors.redAccent),
-                      label: const Text('Cancelar pedido',
-                          style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600)),
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: Colors.redAccent, width: 1.2),
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                ],
-                if (_step == 3) ...[
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: () => context.go('/restaurants'),
-                      icon: const Icon(Icons.storefront),
-                      label: const Text('Pedir de nuevo',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                ],
+                Text('\$${widget.total.toStringAsFixed(0)} MXN',
+                    style: const TextStyle(
+                        color: AppConstants.primaryColor,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16)),
               ]),
-            ),
+              const SizedBox(height: 14),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: _step / 3,
+                  backgroundColor: AppConstants.surface2Color,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    _step == 3 ? Colors.green : AppConstants.primaryColor,
+                  ),
+                  minHeight: 6,
+                ),
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: List.generate(_statusData.length, (i) {
+                  final done   = i < _step;
+                  final active = i == _step;
+                  final sd     = _statusData[i];
+                  final color  = done ? Colors.green : active ? sd.color : Colors.white.withValues(alpha: 0.2);
+                  return Expanded(
+                    child: Column(children: [
+                      Container(
+                        width: 30, height: 30,
+                        decoration: BoxDecoration(
+                          color: (done || active)
+                              ? color.withValues(alpha: 0.15)
+                              : AppConstants.surface2Color,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                              color: (done || active) ? color : Colors.transparent,
+                              width: 1.5),
+                        ),
+                        child: Icon(done ? Icons.check : sd.icon, color: color, size: 14),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        i == 0 ? 'Recibido' : i == 1 ? 'Preparando' : i == 2 ? 'En camino' : 'Entregado',
+                        style: TextStyle(
+                            fontSize: 9,
+                            color: (done || active)
+                                ? Colors.white.withValues(alpha: 0.7)
+                                : Colors.white.withValues(alpha: 0.2)),
+                        textAlign: TextAlign.center,
+                      ),
+                    ]),
+                  );
+                }),
+              ),
+              const SizedBox(height: 10),
+              if (_isCancelled) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () => context.go('/restaurants'),
+                    icon: const Icon(Icons.storefront),
+                    label: const Text('Pedir de nuevo',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppConstants.primaryColor,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 4),
+              ] else if (_step == 0) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _confirmarCancelacion,
+                    icon: const Icon(Icons.cancel_outlined, size: 18, color: Colors.redAccent),
+                    label: const Text('Cancelar pedido',
+                        style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600)),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Colors.redAccent, width: 1.2),
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 4),
+              ],
+              if (!_isCancelled && _step == 3) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () => context.go('/restaurants'),
+                    icon: const Icon(Icons.storefront),
+                    label: const Text('Pedir de nuevo',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 4),
+              ],
+            ]),
           ),
         ),
       ]),
+    );
+  }
+}
+
+// ── Pin del mapa ──────────────────────────────────────────────────────────────
+class _MapPin extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  const _MapPin({required this.icon, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 40, height: 40,
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white, width: 3),
+        boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 6)],
+      ),
+      child: Icon(icon, color: Colors.white, size: 20),
+    );
+  }
+}
+
+// ── Pin pulsante para el repartidor ──────────────────────────────────────────
+class _PulsingPin extends StatefulWidget {
+  final Color color;
+  const _PulsingPin({required this.color});
+
+  @override
+  State<_PulsingPin> createState() => _PulsingPinState();
+}
+
+class _PulsingPinState extends State<_PulsingPin> with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _scale;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 800))
+      ..repeat(reverse: true);
+    _scale = Tween(begin: 0.85, end: 1.15).animate(
+        CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut));
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ScaleTransition(
+      scale: _scale,
+      child: Container(
+        width: 44, height: 44,
+        decoration: BoxDecoration(
+          color: widget.color,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 3),
+          boxShadow: [BoxShadow(color: widget.color.withValues(alpha: 0.5), blurRadius: 10, spreadRadius: 2)],
+        ),
+        child: const Icon(Icons.delivery_dining, color: Colors.white, size: 22),
+      ),
     );
   }
 }

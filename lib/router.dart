@@ -30,6 +30,9 @@ import 'screens/flota_screen.dart';
 import 'screens/flota_login_screen.dart';
 import 'screens/repartidor_plus_screen.dart';
 import 'screens/registro_rider_plus_screen.dart';
+import 'screens/admin_screen.dart';
+import 'screens/admin_login_screen.dart';
+import 'screens/tienda_rider_screen.dart';
 
 // Notifica a GoRouter cada vez que el estado de autenticación de Supabase cambia.
 // Con refreshListenable el router re-evalúa el redirect al restaurar la sesión del
@@ -73,7 +76,7 @@ final appRouter = GoRouter(
     const open = {
       '/', '/login', '/moto', '/repartidor-login', '/dueno-login',
       '/restaurante', '/registro-repartidor', '/registro-rider',
-      '/registro-restaurante', '/flota-login',
+      '/registro-restaurante', '/flota-login', '/admin-login',
     };
     if (open.contains(loc)) return null;
 
@@ -132,7 +135,13 @@ final appRouter = GoRouter(
     GoRoute(path: '/registro-rider', builder: (_, _) => const RegistroRiderPlusScreen()),
     GoRoute(path: '/flota-login',  builder: (_, _) => const FlotaLoginScreen()),
     GoRoute(path: '/flota',        builder: (_, _) => const FlotaScreen()),
+    GoRoute(path: '/admin',        builder: (_, _) => const AdminScreen()),
+    GoRoute(path: '/admin-login',  builder: (_, _) => const AdminLoginScreen()),
     GoRoute(path: '/registro-restaurante', builder: (_, _) => const RegistroRestauranteScreen()),
+    GoRoute(
+      path: '/tienda-rider',
+      builder: (context, state) => TiendaRiderScreen(currentCoins: (state.extra as int?) ?? 0),
+    ),
     GoRoute(
       path: '/tracking',
       builder: (context, state) {

@@ -773,6 +773,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 250),
+      clipBehavior: Clip.antiAlias,
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -839,7 +840,6 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: Colors.grey.shade200,
-                  border: Border.all(color: Colors.grey.shade300),
                 ),
                 clipBehavior: Clip.hardEdge,
                 child: r.imageUrl != null && r.imageUrl!.isNotEmpty
@@ -882,7 +882,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
         if (isExpanded)
           Container(
             decoration: const BoxDecoration(
-              color: Colors.white,
+              color: Color(0xFFF2F2F2),
               borderRadius: BorderRadius.only(
                 bottomLeft: Radius.circular(12),
                 bottomRight: Radius.circular(12),
@@ -1140,25 +1140,19 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
       Color accent, bool isExpanded, int qty, {bool isPromo = false, int? bannerDiscount}) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final useOrange = isPromo || isDark || bannerDiscount != null;
-    final tileColor = useOrange ? const Color(0xFFF4510C) : const Color(0xFFF2F2F2);
+    final tileColor = useOrange ? const Color(0xFFF4510C) : Colors.white;
     return AnimatedContainer(
       duration: const Duration(milliseconds: 220),
       clipBehavior: Clip.antiAlias,
-      margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
       decoration: BoxDecoration(
         color: tileColor,
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.18),
-            offset: const Offset(0, 4),
-            blurRadius: 10,
-            spreadRadius: 1,
-          ),
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            offset: const Offset(0, 1),
-            blurRadius: 3,
+            color: Colors.black.withValues(alpha: 0.12),
+            offset: const Offset(0, 2),
+            blurRadius: 8,
           ),
         ],
         border: null,

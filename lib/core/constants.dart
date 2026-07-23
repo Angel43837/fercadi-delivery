@@ -6,6 +6,9 @@ class AppConstants {
   // Service role key — Settings > API > service_role en tu dashboard de Supabase
   static const String supabaseServiceRoleKey = '';
 
+  // Google Maps — usada tanto para el SDK de mapas como para Geocoding API
+  static const String googleMapsApiKey = 'AIzaSyDGxOWhjgxZsHjsgDtZdMlJ7q2OYzdYHDE';
+
   // Stripe — obtén tus claves en dashboard.stripe.com > Developers > API Keys
   static const String stripePublishableKey = 'pk_test_51ThAd2JlrTraAKwstUDr3pynDCZiLz88mldbch47FD6Fa4XVMjPKl9CGvdbAGkE4UG85mxwkrXXgIMdxF2SpbmlV00e1EnYwvc';
   // La clave secreta NUNCA va aquí — va en la Supabase Edge Function como variable de entorno

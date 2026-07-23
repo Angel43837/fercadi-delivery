@@ -9,7 +9,6 @@ import '../models/restaurant.dart';
 import '../models/category.dart';
 import '../models/product.dart';
 import '../models/restaurant_banner.dart';
-import 'auth_service.dart';
 
 // supabase_service.dart
 // Capa de acceso a datos — conecta la app con la base de datos de Supabase.
@@ -146,25 +145,6 @@ class SupabaseService {
     } else {
       final data = await _client.from('restaurants').select().eq('is_open', true);
       list = (data as List).map((e) => Restaurant.fromJson(e)).toList();
-    }
-
-    // Aplica la configuración guardada del dueño al primer restaurante
-    if (list.isNotEmpty) {
-      final s = await AuthService.getRestaurantSettings();
-      if (s['name']!.isNotEmpty) {
-        final r = list[0];
-        list[0] = Restaurant(
-          id: r.id,
-          name: s['name']!,
-          description: s['desc']!.isNotEmpty ? s['desc']! : r.description,
-          address: s['address']!.isNotEmpty ? s['address']! : r.address,
-          imageUrl: s['photo']!.isNotEmpty ? s['photo']! : r.imageUrl,
-          lat: r.lat,
-          lng: r.lng,
-          rating: r.rating,
-          isOpen: r.isOpen,
-        );
-      }
     }
 
     return list;

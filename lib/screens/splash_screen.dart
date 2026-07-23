@@ -62,45 +62,38 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   Future<void> _navigate() async {
-    final results = await Future.wait([
-      Future.delayed(const Duration(milliseconds: 1500)),
-      AuthService.getSession(),
-    ]);
+    await Future.delayed(const Duration(milliseconds: 1500));
     if (!mounted) return;
-    final session = results[1] as dynamic;
 
-    if (session == null) { context.go('/login'); return; }
-
-    // La sesión guarda la ruta directamente (ej. '/dueno', '/repartidor')
-    final candidateRoute = session.role;
-
-    // Dueño, repartidor y flota tienen login propio — nunca llegan aquí por SharedPreferences.
-    // Si quedó un valor viejo, limpiarlo y mandar al login del cliente.
-    if (candidateRoute == '/dueno' ||
-        candidateRoute == '/repartidor' ||
-        candidateRoute == '/rider' ||
-        candidateRoute == '/flota') {
-      await AuthService.clearSession();
+    if (SupabaseService.useMock) {
+      final session = await AuthService.getSession();
       if (!mounted) return;
+      context.go(session?.role ?? '/login');
+      return;
+    }
+
+    // Supabase es la fuente de verdad — siempre verificar la sesión activa
+    final supabaseSession = await _waitForSupabaseSession();
+    if (!mounted) return;
+
+    if (supabaseSession == null) {
       context.go('/login');
       return;
     }
 
-    if (!SupabaseService.useMock && candidateRoute == '/admin') {
-      final supabaseSession = await _waitForSupabaseSession();
-      if (!mounted) return;
-      if (supabaseSession == null) {
-        await AuthService.clearSession();
-        if (!mounted) return;
-        context.go('/login');
-        return;
-      }
-      final liveRole = (supabaseSession.user.appMetadata['role'] ?? supabaseSession.user.userMetadata?['role']) as String?;
-      if (liveRole == 'admin') { context.go('/admin'); return; }
-      context.go('/login');
-      return;
-    }
-    context.go(candidateRoute);
+    final role = (supabaseSession.user.appMetadata['role'] ??
+                  supabaseSession.user.userMetadata?['role']) as String?;
+
+    final route = switch (role) {
+      'dueno'          => '/dueno',
+      'admin'          => '/admin',
+      'repartidor'     => '/repartidor',
+      'repartidor_plus'=> '/rider',
+      'jefe_flota'     => '/flota',
+      _                => '/restaurants',
+    };
+
+    context.go(route);
   }
 
   @override

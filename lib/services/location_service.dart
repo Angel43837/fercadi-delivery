@@ -4,9 +4,12 @@
 // y convierte coordenadas a direcciones de texto (geocoding inverso).
 
 import 'dart:convert';
-import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:geocoding/geocoding.dart' as geo;
 import 'package:geolocator/geolocator.dart';
+import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../core/constants.dart';
 
 class LocationService {
   // Centro del municipio de Maravatío, Michoacán
@@ -86,19 +89,53 @@ class LocationService {
   // Bounding box de Maravatío: minLon,maxLat,maxLon,minLat
   static const _viewbox = '-100.50,19.95,-100.40,19.85';
 
-  // Convierte coordenadas GPS (lat, lng) a una dirección de texto legible
-  // Usa la API de Nominatim (OpenStreetMap) — gratuita, no requiere API key
+  // Convierte coordenadas GPS (lat, lng) a una dirección de texto legible.
+  // Intenta Google Geocoding primero (más preciso para México), luego Nominatim.
   static Future<String?> reverseGeocode(double lat, double lng) async {
+    return await _googleReverseGeocode(lat, lng) ??
+           await _nominatimReverseGeocode(lat, lng);
+  }
+
+  static Future<String?> _googleReverseGeocode(double lat, double lng) async {
+    try {
+      final uri = Uri.parse(
+          'https://maps.googleapis.com/maps/api/geocode/json'
+          '?latlng=$lat,$lng&key=${AppConstants.googleMapsApiKey}&language=es&result_type=street_address|route');
+      final res = await http.get(uri).timeout(const Duration(seconds: 8));
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      if (data['status'] != 'OK') return null;
+      final results = data['results'] as List?;
+      if (results == null || results.isEmpty) return null;
+      final components = (results[0]['address_components'] as List)
+          .cast<Map<String, dynamic>>();
+      String? streetNumber, route, sublocality;
+      for (final c in components) {
+        final types = (c['types'] as List).cast<String>();
+        if (types.contains('street_number')) streetNumber = c['long_name'] as String?;
+        if (types.contains('route'))         route        = c['long_name'] as String?;
+        if (types.contains('sublocality_level_1') || types.contains('neighborhood')) {
+          sublocality = c['long_name'] as String?;
+        }
+      }
+      if (route == null) return null;
+      final street = streetNumber != null ? '$route #$streetNumber' : route;
+      final parts = <String>[
+        street,
+        if (sublocality != null) sublocality,
+      ];
+      return parts.join(', ');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<String?> _nominatimReverseGeocode(double lat, double lng) async {
     try {
       final uri = Uri.parse(
           'https://nominatim.openstreetmap.org/reverse?lat=$lat&lon=$lng&format=json');
-      final client = HttpClient();
-      final req = await client.getUrl(uri)
-        ..headers.set('User-Agent', 'FercadiDeliveryApp/1.0 (contact@fercadi.com)');
-      final res = await req.close();
-      final body = await res.transform(utf8.decoder).join();
-      client.close();
-      final data = jsonDecode(body) as Map<String, dynamic>;
+      final res = await http.get(uri,
+          headers: {'User-Agent': 'FercadiDeliveryApp/1.0 (contact@fercadi.com)'});
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
       final addr = data['address'] as Map<String, dynamic>?;
       if (addr == null) return data['display_name'] as String?;
       final parts = <String>[];
@@ -113,51 +150,110 @@ class LocationService {
     }
   }
 
-  // Convierte una dirección de texto a coordenadas GPS
-  // Intenta varias formas de la dirección para maximizar resultados
+  // Convierte una dirección de texto a coordenadas GPS.
+  // En móvil usa el geocoder nativo del dispositivo (Android = datos de Google,
+  // sin API key ni billing). En web usa Google API → Nominatim como respaldo.
   static Future<({double lat, double lng})?> geocodeAddress(String address) async {
-    // Intentar varias formas de la query, de más específica a más genérica
-    final queries = _buildQueries(address);
-    for (final q in queries) {
-      final result = await _nominatim(q, bounded: true);
+    // 1. Geocoder nativo del dispositivo (solo móvil)
+    if (!kIsWeb) {
+      final result = await _deviceGeocode(address);
       if (result != null) return result;
     }
-    // Último recurso: sin bounded (acepta cualquier ciudad de México)
-    final result = await _nominatim(queries.first, bounded: false);
-    return result;
+
+    // 2. Google Geocoding API HTTP (web, o respaldo si el geocoder nativo falla)
+    final googleResult = await _googleGeocode(address);
+    if (googleResult != null) return googleResult;
+
+    // 3. Nominatim con validación de palabras clave (último recurso)
+    final queries = _buildQueries(address);
+    final words   = _significantWords(address);
+    for (final q in queries) {
+      final result = await _nominatim(q, bounded: true, validate: words);
+      if (result != null) return result;
+    }
+    return null;
   }
 
+  static Future<({double lat, double lng})?> _deviceGeocode(String address) async {
+    try {
+      final fullAddress = '$address, Maravatío, Michoacán, México';
+      var locations = await geo.locationFromAddress(fullAddress);
+      if (locations.isEmpty) {
+        locations = await geo.locationFromAddress(address);
+      }
+      if (locations.isEmpty) return null;
+      return (lat: locations.first.latitude, lng: locations.first.longitude);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<({double lat, double lng})?> _googleGeocode(String address) async {
+    try {
+      final query = Uri.encodeComponent('$address, Maravatío, Michoacán, México');
+      final uri = Uri.parse(
+          'https://maps.googleapis.com/maps/api/geocode/json'
+          '?address=$query&key=${AppConstants.googleMapsApiKey}');
+      final res = await http.get(uri).timeout(const Duration(seconds: 8));
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      if (data['status'] != 'OK') return null;
+      final results = data['results'] as List;
+      if (results.isEmpty) return null;
+      final loc = (results[0]['geometry'] as Map)['location'] as Map;
+      return (lat: (loc['lat'] as num).toDouble(), lng: (loc['lng'] as num).toDouble());
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Palabras muy genéricas que aparecen en cualquier calle y no sirven para validar
+  static const _stopWords = {
+    'calle', 'avenida', 'colonia', 'entre', 'casa', 'numero', 'bloc', 'lote',
+  };
+
+  // Devuelve las palabras significativas de la dirección (4+ letras, no stop words)
+  static List<String> _significantWords(String address) =>
+      address
+          .toLowerCase()
+          .replaceAll(RegExp(r'[#,\.\d]'), ' ')
+          .split(RegExp(r'\s+'))
+          .where((w) => w.length > 3 && !_stopWords.contains(w))
+          .toList();
+
   static List<String> _buildQueries(String address) {
-    // Normalizar: "Clara Cordova Moran #16 Victoria" → variantes
     final base = '$address, Maravatío, Michoacán, México';
-    // Intentar también con "Colonia" explícito
-    final withCol = address.contains('Colonia')
+    final withCol = address.toLowerCase().contains('colonia')
         ? base
         : '${address.replaceAll(RegExp(r'\s+(\w+)$'), '')}, Colonia ${address.split(' ').last}, Maravatío, Michoacán, México';
-    // Sin número de casa
     final sinNum = address.replaceAll(RegExp(r'#?\d+'), '').trim();
     final sinNumQuery = '$sinNum, Maravatío, Michoacán, México';
     return [base, withCol, sinNumQuery];
   }
 
-  static Future<({double lat, double lng})?> _nominatim(String query, {required bool bounded}) async {
+  static Future<({double lat, double lng})?> _nominatim(
+      String query, {required bool bounded, List<String> validate = const []}) async {
     try {
       final q = Uri.encodeComponent(query);
       final viewboxParam = bounded ? '&viewbox=$_viewbox&bounded=1' : '';
       final uri = Uri.parse(
-          'https://nominatim.openstreetmap.org/search?q=$q&format=json&limit=1&countrycodes=mx$viewboxParam');
-      final client = HttpClient();
-      final req = await client.getUrl(uri)
-        ..headers.set('User-Agent', 'FercadiDeliveryApp/1.0 (contact@fercadi.com)');
-      final res = await req.close();
-      final body = await res.transform(utf8.decoder).join();
-      client.close();
-      final results = jsonDecode(body) as List;
-      if (results.isEmpty) return null;
-      return (
-        lat: double.parse(results[0]['lat'] as String),
-        lng: double.parse(results[0]['lon'] as String),
-      );
+          'https://nominatim.openstreetmap.org/search?q=$q&format=json&limit=3&countrycodes=mx$viewboxParam');
+      final res = await http.get(uri,
+          headers: {'User-Agent': 'FercadiDeliveryApp/1.0 (contact@fercadi.com)'});
+      final results = jsonDecode(res.body) as List;
+      for (final r in results) {
+        // Si tenemos palabras clave de la dirección, verificar que al menos una
+        // aparezca en el resultado de Nominatim. Evita aceptar calles incorrectas.
+        if (validate.isNotEmpty) {
+          final display = (r['display_name'] as String? ?? '').toLowerCase();
+          final matches = validate.any((w) => display.contains(w));
+          if (!matches) continue;
+        }
+        return (
+          lat: double.parse(r['lat'] as String),
+          lng: double.parse(r['lon'] as String),
+        );
+      }
+      return null;
     } catch (_) {
       return null;
     }

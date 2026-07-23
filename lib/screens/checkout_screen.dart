@@ -41,6 +41,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
   final _addressCtrl = TextEditingController();
+  final _addressFocus = FocusNode();
   final _refCtrl = TextEditingController();
   _Pay _payment = _Pay.cash;
   bool _loading = false;
@@ -87,18 +88,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   Future<void> _loadSavedAddresses() async {
     final addresses = await AuthService.getSavedAddresses();
     if (!mounted) return;
-    setState(() {
-      _savedAddresses = addresses;
-      if (addresses.isNotEmpty && _addressCtrl.text.isEmpty) {
-        final def = addresses.first;
-        _addressCtrl.text = def['address'] as String? ?? '';
-        final lat = def['lat'];
-        final lng = def['lng'];
-        if (lat != null && lng != null) {
-          _selectedPos = LatLng((lat as num).toDouble(), (lng as num).toDouble());
-        }
-      }
-    });
+    setState(() => _savedAddresses = addresses);
   }
 
   @override
@@ -107,18 +97,55 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     _nameCtrl.dispose();
     _phoneCtrl.dispose();
     _addressCtrl.dispose();
+    _addressFocus.dispose();
     _refCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _openMapPicker() async {
-    final result = await Navigator.push<LatLng>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => MapPickerScreen(initial: _selectedPos),
-      ),
-    );
-    if (result != null) setState(() => _selectedPos = result);
+  // Detecta GPS y luego abre el mapa con el pin en la posición detectada (móvil)
+  // En web solo guarda las coordenadas GPS
+  Future<void> _locateAndPick() async {
+    // Capturar antes de cualquier await para evitar uso cross-async de context
+    final nav = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _loading = true);
+    try {
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+        messenger.showSnackBar(const SnackBar(
+          content: Text('Permite el acceso a tu ubicación'),
+          backgroundColor: Colors.orange,
+        ));
+        return;
+      }
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.medium),
+      );
+      final gpsLatLng = LatLng(pos.latitude, pos.longitude);
+      setState(() => _loading = false);
+      final result = await nav.push<LatLng>(
+        MaterialPageRoute(builder: (_) => MapPickerScreen(initial: gpsLatLng)),
+      );
+      if (result != null && mounted) {
+        setState(() => _selectedPos = result);
+        final addr = await LocationService.reverseGeocode(result.latitude, result.longitude);
+        if (addr != null && mounted) {
+          setState(() => _addressCtrl.text = addr);
+          _addressCtrl.selection = TextSelection(baseOffset: 0, extentOffset: addr.length);
+          _addressFocus.requestFocus();
+        }
+      }
+      return;
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('No se pudo detectar la ubicación: $e'), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   void _showLoginRequired() {
@@ -526,6 +553,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             const SizedBox(height: 12),
             _FormField(
               controller: _addressCtrl,
+              focusNode: _addressFocus,
               label: 'Dirección de entrega',
               hint: 'Calle, número, colonia — Maravatío',
               icon: Icons.location_on_outlined,
@@ -543,6 +571,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     final label = a['label'] as String? ?? 'Dirección';
                     final addr  = a['address'] as String? ?? '';
                     final isSelected = _addressCtrl.text == addr;
+                    final chipColor = isSelected ? AppConstants.primaryColor : chipBorder;
+                    final labelColor = isSelected
+                        ? AppConstants.primaryColor
+                        : Colors.white.withValues(alpha: 0.85);
                     return GestureDetector(
                       onTap: () {
                         final lat = a['lat'];
@@ -556,26 +588,39 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       },
                       child: Container(
                         margin: const EdgeInsets.only(right: 8),
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                        padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
                         decoration: BoxDecoration(
                           color: isSelected ? AppConstants.primaryColor.withValues(alpha: 0.15) : chipUnsel,
                           borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: isSelected ? AppConstants.primaryColor : chipBorder,
-                          ),
+                          border: Border.all(color: chipColor),
                         ),
                         child: Row(mainAxisSize: MainAxisSize.min, children: [
                           Icon(
-                            label == 'Casa' ? Icons.home_outlined : label == 'Trabajo' ? Icons.work_outline : Icons.location_on_outlined,
-                            size: 14,
-                            color: isSelected ? AppConstants.primaryColor : Colors.white.withValues(alpha: 0.7),
+                            label == 'Casa' ? Icons.home_outlined
+                                : label == 'Trabajo' ? Icons.work_outline
+                                : Icons.location_on_outlined,
+                            size: 14, color: labelColor,
                           ),
                           const SizedBox(width: 4),
                           Text(label, style: TextStyle(
-                            color: isSelected ? AppConstants.primaryColor : Colors.white.withValues(alpha: 0.85),
-                            fontSize: 12,
+                            color: labelColor, fontSize: 12,
                             fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
                           )),
+                          const SizedBox(width: 4),
+                          GestureDetector(
+                            onTap: () async {
+                              await AuthService.removeAddress(addr);
+                              if (!mounted) return;
+                              setState(() {
+                                _savedAddresses.removeWhere((x) => x['address'] == addr);
+                                if (_addressCtrl.text == addr) {
+                                  _addressCtrl.clear();
+                                  _selectedPos = null;
+                                }
+                              });
+                            },
+                            child: Icon(Icons.close, size: 14, color: labelColor),
+                          ),
                         ]),
                       ),
                     );
@@ -584,37 +629,64 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               ),
             ],
             const SizedBox(height: 10),
-            GestureDetector(
-              onTap: _openMapPicker,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                decoration: BoxDecoration(
-                  color: cardBg,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: _selectedPos != null ? Colors.green.withValues(alpha: 0.6) : AppConstants.primaryColor.withValues(alpha: 0.4),
-                    width: 1.5,
-                  ),
-                ),
-                child: Row(children: [
-                  Icon(
-                    _selectedPos != null ? Icons.check_circle : Icons.map_outlined,
-                    color: _selectedPos != null ? Colors.green : AppConstants.primaryColor,
-                    size: 20,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      _selectedPos != null ? 'Ubicación marcada en el mapa ✓' : 'Marcar mi casa en el mapa (recomendado)',
-                      style: TextStyle(
-                        color: _selectedPos != null ? Colors.green : textSub,
-                        fontSize: 14,
+            SizedBox(
+              width: double.infinity,
+              child: _selectedPos != null
+                  ? OutlinedButton.icon(
+                      onPressed: () async {
+                        final nav = Navigator.of(context);
+                        final result = await nav.push<LatLng>(
+                          MaterialPageRoute(builder: (_) => MapPickerScreen(initial: _selectedPos)),
+                        );
+                        if (result != null && mounted) {
+                          setState(() => _selectedPos = result);
+                          final addr = await LocationService.reverseGeocode(result.latitude, result.longitude);
+                          if (addr != null && mounted) {
+                            setState(() => _addressCtrl.text = addr);
+                            _addressCtrl.selection = TextSelection(baseOffset: 0, extentOffset: addr.length);
+                            _addressFocus.requestFocus();
+                          }
+                        }
+                      },
+                      icon: const Icon(Icons.my_location, size: 16, color: Colors.green),
+                      label: const Text('GPS guardado · Cambiar pin',
+                          style: TextStyle(color: Colors.green, fontSize: 13)),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Colors.green, width: 1),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    )
+                  : Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppConstants.primaryColor.withValues(alpha: 0.55),
+                            blurRadius: 16,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      child: ElevatedButton.icon(
+                        onPressed: _loading ? null : _locateAndPick,
+                        icon: _loading
+                            ? const SizedBox(
+                                width: 18, height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                            : const Icon(Icons.pin_drop_rounded, size: 20),
+                        label: const Text('Detectar mi ubicación',
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppConstants.primaryColor,
+                          foregroundColor: Colors.white,
+                          disabledBackgroundColor: AppConstants.primaryColor.withValues(alpha: 0.5),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                          elevation: 4,
+                        ),
                       ),
                     ),
-                  ),
-                  Icon(Icons.chevron_right, color: textSub, size: 20),
-                ]),
-              ),
             ),
             const SizedBox(height: 12),
             _FormField(
@@ -747,6 +819,7 @@ class _OrderItemRow extends StatelessWidget {
 
 class _FormField extends StatelessWidget {
   final TextEditingController controller;
+  final FocusNode? focusNode;
   final String label;
   final String hint;
   final IconData icon;
@@ -758,6 +831,7 @@ class _FormField extends StatelessWidget {
 
   const _FormField({
     required this.controller,
+    this.focusNode,
     required this.label,
     required this.hint,
     required this.icon,
@@ -774,6 +848,7 @@ class _FormField extends StatelessWidget {
     final labelColor = isDark ? Colors.white.withValues(alpha: 0.5) : Colors.black54;
     return TextFormField(
       controller: controller,
+      focusNode: focusNode,
       keyboardType: keyboardType,
       validator: validator,
       style: TextStyle(color: textMain),
