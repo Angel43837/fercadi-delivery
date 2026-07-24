@@ -20,6 +20,10 @@ import 'rating_dialog.dart';
 
 const _defaultRestaurantPos = LatLng(19.8969, -100.4447); // Centro Maravatío
 
+// Mismos tonos naranja de GOGO Riders (repartidor_plus_screen.dart)
+const _bg   = Color(0xFFFF5722);
+const _card = Color(0xFFE64A19);
+
 class EntregaActivaScreen extends StatefulWidget {
   final String orderId;
   final String restaurantName;
@@ -63,7 +67,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
   static const _steps = [
     (icon: Icons.store,           label: 'Ve al restaurante',    color: Color(0xFFFFB300)),
     (icon: Icons.shopping_bag,    label: 'Recoge el pedido',     color: Color(0xFF7C4DFF)),
-    (icon: Icons.delivery_dining, label: 'En camino al cliente', color: AppConstants.primaryColor),
+    (icon: Icons.delivery_dining, label: 'En camino al cliente', color: Color(0xFF27AEEB)),
   ];
 
   static const _stepActions = [
@@ -79,7 +83,6 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
     _geocodedCustomerPos = widget.customerPos;
     if (widget.customerPos == null) _geocodeCustomer(widget.address);
     _initGPS();
-    _fetchRoute(_defaultRestaurantPos, _defaultRestaurantPos, color: const Color(0xFFFFB300));
   }
 
   @override
@@ -105,6 +108,10 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
         setState(() => _myPos = pos);
         SupabaseService.broadcastLocation(pos.latitude, pos.longitude);
         try { _mapCtrl.move(LatLng(pos.latitude, pos.longitude), 15.5); } catch (_) {}
+        if (_routePoints.isEmpty && _step < 2) {
+          _fetchRoute(LatLng(pos.latitude, pos.longitude), _defaultRestaurantPos,
+              color: const Color(0xFFFFB300));
+        }
       });
     } catch (_) {}
   }
@@ -182,7 +189,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
     final mapCenter = myLatLng ?? _defaultRestaurantPos;
 
     return Scaffold(
-      backgroundColor: AppConstants.bgColor,
+      backgroundColor: _bg,
       body: Column(children: [
         // ── Mapa ──────────────────────────────────────────────────────────
         SizedBox(
@@ -281,7 +288,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
                       child: Container(
                         padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
-                          color: AppConstants.surfaceColor.withValues(alpha: 0.95),
+                          color: _card.withValues(alpha: 0.95),
                           shape: BoxShape.circle,
                         ),
                         child: const Icon(Icons.arrow_back, color: Colors.white, size: 18),
@@ -290,7 +297,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                       decoration: BoxDecoration(
-                        color: AppConstants.surfaceColor.withValues(alpha: 0.95),
+                        color: _card.withValues(alpha: 0.95),
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -342,7 +349,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: AppConstants.surfaceColor,
+                  color: _card,
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: Column(children: [
@@ -360,7 +367,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: AppConstants.surfaceColor,
+                  color: _card,
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: Column(
@@ -433,7 +440,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
                   decoration: BoxDecoration(
                     color: done || active
                         ? sd.color.withValues(alpha: done ? 0.3 : 0.15)
-                        : AppConstants.surface2Color,
+                        : Colors.white.withValues(alpha: 0.12),
                     shape: BoxShape.circle,
                     border: Border.all(
                       color: done || active ? sd.color : Colors.transparent,
@@ -464,7 +471,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
                 child: Container(
                   height: 2,
                   margin: const EdgeInsets.only(bottom: 18),
-                  color: i < _step ? AppConstants.primaryColor : AppConstants.surface2Color,
+                  color: i < _step ? Colors.white : Colors.white.withValues(alpha: 0.12),
                 ),
               ),
           ]),

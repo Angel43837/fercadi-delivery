@@ -1264,53 +1264,35 @@ class _UserDetailSheet extends StatelessWidget {
   }
 }
 
-class _RatingRow extends StatefulWidget {
+class _RatingRow extends StatelessWidget {
   final int stars;
   final String? comment;
   const _RatingRow({required this.stars, this.comment});
 
   @override
-  State<_RatingRow> createState() => _RatingRowState();
-}
-
-class _RatingRowState extends State<_RatingRow> {
-  bool _expanded = false;
-
-  @override
   Widget build(BuildContext context) {
-    final hasComment = widget.comment != null && widget.comment!.trim().isNotEmpty;
-    return GestureDetector(
-      onTap: hasComment ? () => setState(() => _expanded = !_expanded) : null,
-      behavior: HitTestBehavior.opaque,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.04),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            ...List.generate(
-                5,
-                (i) => Icon(
-                      i < widget.stars ? Icons.star_rounded : Icons.star_outline_rounded,
-                      color: const Color(0xFFFFB300),
-                      size: 16,
-                    )),
-            if (hasComment) ...[
-              const Spacer(),
-              Icon(_expanded ? Icons.expand_less : Icons.expand_more,
-                  color: Colors.white.withValues(alpha: 0.3), size: 18),
-            ],
-          ]),
-          if (hasComment && _expanded) ...[
-            const SizedBox(height: 6),
-            Text(widget.comment!,
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 12)),
-          ],
-        ]),
+    final hasComment = comment != null && comment!.trim().isNotEmpty;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(10),
       ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: List.generate(
+            5,
+            (i) => Icon(
+                  i < stars ? Icons.star_rounded : Icons.star_outline_rounded,
+                  color: const Color(0xFFFFB300),
+                  size: 16,
+                ))),
+        if (hasComment) ...[
+          const SizedBox(height: 6),
+          Text(comment!,
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 12)),
+        ],
+      ]),
     );
   }
 }
