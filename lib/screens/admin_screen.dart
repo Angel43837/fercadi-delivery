@@ -101,30 +101,30 @@ class _AdminScreenState extends State<AdminScreen> {
     } catch (_) {}
   }
 
-  Future<({List<Map<String, dynamic>> orders, double? avgRating, int ratingCount})> _loadClientDetail(
-      String phone) async {
+  Future<({List<Map<String, dynamic>> orders, double? avgRating, List<Map<String, dynamic>> ratings})>
+      _loadClientDetail(String phone) async {
     final orders = await SupabaseService.getOrdersByPhone(phone);
     final orderIds = orders.map((o) => o['id'] as String).toList();
-    final ratings = await SupabaseService.getRatingsForOrders(orderIds);
+    final allRatings = await SupabaseService.getRatingsForOrders(orderIds);
     // El repartidor califica al cliente -> is_driver: true
-    final driverRatings = ratings.where((r) => r['is_driver'] == true).toList();
+    final driverRatings = allRatings.where((r) => r['is_driver'] == true).toList();
     final avg = driverRatings.isEmpty
         ? null
         : driverRatings.fold<int>(0, (s, r) => s + (r['stars'] as int? ?? 0)) / driverRatings.length;
-    return (orders: orders, avgRating: avg, ratingCount: driverRatings.length);
+    return (orders: orders, avgRating: avg, ratings: driverRatings);
   }
 
-  Future<({List<Map<String, dynamic>> orders, double? avgRating, int ratingCount})> _loadRepartidorDetail(
-      String repartidorId) async {
+  Future<({List<Map<String, dynamic>> orders, double? avgRating, List<Map<String, dynamic>> ratings})>
+      _loadRepartidorDetail(String repartidorId) async {
     final orders = await SupabaseService.getOrdersByRepartidor(repartidorId);
     final orderIds = orders.map((o) => o['id'] as String).toList();
-    final ratings = await SupabaseService.getRatingsForOrders(orderIds);
+    final allRatings = await SupabaseService.getRatingsForOrders(orderIds);
     // El cliente califica al repartidor -> is_driver: false
-    final clientRatings = ratings.where((r) => r['is_driver'] == false).toList();
+    final clientRatings = allRatings.where((r) => r['is_driver'] == false).toList();
     final avg = clientRatings.isEmpty
         ? null
         : clientRatings.fold<int>(0, (s, r) => s + (r['stars'] as int? ?? 0)) / clientRatings.length;
-    return (orders: orders, avgRating: avg, ratingCount: clientRatings.length);
+    return (orders: orders, avgRating: avg, ratings: clientRatings);
   }
 
   void _showClientDetail(String name, String phone) {
@@ -1128,7 +1128,7 @@ class _UserDetailSheet extends StatelessWidget {
   final String title, subtitle;
   final IconData icon;
   final Color color;
-  final Future<({List<Map<String, dynamic>> orders, double? avgRating, int ratingCount})> future;
+  final Future<({List<Map<String, dynamic>> orders, double? avgRating, List<Map<String, dynamic>> ratings})> future;
   const _UserDetailSheet({
     required this.title,
     required this.subtitle,
@@ -1211,7 +1211,7 @@ class _UserDetailSheet extends StatelessWidget {
                                 size: 20,
                               )),
                       const SizedBox(width: 8),
-                      Text('${data.avgRating!.toStringAsFixed(1)} (${data.ratingCount})',
+                      Text('${data.avgRating!.toStringAsFixed(1)} (${data.ratings.length})',
                           style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12)),
                     ] else
                       Text('Sin calificaciones aún',
@@ -1219,35 +1219,98 @@ class _UserDetailSheet extends StatelessWidget {
                   ]),
                 ),
                 const SizedBox(height: 16),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text('Historial de pedidos (${data.orders.length})',
-                        style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.5),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600)),
-                  ),
-                ),
-                const SizedBox(height: 8),
                 Expanded(
-                  child: data.orders.isEmpty
-                      ? Center(
-                          child: Text('Sin pedidos',
-                              style: TextStyle(color: Colors.white.withValues(alpha: 0.3))))
-                      : ListView.builder(
-                          controller: scrollController,
-                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-                          itemCount: data.orders.length,
-                          itemBuilder: (_, i) => _RealOrderMiniRow(order: data.orders[i]),
-                        ),
+                  child: ListView(
+                    controller: scrollController,
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                    children: [
+                      if (data.ratings.isNotEmpty) ...[
+                        Text('Reseñas (${data.ratings.length})',
+                            style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.5),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 8),
+                        ...data.ratings.map((r) => _RatingRow(
+                              stars: r['stars'] as int? ?? 0,
+                              comment: r['comment'] as String?,
+                            )),
+                        const SizedBox(height: 16),
+                      ],
+                      Text('Historial de pedidos (${data.orders.length})',
+                          style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.5),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 8),
+                      if (data.orders.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 20),
+                          child: Center(
+                              child: Text('Sin pedidos',
+                                  style: TextStyle(color: Colors.white.withValues(alpha: 0.3)))),
+                        )
+                      else
+                        ...data.orders.map((o) => _RealOrderMiniRow(order: o)),
+                    ],
+                  ),
                 ),
               ]);
             },
           ),
         );
       },
+    );
+  }
+}
+
+class _RatingRow extends StatefulWidget {
+  final int stars;
+  final String? comment;
+  const _RatingRow({required this.stars, this.comment});
+
+  @override
+  State<_RatingRow> createState() => _RatingRowState();
+}
+
+class _RatingRowState extends State<_RatingRow> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasComment = widget.comment != null && widget.comment!.trim().isNotEmpty;
+    return GestureDetector(
+      onTap: hasComment ? () => setState(() => _expanded = !_expanded) : null,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.04),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            ...List.generate(
+                5,
+                (i) => Icon(
+                      i < widget.stars ? Icons.star_rounded : Icons.star_outline_rounded,
+                      color: const Color(0xFFFFB300),
+                      size: 16,
+                    )),
+            if (hasComment) ...[
+              const Spacer(),
+              Icon(_expanded ? Icons.expand_less : Icons.expand_more,
+                  color: Colors.white.withValues(alpha: 0.3), size: 18),
+            ],
+          ]),
+          if (hasComment && _expanded) ...[
+            const SizedBox(height: 6),
+            Text(widget.comment!,
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 12)),
+          ],
+        ]),
+      ),
     );
   }
 }
