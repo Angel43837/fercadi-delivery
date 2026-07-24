@@ -482,7 +482,7 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
 
   Future<void> _logout() async {
     await AuthService.clearSession();
-    if (mounted) context.go('/moto');
+    if (mounted) context.go('/login');
   }
 
   String _formatNum(num n) {
