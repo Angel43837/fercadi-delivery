@@ -1163,7 +1163,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
           onTap: () => _toggleProduct(p.id),
           behavior: HitTestBehavior.opaque,
           child: SizedBox(
-            height: 100,
+            height: 108,
             child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               // Imagen izquierda ~42%
               Flexible(
