@@ -1153,9 +1153,19 @@ class _UserDetailSheet extends StatelessWidget {
           child: FutureBuilder(
             future: future,
             builder: (context, snapshot) {
-              if (!snapshot.hasData) {
+              if (snapshot.connectionState != ConnectionState.done) {
                 return const Center(
                     child: CircularProgressIndicator(color: AppConstants.primaryColor));
+              }
+              if (snapshot.hasError) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text('Error al cargar: ${snapshot.error}',
+                        style: TextStyle(color: Colors.red.shade300, fontSize: 12),
+                        textAlign: TextAlign.center),
+                  ),
+                );
               }
               final data = snapshot.data!;
               return Column(children: [
