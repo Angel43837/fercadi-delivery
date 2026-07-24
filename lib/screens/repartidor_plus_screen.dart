@@ -7,9 +7,11 @@ import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/auth_service.dart';
 import '../services/supabase_service.dart';
+import 'entrega_activa_screen.dart';
 
 class RepartidorPlusScreen extends StatefulWidget {
   const RepartidorPlusScreen({super.key});
@@ -170,6 +172,38 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
         _checkLogros(prev);
       }
       setState(() => _pedidosPendientes.removeWhere((o) => o['id'] == orderId));
+
+      final restaurantData = pedido['restaurants'] as Map<String, dynamic>?;
+      final restaurantName = restaurantData?['name'] as String? ?? 'Restaurante';
+      Map<String, dynamic> delivery = {};
+      try { delivery = jsonDecode(pedido['customer_name'] as String? ?? '{}') as Map<String, dynamic>; } catch (_) {}
+      final rawLat = delivery['lat'];
+      final rawLng = delivery['lng'];
+      final customerPos = (rawLat != null && rawLng != null)
+          ? LatLng((rawLat as num).toDouble(), (rawLng as num).toDouble())
+          : null;
+      final orderItems = (pedido['order_items'] as List<dynamic>? ?? []);
+      final itemStrings = orderItems.map((i) {
+        final qty = i['quantity'] as int? ?? 1;
+        final product = i['products'] as Map<String, dynamic>?;
+        final name = product?['name'] as String? ?? 'Producto';
+        return '$qty× $name';
+      }).toList();
+
+      if (mounted) {
+        await Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => EntregaActivaScreen(
+            orderId: orderId,
+            restaurantName: restaurantName,
+            customerName: delivery['name'] as String? ?? 'Cliente',
+            customerPhone: delivery['phone'] as String? ?? '—',
+            address: delivery['address'] as String? ?? 'Dirección no especificada',
+            customerPos: customerPos,
+            total: total,
+            items: itemStrings.isEmpty ? ['Pedido #${orderId.substring(0, 6)}'] : itemStrings,
+          ),
+        ));
+      }
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
