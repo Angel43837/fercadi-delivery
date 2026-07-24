@@ -49,9 +49,10 @@ class _SupabaseAuthNotifier extends ChangeNotifier {
 }
 
 // Rutas que solo el cliente puede ver
+// Nota: '/profile' no está aquí porque también la usa el repartidor (foto, nombre, CLABE)
 const _clientRoutes = {
   '/restaurants', '/menu', '/product-detail',
-  '/cart', '/checkout', '/tracking', '/history', '/profile',
+  '/cart', '/checkout', '/tracking', '/history',
 };
 
 String _roleHome(String role) {
