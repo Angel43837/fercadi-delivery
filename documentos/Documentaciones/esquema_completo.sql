@@ -122,11 +122,15 @@ CREATE TABLE IF NOT EXISTS rider_locations (
 );
 
 -- ── RATINGS ──────────────────────────────────────────────────
+-- Calificaciones bidireccionales: cliente -> repartidor (is_driver=false)
+--                                  repartidor -> cliente (is_driver=true)
 CREATE TABLE IF NOT EXISTS ratings (
-  id         TEXT        PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  id         uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
   order_id   TEXT        REFERENCES orders(id) ON DELETE CASCADE,
-  rating     INT         CHECK (rating BETWEEN 1 AND 5),
+  stars      INT         NOT NULL CHECK (stars BETWEEN 1 AND 5),
   comment    TEXT,
+  tip        NUMERIC,
+  is_driver  BOOLEAN     NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 

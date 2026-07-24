@@ -255,6 +255,35 @@ CREATE POLICY "read_platform_config"
 CREATE POLICY "write_platform_config"
   ON platform_config FOR ALL USING (is_admin()) WITH CHECK (is_admin());
 
+-- ── 16. RATINGS ───────────────────────────────────────────────
+-- Calificaciones bidireccionales: cliente -> repartidor (is_driver=false)
+--                                  repartidor -> cliente (is_driver=true)
+-- NOTA: esta tabla nunca se creo en produccion, submitRating() fallaba
+-- en silencio (try/catch) desde el inicio. Ejecutar este bloque una vez.
+
+CREATE TABLE IF NOT EXISTS ratings (
+  id         uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id   text        REFERENCES orders(id) ON DELETE CASCADE,
+  stars      int         NOT NULL CHECK (stars BETWEEN 1 AND 5),
+  comment    text,
+  tip        numeric,
+  is_driver  boolean     NOT NULL DEFAULT false,
+  created_at timestamptz DEFAULT now()
+);
+
+ALTER TABLE ratings ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "read_ratings"   ON ratings;
+DROP POLICY IF EXISTS "insert_ratings" ON ratings;
+
+CREATE POLICY "read_ratings"
+  ON ratings FOR SELECT USING (
+    is_admin() OR auth.uid() IS NOT NULL
+  );
+
+CREATE POLICY "insert_ratings"
+  ON ratings FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+
 -- ── 15. Asignar rol a un usuario (ejecutar como service_role) ──
 -- IMPORTANTE: usar raw_app_meta_data, NO raw_user_meta_data
 --
