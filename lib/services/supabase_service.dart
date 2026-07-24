@@ -1058,6 +1058,37 @@ class SupabaseService {
     } catch (_) {}
   }
 
+  // Historial completo de pedidos de un cliente (todas las fechas, no solo hoy).
+  static Future<List<Map<String, dynamic>>> getOrdersByPhone(String phone) async {
+    if (useMock) return [];
+    final data = await _client
+        .from('orders')
+        .select('*, order_items(quantity, price, notes, products(id, name))')
+        .ilike('customer_name', '%"phone":"$phone"%')
+        .order('created_at', ascending: false)
+        .limit(100);
+    return (data as List).cast<Map<String, dynamic>>();
+  }
+
+  // Historial completo de entregas de un repartidor (todas las fechas, no solo hoy).
+  static Future<List<Map<String, dynamic>>> getOrdersByRepartidor(String repartidorId) async {
+    if (useMock) return [];
+    final data = await _client
+        .from('orders')
+        .select('*, order_items(quantity, price, notes, products(id, name))')
+        .eq('repartidor_id', repartidorId)
+        .order('created_at', ascending: false)
+        .limit(100);
+    return (data as List).cast<Map<String, dynamic>>();
+  }
+
+  // Calificaciones asociadas a una lista de pedidos (para calcular promedio).
+  static Future<List<Map<String, dynamic>>> getRatingsForOrders(List<String> orderIds) async {
+    if (useMock || orderIds.isEmpty) return [];
+    final data = await _client.from('ratings').select().inFilter('order_id', orderIds);
+    return (data as List).cast<Map<String, dynamic>>();
+  }
+
   // ── Rider Stats ───────────────────────────────────────────────────────────
 
   static Future<Map<String, dynamic>> getRiderStats(String riderId) async {

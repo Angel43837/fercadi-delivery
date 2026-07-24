@@ -101,6 +101,62 @@ class _AdminScreenState extends State<AdminScreen> {
     } catch (_) {}
   }
 
+  Future<({List<Map<String, dynamic>> orders, double? avgRating, int ratingCount})> _loadClientDetail(
+      String phone) async {
+    final orders = await SupabaseService.getOrdersByPhone(phone);
+    final orderIds = orders.map((o) => o['id'] as String).toList();
+    final ratings = await SupabaseService.getRatingsForOrders(orderIds);
+    // El repartidor califica al cliente -> is_driver: true
+    final driverRatings = ratings.where((r) => r['is_driver'] == true).toList();
+    final avg = driverRatings.isEmpty
+        ? null
+        : driverRatings.fold<int>(0, (s, r) => s + (r['stars'] as int? ?? 0)) / driverRatings.length;
+    return (orders: orders, avgRating: avg, ratingCount: driverRatings.length);
+  }
+
+  Future<({List<Map<String, dynamic>> orders, double? avgRating, int ratingCount})> _loadRepartidorDetail(
+      String repartidorId) async {
+    final orders = await SupabaseService.getOrdersByRepartidor(repartidorId);
+    final orderIds = orders.map((o) => o['id'] as String).toList();
+    final ratings = await SupabaseService.getRatingsForOrders(orderIds);
+    // El cliente califica al repartidor -> is_driver: false
+    final clientRatings = ratings.where((r) => r['is_driver'] == false).toList();
+    final avg = clientRatings.isEmpty
+        ? null
+        : clientRatings.fold<int>(0, (s, r) => s + (r['stars'] as int? ?? 0)) / clientRatings.length;
+    return (orders: orders, avgRating: avg, ratingCount: clientRatings.length);
+  }
+
+  void _showClientDetail(String name, String phone) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => _UserDetailSheet(
+        title: name,
+        subtitle: phone,
+        icon: Icons.person_outline,
+        color: AppConstants.primaryColor,
+        future: _loadClientDetail(phone),
+      ),
+    );
+  }
+
+  void _showRepartidorDetail(String repartidorId, String shortId, Color color) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => _UserDetailSheet(
+        title: 'Repartidor $shortId',
+        subtitle: 'Historial y calificaciones',
+        icon: Icons.delivery_dining,
+        color: color,
+        future: _loadRepartidorDetail(repartidorId),
+      ),
+    );
+  }
+
   Future<void> _changeOrderStatus(String orderId, String status) async {
     try {
       await SupabaseService.adminUpdateOrderStatus(orderId, status);
@@ -465,6 +521,7 @@ class _AdminScreenState extends State<AdminScreen> {
             trailing: '${c['orders']} pedido${(c['orders'] as int) != 1 ? 's' : ''} • \$${(c['total'] as double).toStringAsFixed(0)}',
             color:    AppConstants.primaryColor,
             icon:     Icons.person_outline,
+            onTap:    () => _showClientDetail(c['name'] as String, c['phone'] as String),
           )),
         const SizedBox(height: 24),
 
@@ -486,6 +543,7 @@ class _AdminScreenState extends State<AdminScreen> {
               trailing: '$entregas entregas',
               color:    color,
               icon:     Icons.delivery_dining,
+              onTap:    () => _showRepartidorDetail(id, shortId, color),
             );
           }),
         const SizedBox(height: 16),
@@ -547,7 +605,7 @@ class _AdminScreenState extends State<AdminScreen> {
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(children: [
-                _EventChip(label: 'Todos', selected: _eventStatusFilter == null, color: Colors.white,
+                _EventChip(label: 'Todos', selected: _eventStatusFilter == null, color: AppConstants.primaryColor,
                     onTap: () => setState(() => _eventStatusFilter = null)),
                 ...statuses.map((s) => _EventChip(
                   label: statusLabels[s]!,
@@ -1030,29 +1088,156 @@ class _UserTile extends StatelessWidget {
   final String name, subtitle, trailing;
   final Color color;
   final IconData icon;
-  const _UserTile({required this.name, required this.subtitle, required this.trailing, required this.color, required this.icon});
+  final VoidCallback? onTap;
+  const _UserTile({required this.name, required this.subtitle, required this.trailing, required this.color, required this.icon, this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(color: AppConstants.surfaceColor, borderRadius: BorderRadius.circular(12)),
-      child: Row(children: [
-        Container(
-          width: 40, height: 40,
-          decoration: BoxDecoration(color: color.withValues(alpha: 0.15), shape: BoxShape.circle),
-          child: Icon(icon, color: color, size: 20),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
-            Text(subtitle, style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11)),
-          ]),
-        ),
-        Text(trailing, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600)),
-      ]),
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(color: AppConstants.surfaceColor, borderRadius: BorderRadius.circular(12)),
+        child: Row(children: [
+          Container(
+            width: 40, height: 40,
+            decoration: BoxDecoration(color: color.withValues(alpha: 0.15), shape: BoxShape.circle),
+            child: Icon(icon, color: color, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+              Text(subtitle, style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11)),
+            ]),
+          ),
+          Text(trailing, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600)),
+          if (onTap != null) ...[
+            const SizedBox(width: 6),
+            Icon(Icons.chevron_right, color: Colors.white.withValues(alpha: 0.25), size: 18),
+          ],
+        ]),
+      ),
+    );
+  }
+}
+
+class _UserDetailSheet extends StatelessWidget {
+  final String title, subtitle;
+  final IconData icon;
+  final Color color;
+  final Future<({List<Map<String, dynamic>> orders, double? avgRating, int ratingCount})> future;
+  const _UserDetailSheet({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.color,
+    required this.future,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.75,
+      minChildSize: 0.4,
+      maxChildSize: 0.92,
+      expand: false,
+      builder: (context, scrollController) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: AppConstants.surfaceColor,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: FutureBuilder(
+            future: future,
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) {
+                return const Center(
+                    child: CircularProgressIndicator(color: AppConstants.primaryColor));
+              }
+              final data = snapshot.data!;
+              return Column(children: [
+                const SizedBox(height: 10),
+                Container(
+                  width: 40, height: 4,
+                  decoration: BoxDecoration(
+                      color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+                  child: Row(children: [
+                    Container(
+                      width: 48, height: 48,
+                      decoration:
+                          BoxDecoration(color: color.withValues(alpha: 0.15), shape: BoxShape.circle),
+                      child: Icon(icon, color: color, size: 24),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text(title,
+                            style: const TextStyle(
+                                color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                        Text(subtitle,
+                            style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 12)),
+                      ]),
+                    ),
+                  ]),
+                ),
+                const SizedBox(height: 14),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Row(children: [
+                    if (data.avgRating != null) ...[
+                      ...List.generate(
+                          5,
+                          (i) => Icon(
+                                i < data.avgRating!.round()
+                                    ? Icons.star_rounded
+                                    : Icons.star_outline_rounded,
+                                color: const Color(0xFFFFB300),
+                                size: 20,
+                              )),
+                      const SizedBox(width: 8),
+                      Text('${data.avgRating!.toStringAsFixed(1)} (${data.ratingCount})',
+                          style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12)),
+                    ] else
+                      Text('Sin calificaciones aún',
+                          style: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 12)),
+                  ]),
+                ),
+                const SizedBox(height: 16),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Historial de pedidos (${data.orders.length})',
+                        style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.5),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600)),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: data.orders.isEmpty
+                      ? Center(
+                          child: Text('Sin pedidos',
+                              style: TextStyle(color: Colors.white.withValues(alpha: 0.3))))
+                      : ListView.builder(
+                          controller: scrollController,
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+                          itemCount: data.orders.length,
+                          itemBuilder: (_, i) => _RealOrderMiniRow(order: data.orders[i]),
+                        ),
+                ),
+              ]);
+            },
+          ),
+        );
+      },
     );
   }
 }
