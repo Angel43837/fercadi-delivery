@@ -139,6 +139,18 @@ flutter build ipa --release
 
 Apple rechaza apps que no tengan política de privacidad, no expliquen el uso del GPS/cámara o no cumplan sus guías de diseño (Human Interface Guidelines).
 
+### Mientras no se paga la cuenta Apple Developer
+
+La app ya corre en iPhones físicos usando la cuenta gratuita ("Personal Team"), pero **no hay forma de compartir un link de descarga** — cada iPhone tiene que conectarse por cable a la Mac para instalar/actualizar la app:
+
+1. Conectar el iPhone por cable
+2. En el iPhone: **Configuración → Privacidad y Seguridad → Modo de desarrollador** → activar (pide reiniciar, solo la primera vez por teléfono)
+3. Aceptar el aviso **"¿Confiar en esta computadora?"** en el iPhone
+4. `flutter run --release -d <id-del-dispositivo>`
+5. Si se instala pero no abre: **Configuración → General → VPN y administración de dispositivos** → seleccionar el perfil del desarrollador → **Confiar**
+
+La cuenta gratuita permite registrar máximo ~10 dispositivos por año.
+
 ---
 
 ## 5. ¿Qué Necesita Actualización de App vs Qué No?

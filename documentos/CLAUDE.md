@@ -105,7 +105,7 @@ Para eliminar restaurante desde admin: `SupabaseService.deleteRestaurant(id)` �
 - [ ] Crear keystore para firmar Android (Play Store)
 - [ ] Cuenta Google Play ($25 USD una vez) → play.google.com/console
 - [ ] Cuenta Apple Developer ($99 USD/año) → developer.apple.com
-- [ ] Icono 1024×1024 sin transparencia
+- [x] Icono 1024×1024 sin transparencia (diseño GOGO naranja, julio 2026 — `assets/images/app_icon.png`)
 - [ ] Screenshots para ambas tiendas
 
 ---

@@ -852,6 +852,20 @@ version: 1.0.0+1
 5. Subir con Xcode o Transporter a App Store Connect
 6. Esperar revisión: 1-7 días (Apple es más estricta que Google)
 
+### 12.3 Estado actual de iOS (pruebas con cuenta gratuita)
+
+Mientras no se paga la cuenta Apple Developer, la app **ya corre en iPhones físicos** (incluye los widgets de pantalla de inicio, ver sección de Arquitectura), pero con las limitaciones de una cuenta gratuita ("Personal Team"):
+
+- **No hay forma de compartir un link de descarga.** Ni TestFlight ni App Store funcionan sin cuenta de pago — la única forma de instalar la app en un iPhone es conectarlo por cable a la Mac que tiene el proyecto.
+- **Máximo ~10 dispositivos registrados por año** en la cuenta gratuita.
+- **Pasos para instalar en un iPhone nuevo** (cada teléfono, la primera vez):
+  1. Conectar el iPhone por cable a la Mac
+  2. En el iPhone: **Configuración → Privacidad y Seguridad → Modo de desarrollador** → activarlo (pide reiniciar)
+  3. Al reconectar, aceptar en el iPhone el aviso **"¿Confiar en esta computadora?"**
+  4. Compilar e instalar (`flutter run --release -d <id-del-dispositivo>`)
+  5. Si la app se instala pero no abre: en el iPhone ir a **Configuración → General → VPN y administración de dispositivos**, seleccionar el perfil del desarrollador y tocar **Confiar**
+- Si alguien intenta instalar la app por otro medio (ej. un link o archivo raro) puede salirle un error de **"Inicia sesión con cuenta escolar o de trabajo"** — es la pantalla de inscripción a MDM de Apple, no tiene nada que ver con instalar la app; ese camino no aplica aquí.
+
 ---
 
 ## 13. Costos de Cada Servicio
@@ -1044,7 +1058,7 @@ Antes de abrir la app al público en Maravatío, verificar todo lo siguiente:
 - [ ] Agregar política de privacidad (requerida por Google Play)
 
 ### Contenido
-- [ ] Icono de la app 1024×1024 píxeles sin transparencia
+- [x] Icono de la app 1024×1024 píxeles sin transparencia (diseño GOGO naranja, julio 2026)
 - [ ] Screenshots para Play Store (mínimo 2, máximo 8 por tipo de dispositivo)
 - [ ] Descripción de la app en español para la tienda
 - [ ] Verificar que todos los restaurantes tienen fotos y menú completo

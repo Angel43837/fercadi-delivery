@@ -36,6 +36,8 @@
 <!-- Al final del día: hacer commit + push + agregar entrada aquí -->
 
 - [2026-07-03 Jueves](sesiones/2026-07-03.md)
+- [2026-07-06 Domingo](sesiones/2026-07-06.md)
+- [2026-07-28 Martes](sesiones/2026-07-28.md)
 
 ## SQL — Base de datos
 
@@ -44,4 +46,4 @@
 
 ---
 
-*Última actualización: 2026-07-03*
+*Última actualización: 2026-07-28*
