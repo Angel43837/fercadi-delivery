@@ -117,16 +117,22 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
   }
 
   Future<void> _geocodeCustomer(String address) async {
-    final result = await LocationService.geocodeAddress(address);
-    if (!mounted) return;
-    if (result == null) {
-      setState(() => _geocodeFailed = true);
-      return;
+    // Reintenta antes de mostrar el aviso de "no encontrada": un solo fallo
+    // suele ser un hiccup pasajero de la API de geocoding, no que la
+    // dirección de verdad no exista.
+    for (var attempt = 0; attempt < 3; attempt++) {
+      final result = await LocationService.geocodeAddress(address);
+      if (!mounted) return;
+      if (result != null) {
+        setState(() {
+          _geocodedCustomerPos = LatLng(result.lat, result.lng);
+          _geocodeFailed = false;
+        });
+        return;
+      }
+      if (attempt < 2) await Future.delayed(const Duration(seconds: 2));
     }
-    setState(() {
-      _geocodedCustomerPos = LatLng(result.lat, result.lng);
-      _geocodeFailed = false;
-    });
+    if (mounted) setState(() => _geocodeFailed = true);
   }
 
   Future<void> _fetchRoute(LatLng from, LatLng to, {required Color color}) async {

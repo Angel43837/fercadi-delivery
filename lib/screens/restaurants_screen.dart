@@ -1163,7 +1163,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
           onTap: () => _toggleProduct(p.id),
           behavior: HitTestBehavior.opaque,
           child: SizedBox(
-            height: 108,
+            height: isPromo ? 144 : (bannerDiscount != null ? 112 : 108),
             child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               // Imagen izquierda ~42%
               Flexible(
@@ -1225,7 +1225,10 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                         ),
                         const SizedBox(height: 3),
                         if (p.promoExpiresAt != null)
-                          _PromoCountdown(expiresAt: p.promoExpiresAt!),
+                          _PromoCountdown(
+                            expiresAt: p.promoExpiresAt!,
+                            onExpired: () => setState(() {}),
+                          ),
                         const SizedBox(height: 3),
                       ],
                       Text(p.name,
@@ -1244,35 +1247,41 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                                     ? Colors.white.withValues(alpha: 0.8)
                                     : Colors.black45)),
                       ],
-                      const SizedBox(height: 5),
-                      if (bannerDiscount != null) ...[
+                      const SizedBox(height: 3),
+                      if (bannerDiscount != null && !isPromo) ...[
                         _PromoBadge('-$bannerDiscount%'),
-                        const SizedBox(height: 3),
+                        const SizedBox(height: 2),
                       ],
                       if (isPromo && p.promoDiscountPercent != null) ...[
-                        Text('\$${p.price.toStringAsFixed(0)} MXN',
-                            style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.white.withValues(alpha: 0.65),
-                                decoration: TextDecoration.lineThrough,
-                                decorationColor: Colors.white70)),
-                        Text('\$${p.promoPrice.toStringAsFixed(0)} MXN',
-                            style: const TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white)),
+                        Row(mainAxisSize: MainAxisSize.min, children: [
+                          Text('\$${p.price.toStringAsFixed(0)}',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.white.withValues(alpha: 0.65),
+                                  decoration: TextDecoration.lineThrough,
+                                  decorationColor: Colors.white70)),
+                          const SizedBox(width: 5),
+                          Text('\$${p.promoPrice.toStringAsFixed(0)} MXN',
+                              style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white)),
+                        ]),
                       ] else if (bannerDiscount != null) ...[
-                        Text('\$${p.price.toStringAsFixed(0)} MXN',
-                            style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.white.withValues(alpha: 0.65),
-                                decoration: TextDecoration.lineThrough,
-                                decorationColor: Colors.white70)),
-                        Text('\$${(p.price * (1 - bannerDiscount / 100)).toStringAsFixed(0)} MXN',
-                            style: const TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white)),
+                        Row(mainAxisSize: MainAxisSize.min, children: [
+                          Text('\$${p.price.toStringAsFixed(0)}',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.white.withValues(alpha: 0.65),
+                                  decoration: TextDecoration.lineThrough,
+                                  decorationColor: Colors.white70)),
+                          const SizedBox(width: 5),
+                          Text('\$${(p.price * (1 - bannerDiscount / 100)).toStringAsFixed(0)} MXN',
+                              style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white)),
+                        ]),
                       ] else
                         Text('\$${p.price.toStringAsFixed(0)} MXN',
                             style: TextStyle(
@@ -1955,7 +1964,8 @@ class _PromoBadge extends StatelessWidget {
 // ── Countdown timer que se actualiza cada segundo ────────────────────────────
 class _PromoCountdown extends StatefulWidget {
   final DateTime expiresAt;
-  const _PromoCountdown({required this.expiresAt});
+  final VoidCallback? onExpired;
+  const _PromoCountdown({required this.expiresAt, this.onExpired});
 
   @override
   State<_PromoCountdown> createState() => _PromoCountdownState();
@@ -1964,6 +1974,7 @@ class _PromoCountdown extends StatefulWidget {
 class _PromoCountdownState extends State<_PromoCountdown> {
   late Timer _timer;
   Duration _remaining = Duration.zero;
+  bool _expiredNotified = false;
 
   @override
   void initState() {
@@ -1974,7 +1985,13 @@ class _PromoCountdownState extends State<_PromoCountdown> {
 
   void _update() {
     final r = widget.expiresAt.difference(DateTime.now());
-    if (mounted) setState(() => _remaining = r.isNegative ? Duration.zero : r);
+    if (!mounted) return;
+    setState(() => _remaining = r.isNegative ? Duration.zero : r);
+    if (_remaining == Duration.zero && !_expiredNotified) {
+      _expiredNotified = true;
+      _timer.cancel();
+      widget.onExpired?.call();
+    }
   }
 
   @override

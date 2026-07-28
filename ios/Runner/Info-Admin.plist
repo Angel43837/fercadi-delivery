@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>GOGO Food</string>
+	<string>GOGO Admin</string>
 	<key>GMSApiKey</key>
 	<string>AIzaSyDGxOWhjgxZsHjsgDtZdMlJ7q2OYzdYHDE</string>
 	<key>CFBundleExecutable</key>
@@ -17,7 +17,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>GOGO Food</string>
+	<string>GOGO Admin</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -30,10 +30,10 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.fercadi.app.auth</string>
+			<string>com.fercadi.admin.auth</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>fercadi</string>
+				<string>fercadiadmin</string>
 			</array>
 		</dict>
 	</array>
@@ -63,19 +63,19 @@
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>GOGO Food necesita tu ubicación para encontrar restaurantes cerca de ti.</string>
+	<string>GOGO Admin necesita tu ubicación para encontrar restaurantes cerca de ti.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>GOGO Food necesita tu ubicación para rastrear tu pedido.</string>
+	<string>GOGO Admin necesita tu ubicación para rastrear pedidos.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>GOGO Food necesita la cámara para subir fotos de perfil.</string>
+	<string>GOGO Admin necesita la cámara para subir fotos de perfil.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>GOGO Food necesita acceso a tus fotos para subir imágenes.</string>
+	<string>GOGO Admin necesita acceso a tus fotos para subir imágenes.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_dartobservatory._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>GOGO Food usa la red local para depuración con Flutter durante el desarrollo.</string>
+	<string>GOGO Admin usa la red local para depuración con Flutter durante el desarrollo.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

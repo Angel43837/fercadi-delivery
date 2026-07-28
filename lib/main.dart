@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
+import 'package:home_widget/home_widget.dart';
 import 'package:provider/provider.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -18,41 +19,56 @@ import 'services/supabase_service.dart';
 import 'services/notification_service.dart';
 import 'services/location_service.dart';
 
+Future<void> _startApp() async {
+  // App Group compartido con el widget de pantalla de inicio (solo iOS)
+  await HomeWidget.setAppGroupId('group.com.fercadi.app');
+
+  // Inicializa Stripe
+  try {
+    Stripe.publishableKey = AppConstants.stripePublishableKey;
+    await Stripe.instance.applySettings();
+  } catch (_) {}
+
+  // flutter_local_notifications no soporta web.
+  // No se espera: el permiso nativo de iOS puede tardar o quedarse sin resolver
+  // y no debe bloquear el arranque de la app.
+  if (!kIsWeb) NotificationService.init();
+
+  // Solo conecta Supabase si no estamos en modo demo (useMock = false)
+  if (!SupabaseService.useMock) {
+    await Supabase.initialize(
+      url: AppConstants.supabaseUrl,
+      anonKey: AppConstants.supabaseAnonKey,
+    );
+    // Crea los buckets de Storage si no existen (fotos de perfil, productos)
+    SupabaseService.ensureStorageBuckets();
+    // Carga tarifas de envío desde Supabase (con fallback a valores por defecto)
+    LocationService.loadTarifas();
+  }
+
+  runApp(const FercadiApp());
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   if (kIsWeb) usePathUrlStrategy();
+
+  // Sin DSN no hay a dónde reportar: inicializar Sentry igual prende sesión
+  // replay, tracking de vistas y capturas de pantalla en segundo plano,
+  // que en dispositivos físicos causan ANRs y frames congelados sin ningún beneficio.
+  if (AppConstants.sentryDsn.isEmpty) {
+    await _startApp();
+    return;
+  }
+
   await SentryFlutter.init(
     (options) {
       options.dsn = AppConstants.sentryDsn;
-      options.environment = AppConstants.sentryDsn.isEmpty ? 'development' : 'production';
+      options.environment = 'production';
       options.tracesSampleRate = 0.3;
       if (!kIsWeb) options.attachScreenshot = true; // No soportado en web
     },
-    appRunner: () async {
-
-      // Inicializa Stripe
-      try {
-        Stripe.publishableKey = AppConstants.stripePublishableKey;
-        await Stripe.instance.applySettings();
-      } catch (_) {}
-
-      // flutter_local_notifications no soporta web
-      if (!kIsWeb) await NotificationService.init();
-
-      // Solo conecta Supabase si no estamos en modo demo (useMock = false)
-      if (!SupabaseService.useMock) {
-        await Supabase.initialize(
-          url: AppConstants.supabaseUrl,
-          anonKey: AppConstants.supabaseAnonKey,
-        );
-        // Crea los buckets de Storage si no existen (fotos de perfil, productos)
-        SupabaseService.ensureStorageBuckets();
-        // Carga tarifas de envío desde Supabase (con fallback a valores por defecto)
-        LocationService.loadTarifas();
-      }
-
-      runApp(const FercadiApp());
-    },
+    appRunner: _startApp,
   );
 }
 

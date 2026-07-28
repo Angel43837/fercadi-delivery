@@ -8,7 +8,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:go_router/go_router.dart';
+import 'package:home_widget/home_widget.dart';
 import 'package:latlong2/latlong.dart' as ll;
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants.dart';
 import '../services/location_service.dart';
 import '../services/notification_service.dart';
@@ -114,7 +116,9 @@ class _TrackingScreenState extends State<TrackingScreen> {
   Future<void> _pollStatus() async {
     try {
       final s = await SupabaseService.getOrderStatus(widget.orderId) ?? 'pending';
-      if (!mounted || s == _orderStatus) return;
+      if (!mounted) return;
+      _updateHomeWidget(s);
+      if (s == _orderStatus) return;
       if (s == 'accepted')   NotificationService.pedidoAceptado();
       if (s == 'delivering') NotificationService.repartidorEnCamino();
       if (s == 'delivered')  NotificationService.pedidoEntregado();
@@ -133,6 +137,39 @@ class _TrackingScreenState extends State<TrackingScreen> {
         await OrderHistoryService.clearActiveOrder();
       }
     } catch (_) {}
+  }
+
+  // Guarda el estado del pedido (y coordenadas para el mini-mapa) para el
+  // widget de pantalla de inicio (iOS). No espera a que Supabase/Home Widget
+  // respondan — no debe frenar el polling.
+  void _updateHomeWidget(String status) {
+    final active = status != 'delivered' && status != 'cancelled';
+    HomeWidget.saveWidgetData<bool>('hasActiveOrder', active);
+    // El widget consulta Supabase directo cuando la app está cerrada — necesita
+    // el id del pedido y una sesión con la que autenticar esa consulta.
+    HomeWidget.saveWidgetData<String>('orderId', widget.orderId);
+    final token = Supabase.instance.client.auth.currentSession?.accessToken;
+    if (token != null) HomeWidget.saveWidgetData<String>('authToken', token);
+    if (active) {
+      final stepIndex = status == 'accepted' ? 1 : (status == 'delivering' ? 2 : 0);
+      HomeWidget.saveWidgetData<String>('restaurantName', widget.restaurantName);
+      HomeWidget.saveWidgetData<String>('statusText', _statusData[stepIndex].label);
+      HomeWidget.saveWidgetData<String>('address', widget.address);
+      HomeWidget.saveWidgetData<double>('total', widget.total);
+      // Pasos para la tarjeta de seguimiento: 0=Recibido 1=Preparando 2=En camino 3=Entregado
+      final cardStep = status == 'accepted' ? 1 : (status == 'delivering' ? 2 : 0);
+      HomeWidget.saveWidgetData<int>('stepIndex', cardStep);
+      HomeWidget.saveWidgetData<double>('restaurantLat', _kRestaurantPos.latitude);
+      HomeWidget.saveWidgetData<double>('restaurantLng', _kRestaurantPos.longitude);
+      HomeWidget.saveWidgetData<double>('customerLat', _customerPos.latitude);
+      HomeWidget.saveWidgetData<double>('customerLng', _customerPos.longitude);
+      HomeWidget.saveWidgetData<double>('motoLat', _motoPos.latitude);
+      HomeWidget.saveWidgetData<double>('motoLng', _motoPos.longitude);
+    } else {
+      HomeWidget.saveWidgetData<int>('stepIndex', 3);
+    }
+    HomeWidget.updateWidget(iOSName: 'GOGOTrackingWidget');
+    HomeWidget.updateWidget(iOSName: 'GOGOTrackingStepsWidget');
   }
 
   @override

@@ -1,3 +1,4 @@
+source "file:///Users/eloy/.cocoapods/repos/master"
 # Uncomment this line to define a global platform for your project
 platform :ios, '14.0'
 
@@ -8,6 +9,9 @@ project 'Runner', {
   'Debug' => :debug,
   'Profile' => :release,
   'Release' => :release,
+  'Debug-admin' => :debug,
+  'Profile-admin' => :release,
+  'Release-admin' => :release,
 }
 
 def flutter_root
