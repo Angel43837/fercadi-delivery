@@ -147,16 +147,7 @@ Para empresarios que tienen motos propias y repartidores a su cargo.
 
 ## Widgets nativos de iOS (pantalla de inicio)
 
-La app iOS incluye dos widgets de pantalla de inicio (WidgetKit, target nativo `GOGOTrackingWidget` en `ios/GOGOTrackingWidget/GOGOTrackingWidget.swift`):
-
-| Widget | Qué muestra |
-|---|---|
-| `GOGOTrackingWidget` | Mini-mapa con restaurante, repartidor y cliente (posiciones simuladas/reales) |
-| `GOGOTrackingStepsWidget` | Tarjeta con los mismos pasos y colores que la pantalla de seguimiento (Recibido/Preparando/En camino/Entregado) |
-
-- Comparten datos con la app vía **App Group** (`group.com.fercadi.app`) usando el paquete `home_widget`
-- `tracking_screen.dart` guarda el estado del pedido en cada actualización (`_updateHomeWidget`)
-- El widget también puede refrescarse solo en segundo plano: hace una consulta directa a Supabase (REST/PostgREST) sin necesidad de que la app esté abierta — opción gratuita, sin usar notificaciones push (que requieren cuenta Apple Developer de pago)
+La app iOS incluye dos widgets de pantalla de inicio (mini-mapa y tarjeta de seguimiento). Ver detalle completo en [`manual_widgets.md`](manual_widgets.md).
 
 ---
 

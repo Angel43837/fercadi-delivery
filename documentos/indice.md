@@ -18,6 +18,8 @@
 - [Manual de despliegue](markdown/manual_despliegue.md)
 - [Manual de pagos](markdown/manual_pagos.md)
 - [Manual de actualizaciones](markdown/manual_actualizaciones.md)
+- [Manual de iOS / iPhone](Documentaciones/manual_ios.md)
+- [Manual de Widgets (iOS)](Documentaciones/manual_widgets.md)
 
 ## Assets y funcionalidades
 
