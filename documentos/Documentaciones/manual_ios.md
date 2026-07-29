@@ -73,6 +73,7 @@ Mismo patrón exacto que Admin. Antes las pantallas de jefe de flota (`/flota-lo
 - `ios/Runner/Info-Flota.plist` — nombre "GOGO Flota", esquema de URL `fercadiflota://`, bundle id `com.fercadi.flota`
 - `ios/Flutter/Debug-flota.xcconfig`, `Release-flota.xcconfig`, `Profile-flota.xcconfig`
 - Scheme de Xcode: `flota.xcscheme`
+- Ícono propio: `ios/Runner/Assets.xcassets/AppIcon-Flota.appiconset` (mismo diseño "GO GO" que GOGO Food, pero fondo azul en vez de naranja — solo se usa en las configs `*-flota` vía `ASSETCATALOG_COMPILER_APPICON_NAME`). Original guardado en `documentos/Diseño/icono_flota.png`.
 - Se corre con: `flutter run --flavor flota --target lib/main_flota.dart`
 - También tiene su propio build web (ver [`manual_despliegue.md`](manual_despliegue.md)) para no perder el acceso desde navegador que tenía antes.
 
