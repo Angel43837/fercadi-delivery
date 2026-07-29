@@ -65,13 +65,18 @@ CREATE TABLE IF NOT EXISTS product_images (
 -- customer_name: JSON string con { name, phone, address, payment, lat, lng }
 -- status: pending | accepted | delivering | delivered | cancelled
 CREATE TABLE IF NOT EXISTS orders (
-  id             TEXT        PRIMARY KEY,
-  restaurant_id  TEXT        REFERENCES restaurants(id) ON DELETE SET NULL,
-  total          NUMERIC(10,2) NOT NULL DEFAULT 0,
-  delivery_fee   NUMERIC(10,2) DEFAULT 0,
-  status         TEXT        NOT NULL DEFAULT 'pending',
-  customer_name  TEXT,       -- JSON: { name, phone, address, payment, lat, lng }
-  repartidor_id  UUID        REFERENCES auth.users(id) ON DELETE SET NULL,
+  id                        TEXT        PRIMARY KEY,
+  restaurant_id             TEXT        REFERENCES restaurants(id) ON DELETE SET NULL,
+  total                     NUMERIC(10,2) NOT NULL DEFAULT 0,
+  delivery_fee              NUMERIC(10,2) DEFAULT 0,
+  status                    TEXT        NOT NULL DEFAULT 'pending',
+  customer_name             TEXT,       -- JSON: { name, phone, address, payment, lat, lng }
+  repartidor_id             UUID        REFERENCES auth.users(id) ON DELETE SET NULL,
+  -- Solo se usan para pagos vía Stripe (OXXO/tarjeta) — null para efectivo.
+  -- payment_status: 'pending' (OXXO, esperando que el cliente pague en tienda),
+  --                 'paid' (confirmado por webhook o por Stripe PaymentSheet), 'failed'
+  payment_status            TEXT,
+  stripe_payment_intent_id  TEXT,
   created_at     TIMESTAMPTZ DEFAULT now()
 );
 

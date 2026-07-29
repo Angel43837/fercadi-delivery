@@ -584,10 +584,18 @@ class _DuenoScreenState extends State<DuenoScreen> {
     final picker = ImagePicker();
 
     // Promo state
+    // hadPromoData: ya tenía descuento/2x1 configurado (activo o ya expirado).
+    // promoTouched: el dueño interactuó con la sección de promo en esta sesión de edición.
+    // Si NO se toca la sección de promo, al guardar se conserva tal cual lo que ya
+    // había en Supabase (aunque haya expirado) — así el dueño puede editar otros
+    // campos del platillo sin borrar sin querer un descuento vencido que quería reactivar después.
+    final bool hadPromoData = existing != null &&
+        (existing.promoDiscountPercent != null || existing.promoIs2x1);
     bool isPromoMode = existing?.isPromoActive ?? false;
     int? selectedDiscount = existing?.promoDiscountPercent;
     bool is2x1 = existing?.promoIs2x1 ?? false;
     int selectedDurationHours = 2;
+    bool promoTouched = false;
 
     Future<void> pickImage(ImageSource source, StateSetter setModal) async {
       final messenger = ScaffoldMessenger.of(context);
@@ -749,7 +757,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
               child: Row(children: [
                 Expanded(
                   child: GestureDetector(
-                    onTap: () => setModal(() => isPromoMode = false),
+                    onTap: () => setModal(() { isPromoMode = false; promoTouched = true; }),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 150),
                       padding: const EdgeInsets.symmetric(vertical: 12),
@@ -766,7 +774,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 ),
                 Expanded(
                   child: GestureDetector(
-                    onTap: () => setModal(() => isPromoMode = true),
+                    onTap: () => setModal(() { isPromoMode = true; promoTouched = true; }),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 150),
                       padding: const EdgeInsets.symmetric(vertical: 12),
@@ -847,7 +855,10 @@ class _DuenoScreenState extends State<DuenoScreen> {
                       ...[5, 10, 15, 20, 25, 30, 35, 40, 45, 50].map((pct) {
                         final sel = selectedDiscount == pct;
                         return GestureDetector(
-                          onTap: () => setModal(() => selectedDiscount = sel ? null : pct),
+                          onTap: () => setModal(() {
+                            selectedDiscount = sel ? null : pct;
+                            promoTouched = true;
+                          }),
                           child: AnimatedContainer(
                             duration: const Duration(milliseconds: 150),
                             padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
@@ -867,7 +878,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
                         );
                       }),
                       GestureDetector(
-                        onTap: () => setModal(() => is2x1 = !is2x1),
+                        onTap: () => setModal(() { is2x1 = !is2x1; promoTouched = true; }),
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 150),
                           padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
@@ -908,7 +919,10 @@ class _DuenoScreenState extends State<DuenoScreen> {
                       final label = opt['label'] as String;
                       final sel = selectedDurationHours == h;
                       return GestureDetector(
-                        onTap: () => setModal(() => selectedDurationHours = h),
+                        onTap: () => setModal(() {
+                          selectedDurationHours = h;
+                          promoTouched = true;
+                        }),
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 150),
                           padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
@@ -1042,11 +1056,25 @@ class _DuenoScreenState extends State<DuenoScreen> {
                       ? pickedImagePath
                       : null;
 
-                  final promoDiscount  = isPromoMode ? selectedDiscount : null;
-                  final promo2x1       = isPromoMode && is2x1;
-                  final promoExpires   = isPromoMode && (promoDiscount != null || promo2x1)
-                      ? DateTime.now().add(Duration(hours: selectedDurationHours))
-                      : null;
+                  final int? promoDiscount;
+                  final bool promo2x1;
+                  final DateTime? promoExpires;
+                  if (!promoTouched && hadPromoData) {
+                    // El dueño no tocó la sección de promo: conserva tal cual
+                    // lo que ya había (aunque haya expirado), para que un
+                    // descuento vencido no se borre solo al editar otra cosa
+                    // del platillo — así se puede reactivar después sin
+                    // volver a configurarlo desde cero.
+                    promoDiscount = existing.promoDiscountPercent;
+                    promo2x1      = existing.promoIs2x1;
+                    promoExpires  = existing.promoExpiresAt;
+                  } else {
+                    promoDiscount = isPromoMode ? selectedDiscount : null;
+                    promo2x1      = isPromoMode && is2x1;
+                    promoExpires  = isPromoMode && (promoDiscount != null || promo2x1)
+                        ? DateTime.now().add(Duration(hours: selectedDurationHours))
+                        : null;
+                  }
 
                   await SupabaseService.saveProduct(
                     id: newId, name: name, description: desc,
@@ -1163,8 +1191,13 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 const SizedBox(height: 10),
                 _field(subtitleCtrl, 'Subtítulo', _inputFill, _text, _textMid),
                 const SizedBox(height: 10),
-                _field(badgeCtrl, 'Badge (ej. "20% OFF", "NUEVO")', _inputFill, _text, _textMid),
-                const SizedBox(height: 14),
+                // Con producto vinculado el badge se genera solo a partir del
+                // % de descuento (más abajo) — aquí solo se pide texto libre
+                // para banners sin producto (ej. "NUEVO").
+                if (productId == null) ...[
+                  _field(badgeCtrl, 'Badge (ej. "20% OFF", "NUEVO")', _inputFill, _text, _textMid),
+                  const SizedBox(height: 14),
+                ],
 
                 // Color del badge
                 Text('Color del badge', style: TextStyle(color: _textMid, fontSize: 12)),
@@ -1215,7 +1248,8 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 ),
                 const SizedBox(height: 10),
 
-                // Descuento
+                // Descuento — este mismo número arma el badge visual (ej. "-10%"),
+                // ya no hace falta escribirlo dos veces.
                 if (productId != null) ...[
                   _field(discountCtrl, 'Descuento % (ej. 10)', _inputFill, _text, _textMid,
                       keyboardType: TextInputType.number),
@@ -1233,16 +1267,22 @@ class _DuenoScreenState extends State<DuenoScreen> {
                         shape: const StadiumBorder()),
                     onPressed: () async {
                       if (imageCtrl.text.trim().isEmpty) return;
+                      final discountValue = int.tryParse(discountCtrl.text.trim());
+                      // Con producto vinculado el badge se deriva del % de descuento;
+                      // sin producto se usa el texto libre que escribió el dueño.
+                      final resolvedBadge = productId != null
+                          ? (discountValue != null ? '-$discountValue%' : '')
+                          : badgeCtrl.text.trim();
                       final banner = RestaurantBanner(
                         id: existing?.id ?? '',
                         restaurantId: _restaurantId,
                         imageUrl: imageCtrl.text.trim(),
                         title: titleCtrl.text.trim(),
                         subtitle: subtitleCtrl.text.trim(),
-                        badge: badgeCtrl.text.trim(),
+                        badge: resolvedBadge,
                         badgeColor: badgeColor,
                         productId: productId,
-                        discountPercent: int.tryParse(discountCtrl.text.trim()),
+                        discountPercent: discountValue,
                         sortOrder: existing?.sortOrder ?? _bannerList.length,
                       );
                       Navigator.pop(ctx);

@@ -93,6 +93,14 @@ class _SplashScreenState extends State<SplashScreen>
       _                => '/restaurants',
     };
 
+    // Mantiene 'session_email' sincronizado con el usuario real de Supabase
+    // al restaurar una sesión existente (sin esto, el nombre de perfil se
+    // lee con la clave equivocada — 'guest:...' en vez de '<email>:...' —
+    // y parece cambiar solo entre "Usuario" y el nombre guardado).
+    final email = supabaseSession.user.email;
+    if (email != null) await AuthService.saveSession(email, route);
+    if (!mounted) return;
+
     context.go(route);
   }
 

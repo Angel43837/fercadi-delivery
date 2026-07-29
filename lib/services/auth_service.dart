@@ -20,9 +20,6 @@ class AuthService {
   static const _keyPayment      = 'profile_payment';
   static const _keyAvatarColor  = 'profile_avatar_color';
   static const _keyProfilePhoto = 'profile_photo_path';
-  static const _keyCardNumber   = 'card_number';
-  static const _keyCardExpiry   = 'card_expiry';
-  static const _keyCardName     = 'card_name';
   static const _keyCLABE          = 'bank_clabe';
   static const _keySavedAddresses  = 'saved_addresses';
   static const _keyRestName        = 'restaurant_name';
@@ -175,34 +172,6 @@ class AuthService {
     } else {
       await prefs.setString(key, path);
     }
-  }
-
-  // ── Tarjeta de banco ─────────────────────────────────────────────────────────
-
-  static Future<({String number, String expiry, String name})?> getCard() async {
-    final prefs  = await SharedPreferences.getInstance();
-    final kNum   = await _userKey(_keyCardNumber);
-    final kExp   = await _userKey(_keyCardExpiry);
-    final kName  = await _userKey(_keyCardName);
-    final number = prefs.getString(kNum);
-    final expiry = prefs.getString(kExp);
-    final name   = prefs.getString(kName);
-    if (number == null || number.isEmpty) return null;
-    return (number: number, expiry: expiry ?? '', name: name ?? '');
-  }
-
-  static Future<void> saveCard(String number, String expiry, String name) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(await _userKey(_keyCardNumber), number);
-    await prefs.setString(await _userKey(_keyCardExpiry), expiry);
-    await prefs.setString(await _userKey(_keyCardName),   name);
-  }
-
-  static Future<void> clearCard() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(await _userKey(_keyCardNumber));
-    await prefs.remove(await _userKey(_keyCardExpiry));
-    await prefs.remove(await _userKey(_keyCardName));
   }
 
   // ── CLABE interbancaria (repartidor) ─────────────────────────────────────────

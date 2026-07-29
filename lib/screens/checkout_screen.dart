@@ -15,6 +15,7 @@ import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../core/constants.dart';
 import '../models/cart_item.dart';
 import '../models/restaurant.dart';
@@ -237,6 +238,116 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     }
   }
 
+  // Crea el PaymentIntent de OXXO, lo confirma con Stripe y muestra la ficha
+  // de pago al cliente. Devuelve el id del PaymentIntent (para guardarlo en
+  // el pedido y que el webhook lo marque como pagado cuando se pague en
+  // tienda), o null si se canceló/falló.
+  Future<String?> _payWithOxxo(double total) async {
+    try {
+      final res = await Supabase.instance.client.functions.invoke(
+        'create-payment-intent',
+        body: {'amount': total, 'currency': 'mxn', 'paymentMethodType': 'oxxo'},
+      );
+      final clientSecret = res.data['clientSecret'] as String?;
+      final intentId = res.data['id'] as String?;
+      if (clientSecret == null || intentId == null) {
+        throw Exception('No se pudo generar el pago de OXXO');
+      }
+
+      final email = Supabase.instance.client.auth.currentUser?.email;
+      final intent = await Stripe.instance.confirmPayment(
+        paymentIntentClientSecret: clientSecret,
+        data: PaymentMethodParams.oxxo(
+          paymentMethodData: PaymentMethodData(
+            billingDetails: BillingDetails(
+              name: _nameCtrl.text.trim(),
+              email: email,
+            ),
+          ),
+        ),
+      );
+
+      final voucher = intent.nextAction?.maybeWhen(
+        displayOxxoDetails: (expiration, voucherURL, voucherNumber) =>
+            (url: voucherURL, number: voucherNumber, expiration: expiration),
+        orElse: () => null,
+      );
+
+      if (voucher == null || voucher.url == null) {
+        throw Exception('No se generó la ficha de pago de OXXO');
+      }
+
+      if (!mounted) return null;
+      final continued = await _showOxxoVoucher(voucher.url!, voucher.number, voucher.expiration);
+      return continued ? intentId : null;
+    } on StripeException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(e.error.localizedMessage ?? 'No se pudo generar el pago OXXO'),
+          backgroundColor: Colors.redAccent,
+        ));
+      }
+      return null;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error: $e'),
+          backgroundColor: Colors.redAccent,
+        ));
+      }
+      return null;
+    }
+  }
+
+  // Muestra la ficha de pago OXXO (referencia + link) y espera a que el
+  // cliente confirme que la vio antes de crear el pedido.
+  Future<bool> _showOxxoVoucher(String url, String? number, int? expirationEpoch) async {
+    final expiry = expirationEpoch != null
+        ? DateTime.fromMillisecondsSinceEpoch(expirationEpoch * 1000).toLocal()
+        : null;
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppConstants.surfaceColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Ficha de pago OXXO', style: TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (number != null) ...[
+              Text('Referencia: $number', style: const TextStyle(color: Colors.white70)),
+              const SizedBox(height: 6),
+            ],
+            if (expiry != null) ...[
+              Text('Vence: ${expiry.day}/${expiry.month}/${expiry.year}',
+                  style: const TextStyle(color: Colors.white70)),
+              const SizedBox(height: 12),
+            ],
+            const Text(
+              'Paga en cualquier tienda OXXO con esta ficha. Tu pedido se confirmará '
+              'automáticamente en cuanto se registre el pago.',
+              style: TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+            child: const Text('Abrir ficha'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppConstants.primaryColor),
+            child: const Text('Continuar'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
   Future<void> _confirm() async {
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) {
@@ -252,24 +363,35 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final deliveryFee = _deliveryFee;
     final orderTotal = cart.total + deliveryFee;
 
-    // Si el pago es con tarjeta, procesar Stripe primero
-    if (_payment == _Pay.card) {
+    // Si el pago es con tarjeta u OXXO, procesar Stripe primero
+    String? oxxoPaymentIntentId;
+    if (_payment == _Pay.card || _payment == _Pay.oxxo) {
       if (kIsWeb) {
         if (mounted) {
           setState(() => _loading = false);
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('El pago con tarjeta solo está disponible en la app móvil. Descarga la app para pagar con tarjeta.'),
-            backgroundColor: Color(0xFFBF360C),
-            duration: Duration(seconds: 5),
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(_payment == _Pay.card
+                ? 'El pago con tarjeta solo está disponible en la app móvil. Descarga la app para pagar con tarjeta.'
+                : 'El pago con OXXO solo está disponible en la app móvil. Descarga la app para pagar en OXXO.'),
+            backgroundColor: const Color(0xFFBF360C),
+            duration: const Duration(seconds: 5),
             behavior: SnackBarBehavior.floating,
           ));
         }
         return;
       }
-      final paid = await _payWithStripe(orderTotal);
-      if (!paid) {
-        if (mounted) setState(() => _loading = false);
-        return;
+      if (_payment == _Pay.card) {
+        final paid = await _payWithStripe(orderTotal);
+        if (!paid) {
+          if (mounted) setState(() => _loading = false);
+          return;
+        }
+      } else {
+        oxxoPaymentIntentId = await _payWithOxxo(orderTotal);
+        if (oxxoPaymentIntentId == null) {
+          if (mounted) setState(() => _loading = false);
+          return;
+        }
       }
     }
 
@@ -307,6 +429,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           lat: _selectedPos?.latitude,
           lng: _selectedPos?.longitude,
           clientFcmToken: FcmService.token,
+          paymentStatus: _payment == _Pay.oxxo
+              ? 'pending'
+              : (_payment == _Pay.card ? 'paid' : null),
+          stripePaymentIntentId: _payment == _Pay.oxxo ? oxxoPaymentIntentId : null,
           items: rItems.map((i) => {
             'product_id': i.product.id,
             'quantity': i.quantity,

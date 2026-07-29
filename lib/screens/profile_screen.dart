@@ -49,9 +49,6 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   final _nameCtrl    = TextEditingController();
-  final _cardNumCtrl = TextEditingController();
-  final _cardExpCtrl = TextEditingController();
-  final _cardNameCtrl= TextEditingController();
   final _clabeCtrl   = TextEditingController();
   String  _payment    = 'cash';
   int     _colorIndex = 0;
@@ -59,8 +56,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String  _email      = '';
   String  _role       = '';
   String? _photoPath;
-  bool    _showCvv    = false;
-  final   _cvvCtrl    = TextEditingController();
 
   // Ubicación de entrega
   String  _addrText    = '';
@@ -80,7 +75,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final color   = await AuthService.getAvatarColorIndex();
     final session = await AuthService.getSession();
     final photo   = await AuthService.getProfilePhoto();
-    final card    = await AuthService.getCard();
     final clabe   = await AuthService.getCLABE();
     final defAddr = await AuthService.getDefaultAddress();
     if (!mounted) return;
@@ -92,11 +86,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _role           = session?.role  ?? '';
       _photoPath      = photo;
       _clabeCtrl.text = clabe;
-      if (card != null) {
-        _cardNumCtrl.text  = _formatCardDisplay(card.number);
-        _cardExpCtrl.text  = card.expiry;
-        _cardNameCtrl.text = card.name;
-      }
       if (defAddr != null) {
         _addrText = defAddr['address'] as String? ?? '';
         _addrLat  = (defAddr['lat'] as num?)?.toDouble();
@@ -235,11 +224,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     await AuthService.saveProfilePhoto(_photoPath);
     await AuthService.saveCLABE(_clabeCtrl.text);
 
-    final rawNum = _cardNumCtrl.text.replaceAll(' ', '');
-    if (rawNum.length >= 15) {
-      await AuthService.saveCard(rawNum, _cardExpCtrl.text, _cardNameCtrl.text);
-    }
-
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
@@ -309,23 +293,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  String _formatCardDisplay(String raw) {
-    final digits = raw.replaceAll(' ', '');
-    final buf = StringBuffer();
-    for (int i = 0; i < digits.length && i < 16; i++) {
-      if (i > 0 && i % 4 == 0) buf.write(' ');
-      buf.write(digits[i]);
-    }
-    return buf.toString();
-  }
-
   @override
   void dispose() {
     _nameCtrl.dispose();
-    _cardNumCtrl.dispose();
-    _cardExpCtrl.dispose();
-    _cardNameCtrl.dispose();
-    _cvvCtrl.dispose();
     _clabeCtrl.dispose();
     super.dispose();
   }
@@ -562,67 +532,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
             const SizedBox(height: 28),
           ],
 
-          // ── Tarjeta de banco ─────────────────────────────────────────────────
-          _SectionLabel('Tarjeta de banco'),
-          const SizedBox(height: 12),
-          _CardPreview(
-            number: _cardNumCtrl.text,
-            expiry: _cardExpCtrl.text,
-            name:   _cardNameCtrl.text,
-            color:  avatarColor,
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _cardNumCtrl,
-            style: TextStyle(color: inputText, fontSize: 16, letterSpacing: 2),
-            keyboardType: TextInputType.number,
-            maxLength: 19,
-            inputFormatters: [_CardNumberFormatter()],
-            onChanged: (_) => setState(() {}),
-            decoration: _inputDeco('Número de tarjeta', Icons.credit_card).copyWith(counterText: ''),
-          ),
-          const SizedBox(height: 12),
-          Row(children: [
-            Expanded(
-              child: TextField(
-                controller: _cardExpCtrl,
-                style: TextStyle(color: inputText, fontSize: 16),
-                keyboardType: TextInputType.number,
-                maxLength: 5,
-                inputFormatters: [_ExpiryFormatter()],
-                onChanged: (_) => setState(() {}),
-                decoration: _inputDeco('MM/AA', Icons.calendar_today_outlined).copyWith(counterText: ''),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: TextField(
-                controller: _cvvCtrl,
-                style: TextStyle(color: inputText, fontSize: 16),
-                keyboardType: TextInputType.number,
-                maxLength: 4,
-                obscureText: !_showCvv,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: _inputDeco('CVV', Icons.lock_outline).copyWith(
-                  counterText: '',
-                  suffixIcon: IconButton(
-                    icon: Icon(_showCvv ? Icons.visibility_off : Icons.visibility,
-                        color: cardSub, size: 18),
-                    onPressed: () => setState(() => _showCvv = !_showCvv),
-                  ),
-                ),
-              ),
-            ),
-          ]),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _cardNameCtrl,
-            style: TextStyle(color: inputText, fontSize: 16),
-            textCapitalization: TextCapitalization.characters,
-            onChanged: (_) => setState(() {}),
-            decoration: _inputDeco('Nombre en la tarjeta', Icons.person_outline),
-          ),
-          const SizedBox(height: 40),
+          // Nota: el pago con tarjeta se procesa siempre con Stripe (PaymentSheet)
+          // directo en el checkout — no se guarda ningún dato de tarjeta aquí.
 
           // ── Sesión ──────────────────────────────────────────────────────────
           _SectionLabel('Sesión'),
@@ -668,115 +579,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
           borderRadius: BorderRadius.circular(14),
           borderSide: const BorderSide(color: AppConstants.primaryColor, width: 1.5)),
     );
-  }
-}
-
-// ── Card Preview ─────────────────────────────────────────────────────────────
-
-class _CardPreview extends StatelessWidget {
-  final String number, expiry, name;
-  final Color color;
-  const _CardPreview({required this.number, required this.expiry, required this.name, required this.color});
-
-  String _masked(String raw) {
-    final digits = raw.replaceAll(' ', '');
-    if (digits.isEmpty) return '•••• •••• •••• ••••';
-    final buf = StringBuffer();
-    for (int i = 0; i < 16; i++) {
-      if (i > 0 && i % 4 == 0) buf.write(' ');
-      buf.write(i < digits.length ? digits[i] : '•');
-    }
-    return buf.toString();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 180,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        gradient: LinearGradient(
-          colors: [color, color.withValues(alpha: 0.6)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        boxShadow: [BoxShadow(color: color.withValues(alpha: 0.4), blurRadius: 20, offset: const Offset(0, 8))],
-      ),
-      child: Stack(
-        children: [
-          // Círculos decorativos
-          Positioned(top: -20, right: -20,
-            child: Container(width: 120, height: 120,
-                decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withValues(alpha: 0.06)))),
-          Positioned(bottom: -30, right: 30,
-            child: Container(width: 80, height: 80,
-                decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withValues(alpha: 0.06)))),
-          Padding(
-            padding: const EdgeInsets.all(22),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(children: [
-                  const Icon(Icons.credit_card, color: Colors.white, size: 28),
-                  const Spacer(),
-                  Text('BANCO', style: TextStyle(color: Colors.white.withValues(alpha: 0.7),
-                      fontWeight: FontWeight.bold, fontSize: 13, letterSpacing: 2)),
-                ]),
-                const Spacer(),
-                Text(_masked(number),
-                    style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold,
-                        letterSpacing: 3, fontFamily: 'monospace')),
-                const SizedBox(height: 16),
-                Row(children: [
-                  Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text('TITULAR', style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 9, letterSpacing: 1)),
-                    Text(name.isEmpty ? '••••••••••' : name.toUpperCase(),
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
-                  ]),
-                  const Spacer(),
-                  Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text('VENCE', style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 9, letterSpacing: 1)),
-                    Text(expiry.isEmpty ? '••/••' : expiry,
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
-                  ]),
-                ]),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ── Formatters ────────────────────────────────────────────────────────────────
-
-class _CardNumberFormatter extends TextInputFormatter {
-  @override
-  TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
-    final digits = newValue.text.replaceAll(' ', '');
-    final buf = StringBuffer();
-    for (int i = 0; i < digits.length && i < 16; i++) {
-      if (i > 0 && i % 4 == 0) buf.write(' ');
-      buf.write(digits[i]);
-    }
-    final text = buf.toString();
-    return TextEditingValue(text: text, selection: TextSelection.collapsed(offset: text.length));
-  }
-}
-
-class _ExpiryFormatter extends TextInputFormatter {
-  @override
-  TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
-    final digits = newValue.text.replaceAll('/', '');
-    if (digits.length > 4) return oldValue;
-    String text = digits;
-    if (digits.length >= 3) {
-      text = '${digits.substring(0, 2)}/${digits.substring(2)}';
-    } else if (digits.length == 2 && oldValue.text.length < newValue.text.length) {
-      text = '$digits/';
-    }
-    return TextEditingValue(text: text, selection: TextSelection.collapsed(offset: text.length));
   }
 }
 

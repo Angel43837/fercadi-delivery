@@ -427,6 +427,23 @@ class SupabaseService {
     } catch (_) { return []; }
   }
 
+  // ¿El repartidor logueado pertenece a la flota de algún jefe?
+  // Sus ganancias/entregas las administra el jefe de flota desde su panel,
+  // así que no se le muestran esas estadísticas al propio repartidor.
+  static Future<bool> riderTieneFlota() async {
+    if (useMock) return false;
+    try {
+      final uid = _client.auth.currentUser?.id;
+      if (uid == null) return false;
+      final data = await _client
+          .from('flota_members')
+          .select('jefe_id')
+          .eq('rider_id', uid)
+          .maybeSingle();
+      return data != null;
+    } catch (_) { return false; }
+  }
+
   // Rider transmite su ubicación (funciona con o sin pedido activo)
   static Future<void> broadcastRiderPresence(double lat, double lng) async {
     if (useMock) return;
@@ -872,6 +889,8 @@ class SupabaseService {
     double? lng,
     double deliveryFee = 0,
     String? clientFcmToken,
+    String? paymentStatus,
+    String? stripePaymentIntentId,
   }) async {
     final orderId = 'ord_${DateTime.now().millisecondsSinceEpoch}';
     final deliveryJson = jsonEncode({
@@ -889,6 +908,8 @@ class SupabaseService {
       'delivery_fee':  deliveryFee,
       'status':        'pending',
       'customer_name': deliveryJson,
+      if (paymentStatus != null) 'payment_status': paymentStatus,
+      if (stripePaymentIntentId != null) 'stripe_payment_intent_id': stripePaymentIntentId,
     });
     if (items.isNotEmpty) {
       await _client.from('order_items').insert(

@@ -12,7 +12,7 @@ serve(async (req) => {
   }
 
   try {
-    const { amount, currency = 'mxn', orderId } = await req.json()
+    const { amount, currency = 'mxn', orderId, paymentMethodType } = await req.json()
 
     // Validar monto básico
     if (!amount || amount <= 0) {
@@ -63,8 +63,16 @@ serve(async (req) => {
       amount: String(Math.round(verifiedAmount * 100)), // Stripe usa centavos
       currency,
       'metadata[orderId]': orderId ?? '',
-      'automatic_payment_methods[enabled]': 'true',
     })
+
+    // OXXO no es compatible con "automatic_payment_methods" en modo automático
+    // sin datos de envío — se pide explícitamente. El resto (tarjeta) sigue
+    // usando automatic_payment_methods para que Stripe elija lo disponible.
+    if (paymentMethodType === 'oxxo') {
+      body.set('payment_method_types[]', 'oxxo')
+    } else {
+      body.set('automatic_payment_methods[enabled]', 'true')
+    }
 
     const stripeRes = await fetch('https://api.stripe.com/v1/payment_intents', {
       method: 'POST',
@@ -85,7 +93,7 @@ serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ clientSecret: paymentIntent.client_secret }),
+      JSON.stringify({ clientSecret: paymentIntent.client_secret, id: paymentIntent.id }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     )
   } catch (e) {

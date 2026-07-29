@@ -9,7 +9,7 @@
 |---|---|---|
 | **Efectivo** | ✅ Activo | No (el repartidor cobra en mano) |
 | **Tarjeta (Stripe)** | ✅ Activo (modo prueba) | Sí |
-| **OXXO Pay** | ⚠️ Parcial (webhook pendiente) | Sí |
+| **OXXO Pay** | ⚠️ Código listo, falta configuración externa (ver sección 3) | Sí |
 
 ---
 
@@ -88,15 +88,58 @@ CVV y fecha: cualquier valor válido (ej. `123` y `12/29`).
 
 ## 3. OXXO Pay
 
+### Flujo completo (implementado julio 2026)
+
 ```
-Cliente elige "OXXO" → Stripe genera número de referencia
-→ Cliente va al OXXO y paga con ese número
-→ OXXO notifica a Stripe (puede tardar 1-3 días)
-→ Stripe manda webhook a Supabase
-→ Pedido se actualiza como pagado
+Cliente elige "OXXO Pay" en checkout
+    │
+    ▼
+checkout_screen.dart llama a "create-payment-intent" con paymentMethodType: "oxxo"
+    │
+    ▼
+Stripe crea el PaymentIntent (payment_method_types: ["oxxo"])
+    │
+    ▼
+La app confirma el pago con Stripe.instance.confirmPayment(...) — esto es lo
+que genera la ficha real (número de referencia + link para verla/imprimirla)
+    │
+    ▼
+Se le muestra al cliente la ficha (número + fecha de vencimiento + botón
+"Abrir ficha"). El pedido se crea con payment_status = "pending"
+    │
+    ▼
+Cliente paga en cualquier tienda OXXO (puede tardar horas/días)
+    │
+    ▼
+Stripe manda un webhook a la Edge Function "stripe-webhook"
+    │
+    ▼
+Se actualiza el pedido: payment_status = "paid"
 ```
 
-**Estado actual:** La opción aparece en la UI pero el webhook de OXXO no está configurado en Supabase. Pendiente de implementar.
+El pago con tarjeta no necesita este webhook porque se confirma al instante (el `PaymentSheet` no continúa si el banco no aprueba). OXXO es asíncrono — por eso necesita el webhook.
+
+### Qué falta para que funcione en producción (configuración externa, no código)
+
+1. **Correr el SQL una vez** en Supabase → SQL Editor (agrega las columnas nuevas a `orders`):
+   ```sql
+   ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status TEXT;
+   ALTER TABLE orders ADD COLUMN IF NOT EXISTS stripe_payment_intent_id TEXT;
+   ```
+2. **Verificar que OXXO esté habilitado** en el Dashboard de Stripe: Settings → Payment methods → OXXO (debe estar en "On"). Sin esto, Stripe rechaza el PaymentIntent aunque el código esté bien.
+3. **Desplegar las dos Edge Functions** (la de crear el pago se actualizó, y hay una nueva para el webhook):
+   ```bash
+   supabase functions deploy create-payment-intent
+   supabase functions deploy stripe-webhook --no-verify-jwt
+   ```
+   (`--no-verify-jwt` porque Stripe llama a esa URL sin el token de Supabase)
+4. **Crear el webhook en Stripe**: Dashboard → Developers → Webhooks → Add endpoint
+   - URL: `https://<tu-proyecto>.supabase.co/functions/v1/stripe-webhook`
+   - Eventos: `payment_intent.succeeded`, `payment_intent.payment_failed`, `payment_intent.canceled`
+   - Copiar el "Signing secret" (`whsec_...`)
+5. **Guardar el signing secret** en Supabase → Edge Functions → Secrets: `STRIPE_WEBHOOK_SECRET = whsec_...`
+
+**Cómo probar en modo test:** Stripe tiene un modo de simulación para OXXO — en el Dashboard, con el PaymentIntent en estado "requires_action", hay un botón para simular que el cliente pagó en tienda, lo cual dispara el webhook igual que en producción.
 
 ---
 
