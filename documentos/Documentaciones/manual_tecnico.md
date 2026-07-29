@@ -35,6 +35,10 @@ void main() async {
 
 Punto de entrada alternativo que solo monta la ruta `/admin`. Se usa para compilar la APK exclusiva del administrador Fercadi.
 
+### `lib/main_flota.dart` — App de flota
+
+Igual que `main_admin.dart`: punto de entrada separado que solo monta `/flota-login` y `/flota`, con su propio `GoRouter`. Nada de esto se compila dentro de `main.dart` (la app cliente). Ver [`manual_ios.md`](manual_ios.md).
+
 ---
 
 ## 2. Sistema de Navegación (go_router)
@@ -48,12 +52,12 @@ final appRouter = GoRouter(
     GoRoute(path: '/',              builder: (_, _) => const SplashScreen()),
     GoRoute(path: '/login',         builder: (_, _) => const LoginScreen()),
     GoRoute(path: '/restaurants',   builder: (_, _) => const RestaurantsScreen()),
-    GoRoute(path: '/flota-login',   builder: (_, _) => const FlotaLoginScreen()),
-    GoRoute(path: '/flota',         builder: (_, _) => const FlotaScreen()),
     // ... más rutas
   ],
 );
 ```
+
+> `/admin` y `/flota` no están en este router — viven en sus propios entry points (`main_admin.dart`, `main_flota.dart`).
 
 ### Cómo navegar entre pantallas
 
@@ -156,24 +160,11 @@ Future<void> _navigate() async {
     return;
   }
 
-  // Admin y flota requieren verificar la sesión viva de Supabase
-  if (!useMock && (route == '/admin' || route == '/flota')) {
-    final supabaseSession = await _waitForSupabaseSession();
-    if (supabaseSession == null) {
-      await AuthService.clearSession();
-      context.go('/login');
-      return;
-    }
-    final liveRole = supabaseSession.user.userMetadata?['role'];
-    if (liveRole == 'admin') { context.go('/admin'); return; }
-    if (liveRole == 'jefe_flota') { context.go('/flota'); return; }
-    context.go('/login');
-    return;
-  }
-
   context.go(route);
 }
 ```
+
+> `admin` y `jefe_flota` ya no pasan por aquí — cada uno tiene su propia app/router separado (`main_admin.dart` / `main_flota.dart`), así que este splash (el de la app cliente) no necesita saber nada de esos roles.
 
 ### Esperar la sesión inicial de Supabase (Web)
 

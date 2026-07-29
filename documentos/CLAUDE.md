@@ -40,6 +40,9 @@ Supabase real: `false` + credenciales en `lib/core/constants.dart`
 | Dueño | `/dueno` | Panel naranja — pedidos, productos, config restaurante |
 | Repartidor | `/repartidor` | Pedidos activos (solo app móvil, web muestra aviso) |
 | Admin | `/admin` | Panel oscuro — todos los restaurantes, pedidos, usuarios |
+| Jefe de flota | `/flota` | Panel de riders a su cargo (mapa, entregas, ganancias) |
+
+**Admin y Jefe de flota son apps/sitios separados**, no viven dentro de GOGO Food: `lib/main_admin.dart` / `lib/main_flota.dart`, cada uno con su propio router (`_adminRouter` / `_flotaRouter`), bundle id (`com.fercadi.admin` / `com.fercadi.flota`) y build (Android APK propio, flavor de iOS propio, sitio web propio). Ver `documentos/Documentaciones/manual_ios.md`.
 
 El rol se guarda en `user_metadata.role` en Supabase Auth y en SharedPreferences.
 La sesión persiste: el splash espera el evento `initialSession` de Supabase antes de rutear.

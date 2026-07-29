@@ -63,7 +63,7 @@ App de delivery de comida para Maravatío, Michoacán. Permite a los clientes pe
 | **Cliente** | `/login` | `/restaurants` | Web o móvil |
 | **Dueño** | `/restaurante` | `/dueno` | Web o móvil |
 | **Repartidor** | `/moto` | `/repartidor` | Solo móvil |
-| **Jefe de flota** | `/flota-login` | `/flota` | Web |
+| **Jefe de flota** | App/Web GOGO Flota | `/flota` | App separada + Web propia |
 | **Admin Fercadi** | App GOGOAdmin.apk | `/admin` | App separada |
 
 El rol se guarda en `user_metadata.role` en Supabase Auth y en SharedPreferences para persistencia offline.
@@ -79,9 +79,12 @@ Usuario abre la app
         │
         ├── Sin sesión ─────────────► /login
         ├── rol cliente ────────────► /restaurants
-        ├── rol jefe_flota ─────────► /flota  (verifica Supabase)
         └── dueno/repartidor ───────► Su propio login separado
 ```
+
+> `admin` y `jefe_flota` no pasan por este splash — tienen sus propias apps
+> (`main_admin.dart` / `main_flota.dart`), cada una con su propio router y
+> login, completamente separadas del binario de GOGO Food.
 
 ---
 
@@ -137,7 +140,9 @@ auth.jwt() -> 'user_metadata' ->> 'role'
 
 Para empresarios que tienen motos propias y repartidores a su cargo.
 
-- **Jefe de flota** entra por `/flota-login` y ve su panel
+Desde julio 2026, GOGO Flota es una **app completamente separada** de GOGO Food (mismo patrón que Admin): punto de entrada propio (`lib/main_flota.dart`), su propio router (solo `/flota-login` y `/flota`, sin nada del cliente), su propio bundle id (`com.fercadi.flota`) y su propio build web. Antes vivía dentro del router del cliente (`router.dart`), lo que hacía que su código se compilara también dentro de GOGO Food aunque nadie lo usara ahí — ver [`manual_ios.md`](manual_ios.md).
+
+- **Jefe de flota** entra por su propia app o su propio sitio web (`/flota-login` → `/flota`)
 - Ve: ubicación en mapa de cada rider, pedido activo, entregas del día, ganancias
 - Los repartidores transmiten GPS continuamente mientras tienen la app abierta
 - El panel actualiza cada 10 segundos automáticamente

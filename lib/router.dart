@@ -26,12 +26,8 @@ import 'screens/registro_repartidor_screen.dart';
 import 'screens/registro_restaurante_screen.dart';
 import 'screens/dueno_login_screen.dart';
 import 'screens/repartidor_login_screen.dart';
-import 'screens/flota_screen.dart';
-import 'screens/flota_login_screen.dart';
 import 'screens/repartidor_plus_screen.dart';
 import 'screens/registro_rider_plus_screen.dart';
-import 'screens/admin_screen.dart';
-import 'screens/admin_login_screen.dart';
 import 'screens/tienda_rider_screen.dart';
 
 // Notifica a GoRouter cada vez que el estado de autenticación de Supabase cambia.
@@ -55,13 +51,13 @@ const _clientRoutes = {
   '/cart', '/checkout', '/tracking', '/history',
 };
 
+// 'admin' y 'jefe_flota' tienen sus propias apps separadas (main_admin.dart /
+// main_flota.dart) y no tienen pantallas dentro de este router.
 String _roleHome(String role) {
   switch (role) {
     case 'repartidor_plus': return '/rider';
     case 'repartidor':      return '/repartidor';
     case 'dueno':           return '/dueno';
-    case 'admin':           return '/admin';
-    case 'jefe_flota':      return '/flota';
     default:                return '/restaurants';
   }
 }
@@ -77,7 +73,7 @@ final appRouter = GoRouter(
     const open = {
       '/', '/login', '/moto', '/repartidor-login', '/dueno-login',
       '/restaurante', '/registro-repartidor', '/registro-rider',
-      '/registro-restaurante', '/flota-login', '/admin-login',
+      '/registro-restaurante',
     };
     if (open.contains(loc)) return null;
 
@@ -89,8 +85,7 @@ final appRouter = GoRouter(
 
     // Bloquear rutas de cliente a usuarios con otro rol
     if (_clientRoutes.contains(loc) &&
-        (role == 'repartidor_plus' || role == 'repartidor' ||
-         role == 'dueno'           || role == 'admin'       || role == 'jefe_flota')) {
+        (role == 'repartidor_plus' || role == 'repartidor' || role == 'dueno')) {
       return _roleHome(role);
     }
 
@@ -98,8 +93,6 @@ final appRouter = GoRouter(
     if (loc == '/rider'      && role != 'repartidor_plus') return _roleHome(role);
     if (loc == '/repartidor' && role != 'repartidor')      return _roleHome(role);
     if (loc == '/dueno'      && role != 'dueno' && role != 'admin') return _roleHome(role);
-    if (loc == '/admin'      && role != 'admin')           return _roleHome(role);
-    if (loc == '/flota'      && role != 'jefe_flota')      return _roleHome(role);
 
     return null;
   },
@@ -134,10 +127,6 @@ final appRouter = GoRouter(
     GoRoute(path: '/repartidor-login', builder: (_, _) => const RepartidorLoginScreen()),
     GoRoute(path: '/rider',        builder: (_, _) => const RepartidorPlusScreen()),
     GoRoute(path: '/registro-rider', builder: (_, _) => const RegistroRiderPlusScreen()),
-    GoRoute(path: '/flota-login',  builder: (_, _) => const FlotaLoginScreen()),
-    GoRoute(path: '/flota',        builder: (_, _) => const FlotaScreen()),
-    GoRoute(path: '/admin',        builder: (_, _) => const AdminScreen()),
-    GoRoute(path: '/admin-login',  builder: (_, _) => const AdminLoginScreen()),
     GoRoute(path: '/registro-restaurante', builder: (_, _) => const RegistroRestauranteScreen()),
     GoRoute(
       path: '/tienda-rider',

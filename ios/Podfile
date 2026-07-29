@@ -12,6 +12,9 @@ project 'Runner', {
   'Debug-admin' => :debug,
   'Profile-admin' => :release,
   'Release-admin' => :release,
+  'Debug-flota' => :debug,
+  'Profile-flota' => :release,
+  'Release-flota' => :release,
 }
 
 def flutter_root

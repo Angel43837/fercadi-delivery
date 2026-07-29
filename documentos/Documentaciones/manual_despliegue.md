@@ -64,6 +64,31 @@ Si algo sale mal:
 | `/restaurante` | Login del dueño (tema naranja) |
 | `/dueno` | Panel del dueño |
 | `/moto` | Login del repartidor |
+
+> `/flota-login` y `/flota` **ya no viven aquí** — GOGO Flota tiene su propio sitio web separado, ver sección 1.1.
+
+---
+
+## 1.1 Despliegue Web — GOGO Flota (sitio separado)
+
+Desde julio 2026, GOGO Flota (panel del jefe de flota) es una app y un sitio web **completamente separados** de GOGO Food — mismo motivo que Admin: no compilar ese código dentro del binario/bundle del cliente. Esto también resuelve el problema histórico de que la sesión del jefe de flota interfiriera con la sesión del cliente en el mismo navegador (ver P8 en la documentación completa) — al ser otro dominio, el navegador no comparte `localStorage` entre los dos sitios.
+
+```powershell
+# Paso 1 — Compilar el entry point de flota a JavaScript (carpeta de salida distinta)
+flutter build web --release --target lib/main_flota.dart -o build/web-flota
+
+# Paso 2 — Copiar la configuración de rutas al build
+Copy-Item vercel.json build/web-flota/vercel.json -Force
+
+# Paso 3 — Subir a producción (proyecto de Vercel separado, ej. "gogo-flota")
+cd build/web-flota
+npx vercel --prod --archive=tgz
+```
+
+> ⚠️ Importante: usar la cuenta de Vercel correcta (la misma donde vive el proyecto `web-iota-brown-32`), para que quede organizado junto con los demás sitios de Fercadi y no se cree una cuenta/proyecto suelto.
+
+| URL | Pantalla |
+|---|---|
 | `/flota-login` | Login del jefe de flota |
 | `/flota` | Panel del jefe de flota |
 
@@ -71,12 +96,13 @@ Si algo sale mal:
 
 ## 2. Despliegue Android — APKs
 
-Se generan **dos APKs independientes**:
+Se generan **tres APKs independientes**:
 
 | APK | Para quién | Entry point |
 |---|---|---|
 | `GOGOFood.apk` | Clientes y repartidores | `lib/main.dart` |
 | `GOGOAdmin.apk` | Administrador Fercadi | `lib/main_admin.dart` |
+| `GOGOFlota.apk` | Jefe de flota | `lib/main_flota.dart` |
 
 ### Generar las APKs
 
@@ -85,6 +111,7 @@ Se generan **dos APKs independientes**:
 # Resultado:
 #   build\GOGOFood.apk    (~35 MB)
 #   build\GOGOAdmin.apk   (~35 MB)
+#   build\GOGOFlota.apk   (~35 MB)
 ```
 
 ### Instalar en teléfonos (sin Play Store)

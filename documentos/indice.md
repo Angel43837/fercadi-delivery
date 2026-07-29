@@ -40,6 +40,7 @@
 - [2026-07-03 Jueves](sesiones/2026-07-03.md)
 - [2026-07-06 Domingo](sesiones/2026-07-06.md)
 - [2026-07-28 Martes](sesiones/2026-07-28.md)
+- [2026-07-29 Miércoles](sesiones/2026-07-29.md)
 
 ## SQL — Base de datos
 
@@ -48,4 +49,4 @@
 
 ---
 
-*Última actualización: 2026-07-28*
+*Última actualización: 2026-07-29*

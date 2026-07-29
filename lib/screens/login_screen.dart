@@ -46,7 +46,6 @@ class _LoginScreenState extends State<LoginScreen> {
         final route = role == 'repartidor'      ? '/repartidor'
                     : role == 'repartidor_plus' ? '/rider'
                     : role == 'dueno'           ? '/dueno'
-                    : role == 'admin'           ? '/admin'
                     : '/restaurants';
         await AuthService.saveSession(email, route);
         if (mounted) context.go(route);
@@ -91,8 +90,7 @@ class _LoginScreenState extends State<LoginScreen> {
           password: _passwordController.text,
         );
         final role = (res.user?.appMetadata['role'] ?? res.user?.userMetadata?['role']) as String?;
-        final route = role == 'admin'           ? '/admin'
-                    : role == 'repartidor'      ? '/repartidor'
+        final route = role == 'repartidor'      ? '/repartidor'
                     : role == 'repartidor_plus' ? '/rider'
                     : role == 'dueno'           ? '/dueno'
                     : '/restaurants';

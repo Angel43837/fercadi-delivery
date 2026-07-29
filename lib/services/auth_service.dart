@@ -115,7 +115,6 @@ class AuthService {
 
   static String roleToRoute(String email) {
     switch (email.toLowerCase()) {
-      case 'admin@fercadi.com':      return '/admin';
       case 'repartidor@fercadi.com': return '/repartidor';
       case 'dueno@fercadi.com':      return '/dueno';
       default:                       return '/restaurants';

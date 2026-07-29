@@ -195,7 +195,7 @@ La app tiene **5 roles**. Cada rol tiene su propia pantalla de inicio y su propi
 | **Dueño de restaurante** | `dueno` | `/restaurante` | `/dueno` | Web o móvil |
 | **Repartidor** | `repartidor` | `/moto` | `/repartidor` | Solo móvil (en web muestra aviso) |
 | **Administrador Fercadi** | `admin` | App GOGOAdmin.apk | `/admin` | App separada |
-| **Jefe de flota** | `jefe_flota` | `/flota-login` | `/flota` | Web (panel de control) |
+| **Jefe de flota** | `jefe_flota` | App/Web GOGO Flota | `/flota` | App separada + Web propia |
 
 ### ¿Cómo decide la app adónde ir al abrir?
 
@@ -221,17 +221,13 @@ Usuario abre la app (URL raíz "/")
             │                ├── "/dueno" ───────────────► Limpia sesión → /login
             │                │   (los dueños tienen su propio login en /restaurante)
             │                │
-            │                ├── "/repartidor" ──────────► Limpia sesión → /login
-            │                │   (los repartidores tienen su propio login en /moto)
-            │                │
-            │                └── "/flota" ───────────────► Verifica sesión Supabase
-            │                    o "/admin"                 Si es jefe_flota → /flota
-            │                                               Si es admin → /admin
-            │                                               Si no coincide → /login
-            │
-     Jefe de flota entra por /flota-login
-     (no interfiere con el flujo de arriba)
+            │                └── "/repartidor" ──────────► Limpia sesión → /login
+            │                    (los repartidores tienen su propio login en /moto)
 ```
+
+> `admin` y `jefe_flota` no pasan por este splash — cada uno tiene su propia
+> app separada (`main_admin.dart` / `main_flota.dart`, ver [`manual_ios.md`](manual_ios.md)),
+> con su propio router y login, sin código compartido con GOGO Food.
 
 ### ¿Dónde se guarda el rol?
 
@@ -472,6 +468,8 @@ Cada card de rider tiene un mapa de OpenStreetMap (funciona en web, sin costo):
 - Botón **"Abrir en Google Maps"**: abre las coordenadas en Google Maps en nueva pestaña
 
 ### Rutas del panel de flota
+
+App/web separada (`lib/main_flota.dart`), no dentro del router de GOGO Food — ver [`manual_ios.md`](manual_ios.md).
 
 | URL | Pantalla |
 |---|---|
@@ -950,11 +948,10 @@ El plan gratuito tiene un problema crítico: **la base de datos se "duerme" desp
 
 ---
 
-### P8 — Sesiones del panel de flota interfieren con la app cliente
-**Síntoma:** El jefe de flota entra a su panel y la app cliente (para pedir comida) lo manda al panel de flota.  
-**Causa:** La sesión de Supabase es compartida en el mismo navegador.  
-**Solución implementada:** El panel de flota usa sesión independiente — no escribe en SharedPreferences. El splash screen de la app cliente no verifica la sesión de Supabase para el rol jefe_flota.  
-**Solución práctica:** El jefe de flota debe usar el panel desde `web-iota-brown-32.vercel.app/flota-login`. Si quiere pedir comida como cliente, debe usar otro navegador o modo incógnito.
+### P8 — Sesiones del panel de flota interfieren con la app cliente (RESUELTO, julio 2026)
+**Síntoma (histórico):** El jefe de flota entraba a su panel y la app cliente (para pedir comida) lo mandaba al panel de flota.  
+**Causa:** La sesión de Supabase era compartida en el mismo navegador porque el panel de flota vivía dentro del mismo sitio/router que la app cliente.  
+**Solución definitiva:** GOGO Flota se separó en su propia app y su propio sitio web (dominio/origen distinto — ver [`manual_ios.md`](manual_ios.md) y [`manual_despliegue.md`](manual_despliegue.md)). Al ser un origen distinto, el navegador ya no comparte `localStorage`/sesión de Supabase con la app cliente, así que el problema no puede volver a ocurrir.
 
 ---
 

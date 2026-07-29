@@ -148,7 +148,7 @@ Panel oscuro para el administrador:
 
 - Pantalla oscura con acento azul
 - Solo acepta cuentas con rol `jefe_flota`
-- NO guarda en SharedPreferences para no interferir con el cliente
+- Desde julio 2026 vive en su propia app/sitio (`lib/main_flota.dart`), no dentro del router del cliente — ver [`manual_ios.md`](manual_ios.md)
 - Si ya hay sesión activa → redirige automáticamente al panel
 
 ### `flota_screen.dart` — Panel del jefe de flota
@@ -175,9 +175,11 @@ Panel oscuro para el administrador:
 
 ## 4. Cómo Funciona la Navegación
 
-Se usa `go_router` — todas las rutas están en `lib/router.dart`.
+Se usa `go_router` — todas las rutas de la app cliente están en `lib/router.dart`.
 
-### Rutas definidas
+`/admin` y `/flota` **no están aquí** — cada uno tiene su propio entry point y router (`lib/main_admin.dart`, `lib/main_flota.dart`), separados del binario/bundle del cliente. Ver [`manual_ios.md`](manual_ios.md).
+
+### Rutas definidas (router del cliente)
 
 ```dart
 GoRoute(path: '/',              → SplashScreen)
@@ -187,9 +189,6 @@ GoRoute(path: '/restaurante',   → DuenoLoginScreen)
 GoRoute(path: '/dueno',         → DuenoScreen)
 GoRoute(path: '/moto',          → RepartidorLoginScreen)
 GoRoute(path: '/repartidor',    → RepartidorScreen)
-GoRoute(path: '/flota-login',   → FlotaLoginScreen)
-GoRoute(path: '/flota',         → FlotaScreen)
-GoRoute(path: '/admin',         → AdminScreen)
 GoRoute(path: '/checkout',      → CheckoutScreen)
 GoRoute(path: '/tracking',      → TrackingScreen)
 ```

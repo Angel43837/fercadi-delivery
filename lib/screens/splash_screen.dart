@@ -86,10 +86,10 @@ class _SplashScreenState extends State<SplashScreen>
 
     final route = switch (role) {
       'dueno'          => '/dueno',
-      'admin'          => '/admin',
       'repartidor'     => '/repartidor',
       'repartidor_plus'=> '/rider',
-      'jefe_flota'     => '/flota',
+      // 'admin' y 'jefe_flota' tienen sus propias apps (main_admin.dart /
+      // main_flota.dart) y no navegan dentro del router del cliente.
       _                => '/restaurants',
     };
 

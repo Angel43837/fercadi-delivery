@@ -65,6 +65,19 @@ La app admin (`com.fercadi.admin`) es un segundo target/flavor dentro del mismo 
 - `ios/Flutter/Debug-admin.xcconfig`, `Release-admin.xcconfig`, `Profile-admin.xcconfig`
 - Se corre con: `flutter run --flavor admin --target lib/main_admin.dart`
 
+## 3.1 Flavor "GOGO Flota" en iOS
+
+Mismo patrón exacto que Admin. Antes las pantallas de jefe de flota (`/flota-login`, `/flota`) vivían dentro del router compartido de la app cliente (`router.dart`), lo que hacía que ese código se compilara también dentro de GOGO Food aunque un cliente normal nunca las viera. Julio 2026: se separó en su propia app, igual que Admin — más ligero para GOGO Food y sin código de flota "escondido" en el mismo binario.
+
+- Entry point Dart propio: `lib/main_flota.dart` (su propio `GoRouter`, solo `/flota-login` y `/flota`, sin nada del cliente)
+- `ios/Runner/Info-Flota.plist` — nombre "GOGO Flota", esquema de URL `fercadiflota://`, bundle id `com.fercadi.flota`
+- `ios/Flutter/Debug-flota.xcconfig`, `Release-flota.xcconfig`, `Profile-flota.xcconfig`
+- Scheme de Xcode: `flota.xcscheme`
+- Se corre con: `flutter run --flavor flota --target lib/main_flota.dart`
+- También tiene su propio build web (ver [`manual_despliegue.md`](manual_despliegue.md)) para no perder el acceso desde navegador que tenía antes.
+
+> Nota técnica: el widget de pantalla de inicio (`GOGOTrackingWidgetExtension`) tiene configuraciones de build para todos los flavors (Debug/Release/Profile-flota y -admin) solo porque comparte el mismo proyecto de Xcode — no se usa realmente ni en Admin ni en Flota, es exclusivo de la app cliente.
+
 ---
 
 ## 4. Publicar en App Store (cuando se pague la cuenta)
