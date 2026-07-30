@@ -243,6 +243,22 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   // el pedido y que el webhook lo marque como pagado cuando se pague en
   // tienda), o null si se canceló/falló.
   Future<String?> _payWithOxxo(double total) async {
+    // OXXO exige nombre y apellido (mínimo 2 letras cada uno) para generar
+    // la ficha — si falta, Stripe lo rechaza con un mensaje genérico poco
+    // claro. Se valida antes de llamar a Stripe para dar un mensaje útil.
+    final nameParts = _nameCtrl.text.trim().split(RegExp(r'\s+'));
+    final hasFullName = nameParts.length >= 2 && nameParts.every((p) => p.length >= 2);
+    if (!hasFullName) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Para pagar con OXXO escribe tu nombre completo (nombre y apellido) en "Nombre del destinatario".'),
+          backgroundColor: Colors.redAccent,
+          duration: Duration(seconds: 4),
+        ));
+      }
+      return null;
+    }
+
     try {
       final res = await Supabase.instance.client.functions.invoke(
         'create-payment-intent',
@@ -255,17 +271,32 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       }
 
       final email = Supabase.instance.client.auth.currentUser?.email;
-      final intent = await Stripe.instance.confirmPayment(
-        paymentIntentClientSecret: clientSecret,
-        data: PaymentMethodParams.oxxo(
-          paymentMethodData: PaymentMethodData(
-            billingDetails: BillingDetails(
-              name: _nameCtrl.text.trim(),
-              email: email,
+      PaymentIntent intent;
+      try {
+        intent = await Stripe.instance.confirmPayment(
+          paymentIntentClientSecret: clientSecret,
+          data: PaymentMethodParams.oxxo(
+            paymentMethodData: PaymentMethodData(
+              billingDetails: BillingDetails(
+                name: _nameCtrl.text.trim(),
+                email: email,
+              ),
             ),
           ),
-        ),
-      );
+        );
+      } on StripeException catch (e) {
+        // Bug conocido del plugin de Stripe en iOS con apps que usan el
+        // ciclo de vida "Scene" (SceneDelegate): el confirm SÍ se procesa
+        // bien en el servidor de Stripe, pero el SDK falla al intentar
+        // mostrar la UI de siguiente acción localmente. Como el pago ya
+        // se confirmó del lado de Stripe, se recupera el estado actual del
+        // PaymentIntent (sin volver a confirmar) para seguir el flujo normal.
+        if (e.error.message?.contains('window hierarchy') == true) {
+          intent = await Stripe.instance.retrievePaymentIntent(clientSecret);
+        } else {
+          rethrow;
+        }
+      }
 
       final voucher = intent.nextAction?.maybeWhen(
         displayOxxoDetails: (expiration, voucherURL, voucherNumber) =>
@@ -281,9 +312,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       final continued = await _showOxxoVoucher(voucher.url!, voucher.number, voucher.expiration);
       return continued ? intentId : null;
     } on StripeException catch (e) {
+      // ignore: avoid_print
+      print('OXXO StripeException: code=${e.error.code} message=${e.error.message} '
+          'localizedMessage=${e.error.localizedMessage} declineCode=${e.error.declineCode}');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(e.error.localizedMessage ?? 'No se pudo generar el pago OXXO'),
+          content: Text(e.error.localizedMessage ?? e.error.message ?? 'No se pudo generar el pago OXXO'),
           backgroundColor: Colors.redAccent,
         ));
       }
