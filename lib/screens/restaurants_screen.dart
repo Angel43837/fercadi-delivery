@@ -61,6 +61,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
   Map<String, dynamic>? _activeOrder;
   String _prevActiveStatus = '';
   Timer? _activeOrderTimer;
+  Timer? _promoRefreshTimer;
 
   @override
   void initState() {
@@ -75,6 +76,15 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
     _checkActiveOrder();
     _activeOrderTimer = Timer.periodic(
       const Duration(seconds: 8), (_) => _checkActiveOrder());
+    // Refresca periódicamente el estado de las promos: el rebuild general
+    // hace que isPromoActive (promo directa del platillo) se re-evalúe
+    // solo, y _recomputeBannerDiscounts() quita los descuentos de banner
+    // cuyo tiempo ya pasó — ese segundo camino no tenía ningún timer y se
+    // quedaba congelado para siempre una vez cargado.
+    _promoRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (!mounted) return;
+      setState(_recomputeBannerDiscounts);
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) => _promptLocationIfNeeded());
   }
 
@@ -82,6 +92,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
   void dispose() {
     _searchCtrl.dispose();
     _activeOrderTimer?.cancel();
+    _promoRefreshTimer?.cancel();
     super.dispose();
   }
 
@@ -281,12 +292,24 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
       _banners[restaurantId] = banners;
       _loadingMenu[restaurantId] = false;
       _selCat[restaurantId] = 0;
-      for (final b in banners) {
+      _recomputeBannerDiscounts();
+    });
+  }
+
+  // Reconstruye _bannerDiscounts desde cero a partir de los banners ya
+  // cargados en memoria — a diferencia del cálculo anterior (que solo
+  // agregaba entradas y nunca las quitaba), esto sí elimina los
+  // descuentos cuyo banner ya expiró. Se llama al cargar el menú y
+  // periódicamente desde _promoRefreshTimer.
+  void _recomputeBannerDiscounts() {
+    _bannerDiscounts.clear();
+    for (final list in _banners.values) {
+      for (final b in list) {
         if (b.productId != null && b.isDiscountActive) {
           _bannerDiscounts[b.productId!] = b.discountPercent!;
         }
       }
-    });
+    }
   }
 
   void _jumpToProduct(String restaurantId, String productId) {
