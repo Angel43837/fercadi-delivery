@@ -12,6 +12,9 @@
 .swiftpm/
 migrate_working_dir/
 
+# Supabase CLI local cache (contiene URL de conexión a la BD, no debe subirse)
+supabase/.temp/
+
 # IntelliJ related
 *.iml
 *.ipr
