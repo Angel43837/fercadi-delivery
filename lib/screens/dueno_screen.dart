@@ -340,7 +340,11 @@ class _DuenoScreenState extends State<DuenoScreen> {
             tooltip: 'Cerrar sesión',
             onPressed: () async {
               await AuthService.clearDuenoSession();
-              if (mounted) context.go('/restaurante');
+              if (!mounted) return;
+              // En la app móvil el dueño vuelve al login general del cliente
+              // (misma app, un rol más). En web sí regresa al portal
+              // dedicado "Mi Restaurante" (/restaurante).
+              context.go(kIsWeb ? '/restaurante' : '/login');
             },
           ),
           GestureDetector(
