@@ -111,11 +111,8 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   bool    _disponible   = true;
   _Order? _activeOrder;
   int     _step         = 0;
-  int     _entregasHoy  = 0;
-  double  _gananciaHoy  = 0;
   String  _displayName  = 'Repartidor';
   String? _photoPath;
-  bool    _perteneceAFlota = false;
 
   // GPS
   Position? _myPos;
@@ -147,7 +144,6 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     _pollTimer = Timer.periodic(const Duration(seconds: 8), (_) => _loadOrders());
     AuthService.getDisplayName().then((n) { if (mounted) setState(() => _displayName = n); });
     AuthService.getProfilePhoto().then((p) { if (mounted) setState(() => _photoPath = p); });
-    SupabaseService.riderTieneFlota().then((v) { if (mounted) setState(() => _perteneceAFlota = v); });
   }
 
   Future<void> _loadOrders() async {
@@ -317,8 +313,6 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
       SupabaseService.stopLocationBroadcast();
       NotificationService.entregaCompletada(ganancia);
       setState(() {
-        _entregasHoy++;
-        _gananciaHoy += ganancia;
         _activeOrder = null;
         _step = 0;
         _routePoints = [];
@@ -345,10 +339,6 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   // ── Lista de pedidos ──────────────────────────────────────────────────────────
 
   Widget _buildOrderList(bool isDark) {
-    final cardBg = isDark ? AppConstants.surfaceColor : Colors.white;
-    final textMain = isDark ? Colors.white : Colors.black87;
-    final textSub  = isDark ? Colors.white.withValues(alpha: 0.4) : Colors.black54;
-
     return CustomScrollView(
       slivers: [
         SliverToBoxAdapter(child: _buildHeader(isDark)),
@@ -365,44 +355,9 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
           ),
         ),
 
-        // Ganancias del día — no aplica a repartidores de una flota, esas
-        // estadísticas las administra su jefe de flota desde su propio panel.
-        if (!_perteneceAFlota)
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: cardBg,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Row(children: [
-                  Expanded(
-                    child: _StatBox(
-                      label: 'Ganancias hoy',
-                      value: '\$${_gananciaHoy.toStringAsFixed(0)} MXN',
-                      icon: Icons.attach_money,
-                      color: Colors.green,
-                      textColor: textMain,
-                      subColor: textSub,
-                    ),
-                  ),
-                  Container(width: 1, height: 40, color: isDark ? AppConstants.surface2Color : Colors.black12),
-                  Expanded(
-                    child: _StatBox(
-                      label: 'Entregas',
-                      value: '$_entregasHoy',
-                      icon: Icons.check_circle_outline,
-                      color: AppConstants.primaryColor,
-                      textColor: textMain,
-                      subColor: textSub,
-                    ),
-                  ),
-                ]),
-              ),
-            ),
-          ),
+        // Nota: esta pantalla es siempre para repartidores de flota — sus
+        // ganancias/entregas las administra su jefe de flota desde su
+        // propio panel, por eso aquí nunca se muestra esa tarjeta.
 
         // Título lista
         SliverToBoxAdapter(
@@ -1008,33 +963,6 @@ class _Pin extends StatelessWidget {
       ),
       child: Icon(icon, color: Colors.white, size: 22),
     );
-  }
-}
-
-class _StatBox extends StatelessWidget {
-  final String label;
-  final String value;
-  final IconData icon;
-  final Color color;
-  final Color textColor;
-  final Color subColor;
-  const _StatBox({
-    required this.label,
-    required this.value,
-    required this.icon,
-    required this.color,
-    required this.textColor,
-    required this.subColor,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(children: [
-      Icon(icon, color: color, size: 22),
-      const SizedBox(height: 4),
-      Text(value, style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 16)),
-      Text(label, style: TextStyle(color: subColor, fontSize: 11)),
-    ]);
   }
 }
 

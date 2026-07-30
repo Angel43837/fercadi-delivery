@@ -3,7 +3,7 @@
 // Permite al usuario configurar:
 //   - Nombre y foto de perfil
 //   - Dirección de entrega predeterminada (GPS, mapa o texto manual)
-//   - Método de pago preferido (efectivo, OXXO, tarjeta)
+//   - Método de pago preferido (efectivo, tarjeta)
 //   - Datos de tarjeta bancaria
 //   - CLABE interbancaria (solo para repartidores)
 // También tiene los botones de cerrar sesión y reiniciar la app.
@@ -18,6 +18,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants.dart';
 import '../services/auth_service.dart';
 import '../services/location_service.dart';
@@ -37,7 +38,6 @@ const _avatarColors = [
 
 const _paymentOptions = [
   (value: 'cash',  label: 'Efectivo',  subtitle: 'Pago al repartidor', icon: Icons.money),
-  (value: 'oxxo',  label: 'OXXO Pay',  subtitle: 'Referencia en OXXO', icon: Icons.store),
   (value: 'card',  label: 'Tarjeta',   subtitle: 'Crédito o débito',   icon: Icons.credit_card),
 ];
 
@@ -77,13 +77,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final photo   = await AuthService.getProfilePhoto();
     final clabe   = await AuthService.getCLABE();
     final defAddr = await AuthService.getDefaultAddress();
+    // El rol real siempre se saca de la sesión activa de Supabase (misma
+    // fuente que usa el router para proteger rutas) — la sesión "legacy"
+    // de AuthService puede quedar con datos de otra cuenta/rol anterior
+    // en el mismo dispositivo (ej. repartidor y cliente comparten teléfono).
+    final supaUser = SupabaseService.useMock ? null : Supabase.instance.client.auth.currentUser;
+    final realRole = (supaUser?.appMetadata['role'] ?? supaUser?.userMetadata?['role']) as String?;
     if (!mounted) return;
     setState(() {
       _nameCtrl.text  = name;
       _payment        = payment;
       _colorIndex     = color;
-      _email          = session?.email ?? '';
-      _role           = session?.role  ?? '';
+      _email          = supaUser?.email ?? session?.email ?? '';
+      _role           = realRole ?? session?.role ?? '';
       _photoPath      = photo;
       _clabeCtrl.text = clabe;
       if (defAddr != null) {
@@ -428,93 +434,96 @@ class _ProfileScreenState extends State<ProfileScreen> {
           Text(_email, style: TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 12)),
           const SizedBox(height: 28),
 
-          // ── Dirección de entrega ─────────────────────────────────────────────
-          _SectionLabel('Dirección de entrega'),
-          const SizedBox(height: 8),
-          GestureDetector(
-            onTap: _showLocationPicker,
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(color: cardBg, borderRadius: BorderRadius.circular(16)),
-              child: _addrLoading
-                  ? const Center(child: SizedBox(width: 24, height: 24,
-                      child: CircularProgressIndicator(color: AppConstants.primaryColor, strokeWidth: 2)))
-                  : Row(children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                            color: AppConstants.primaryColor.withValues(alpha: 0.12), shape: BoxShape.circle),
-                        child: const Icon(Icons.location_on, color: AppConstants.primaryColor, size: 20),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text(
-                          _addrText.isEmpty ? 'Sin dirección guardada' : _addrText,
-                          style: TextStyle(
-                              color: _addrText.isEmpty ? cardSub : cardText, fontSize: 14),
-                          maxLines: 2, overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 2),
-                        const Text('Toca para cambiar',
-                            style: TextStyle(color: AppConstants.primaryColor, fontSize: 11)),
-                      ])),
-                      Icon(Icons.chevron_right, color: cardChev),
-                    ]),
-            ),
-          ),
-          const SizedBox(height: 28),
-
-          // ── Método de pago ───────────────────────────────────────────────────
-          _SectionLabel('Método de pago preferido'),
-          const SizedBox(height: 8),
-          Container(
-            decoration: BoxDecoration(color: cardBg, borderRadius: BorderRadius.circular(16)),
-            child: Column(
-              children: List.generate(_paymentOptions.length, (i) {
-                final opt      = _paymentOptions[i];
-                final selected = _payment == opt.value;
-                final isLast   = i == _paymentOptions.length - 1;
-                return Column(children: [
-                  InkWell(
-                    borderRadius: BorderRadius.vertical(
-                      top:    i == 0  ? const Radius.circular(16) : Radius.zero,
-                      bottom: isLast  ? const Radius.circular(16) : Radius.zero,
-                    ),
-                    onTap: () => setState(() => _payment = opt.value),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                      child: Row(children: [
-                        Icon(opt.icon,
-                            color: selected ? AppConstants.primaryColor : cardSub, size: 24),
-                        const SizedBox(width: 14),
-                        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Text(opt.label, style: TextStyle(
-                              color: selected ? AppConstants.primaryColor : cardText,
-                              fontWeight: FontWeight.w600, fontSize: 15)),
-                          Text(opt.subtitle, style: TextStyle(color: cardSub, fontSize: 12)),
-                        ])),
+          // ── Dirección de entrega y método de pago (solo cliente) ─────────────
+          // El repartidor no pide comida ni le entregan a él — estos campos
+          // son del rol cliente y no deben mezclarse entre pantallas.
+          if (_role != 'repartidor') ...[
+            _SectionLabel('Dirección de entrega'),
+            const SizedBox(height: 8),
+            GestureDetector(
+              onTap: _showLocationPicker,
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(color: cardBg, borderRadius: BorderRadius.circular(16)),
+                child: _addrLoading
+                    ? const Center(child: SizedBox(width: 24, height: 24,
+                        child: CircularProgressIndicator(color: AppConstants.primaryColor, strokeWidth: 2)))
+                    : Row(children: [
                         Container(
-                          width: 22, height: 22,
+                          padding: const EdgeInsets.all(8),
                           decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                                color: selected ? AppConstants.primaryColor : cardChev, width: 2),
-                          ),
-                          child: selected
-                              ? Center(child: Container(width: 11, height: 11,
-                                  decoration: const BoxDecoration(
-                                      shape: BoxShape.circle, color: AppConstants.primaryColor)))
-                              : null,
+                              color: AppConstants.primaryColor.withValues(alpha: 0.12), shape: BoxShape.circle),
+                          child: const Icon(Icons.location_on, color: AppConstants.primaryColor, size: 20),
                         ),
+                        const SizedBox(width: 12),
+                        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text(
+                            _addrText.isEmpty ? 'Sin dirección guardada' : _addrText,
+                            style: TextStyle(
+                                color: _addrText.isEmpty ? cardSub : cardText, fontSize: 14),
+                            maxLines: 2, overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 2),
+                          const Text('Toca para cambiar',
+                              style: TextStyle(color: AppConstants.primaryColor, fontSize: 11)),
+                        ])),
+                        Icon(Icons.chevron_right, color: cardChev),
                       ]),
-                    ),
-                  ),
-                  if (!isLast) Divider(height: 1, color: cardDiv, indent: 16, endIndent: 16),
-                ]);
-              }),
+              ),
             ),
-          ),
-          const SizedBox(height: 28),
+            const SizedBox(height: 28),
+
+            _SectionLabel('Método de pago preferido'),
+            const SizedBox(height: 8),
+            Container(
+              decoration: BoxDecoration(color: cardBg, borderRadius: BorderRadius.circular(16)),
+              child: Column(
+                children: List.generate(_paymentOptions.length, (i) {
+                  final opt      = _paymentOptions[i];
+                  final selected = _payment == opt.value;
+                  final isLast   = i == _paymentOptions.length - 1;
+                  return Column(children: [
+                    InkWell(
+                      borderRadius: BorderRadius.vertical(
+                        top:    i == 0  ? const Radius.circular(16) : Radius.zero,
+                        bottom: isLast  ? const Radius.circular(16) : Radius.zero,
+                      ),
+                      onTap: () => setState(() => _payment = opt.value),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                        child: Row(children: [
+                          Icon(opt.icon,
+                              color: selected ? AppConstants.primaryColor : cardSub, size: 24),
+                          const SizedBox(width: 14),
+                          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(opt.label, style: TextStyle(
+                                color: selected ? AppConstants.primaryColor : cardText,
+                                fontWeight: FontWeight.w600, fontSize: 15)),
+                            Text(opt.subtitle, style: TextStyle(color: cardSub, fontSize: 12)),
+                          ])),
+                          Container(
+                            width: 22, height: 22,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                  color: selected ? AppConstants.primaryColor : cardChev, width: 2),
+                            ),
+                            child: selected
+                                ? Center(child: Container(width: 11, height: 11,
+                                    decoration: const BoxDecoration(
+                                        shape: BoxShape.circle, color: AppConstants.primaryColor)))
+                                : null,
+                          ),
+                        ]),
+                      ),
+                    ),
+                    if (!isLast) Divider(height: 1, color: cardDiv, indent: 16, endIndent: 16),
+                  ]);
+                }),
+              ),
+            ),
+            const SizedBox(height: 28),
+          ],
 
           // ── CLABE interbancaria (solo repartidor) ────────────────────────────
           if (_role == 'repartidor') ...[
