@@ -20,8 +20,11 @@ import 'services/notification_service.dart';
 import 'services/location_service.dart';
 
 Future<void> _startApp() async {
-  // App Group compartido con el widget de pantalla de inicio (solo iOS)
-  await HomeWidget.setAppGroupId('group.com.fercadi.app');
+  // App Group compartido con el widget de pantalla de inicio (solo iOS).
+  // home_widget no tiene implementación en web — sin este guard, el await
+  // lanza MissingPluginException sin capturar y la app nunca llega a
+  // runApp(), quedando en blanco.
+  if (!kIsWeb) await HomeWidget.setAppGroupId('group.com.fercadi.app');
 
   // Inicializa Stripe
   try {

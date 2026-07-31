@@ -5,6 +5,7 @@
 //   - La posición actual del repartidor (se actualiza cada 4 segundos)
 
 import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:go_router/go_router.dart';
@@ -143,6 +144,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
   // widget de pantalla de inicio (iOS). No espera a que Supabase/Home Widget
   // respondan — no debe frenar el polling.
   void _updateHomeWidget(String status) {
+    if (kIsWeb) return; // home_widget no tiene implementación en web
     final active = status != 'delivered' && status != 'cancelled';
     HomeWidget.saveWidgetData<bool>('hasActiveOrder', active);
     // El widget consulta Supabase directo cuando la app está cerrada — necesita
