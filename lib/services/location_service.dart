@@ -12,19 +12,23 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants.dart';
 
 class LocationService {
-  // Centro del municipio de Maravatío, Michoacán
-  static const double _lat = 19.8969;
-  static const double _lng = -100.4447;
+  // Centro y radio de cobertura — valores por defecto (Maravatío, Michoacán).
+  // Se pueden sobreescribir desde Supabase > platform_config (claves
+  // "centro_lat", "centro_lng", "radio_metros") SIN necesitar una nueva
+  // version de la app — util para ampliar la zona de servicio al momento.
+  static double _lat = 19.8969;
+  static double _lng = -100.4447;
 
-  // Radio del municipio en metros (~30 km cubre todo el municipio)
-  static const double _radioMetros = 30000;
+  // Radio de cobertura en metros (~30 km cubre todo el municipio)
+  static double _radioMetros = 30000;
 
   // Tarifa de envío: cuota base + costo por kilómetro recorrido
   // Valores por defecto usados si Supabase no está disponible
   static double tarifaBase = 15.0;   // MXN, se cobra siempre
   static double tarifaPorKm = 5.0;   // MXN por cada km entre restaurante y cliente
 
-  // Carga las tarifas desde Supabase (platform_config). Se llama en main.dart al iniciar.
+  // Carga las tarifas y la zona de cobertura desde Supabase (platform_config).
+  // Se llama en main.dart al iniciar.
   static Future<void> loadTarifas() async {
     try {
       final rows = await Supabase.instance.client
@@ -33,8 +37,13 @@ class LocationService {
       for (final row in rows as List) {
         final v = double.tryParse(row['value'] as String? ?? '');
         if (v == null) continue;
-        if (row['key'] == 'tarifa_base')   tarifaBase   = v;
-        if (row['key'] == 'tarifa_por_km') tarifaPorKm  = v;
+        switch (row['key']) {
+          case 'tarifa_base':    tarifaBase   = v;
+          case 'tarifa_por_km':  tarifaPorKm  = v;
+          case 'radio_metros':   _radioMetros = v;
+          case 'centro_lat':     _lat         = v;
+          case 'centro_lng':     _lng         = v;
+        }
       }
     } catch (_) {
       // Si falla, se usan los valores por defecto definidos arriba
