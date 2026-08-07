@@ -5,6 +5,7 @@
 
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart' as geo;
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
@@ -16,8 +17,14 @@ class LocationService {
   static const double _lat = 19.8969;
   static const double _lng = -100.4447;
 
-  // Radio del municipio en metros (~30 km cubre todo el municipio)
-  static const double _radioMetros = 30000;
+  // Centro del municipio de Acámbaro, Guanajuato
+  static const double _latAcambaro = 20.0386;
+  static const double _lngAcambaro = -100.7284;
+
+  // Radio de servicio en metros — cubre Maravatío y también Acámbaro
+  // (~33-34 km entre centros), a petición del dueño para que alguien en
+  // Acámbaro pueda pedirle a un restaurante de Maravatío.
+  static const double _radioMetros = 50000;
 
   // Tarifa de envío: cuota base + costo por kilómetro recorrido
   // Valores por defecto usados si Supabase no está disponible
@@ -46,6 +53,66 @@ class LocationService {
   static double calcularCostoEnvio(double? distanciaKm) {
     if (distanciaKm == null) return tarifaBase;
     return tarifaBase + (tarifaPorKm * distanciaKm);
+  }
+
+  // Pide el permiso de ubicación y, si ya quedó denegado permanentemente
+  // (iOS ya no vuelve a mostrar su propio aviso en ese caso), muestra un
+  // diálogo dentro de la app para guiar al usuario a Ajustes — así sí se
+  // le "pide" la ubicación cada vez, aunque sea con un diálogo propio.
+  static Future<bool> ensureLocationPermission(BuildContext context) async {
+    // El permiso de la app y el GPS general del teléfono son cosas
+    // distintas — con el permiso concedido pero el GPS apagado, tampoco
+    // llega ninguna posición.
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      if (!context.mounted) return false;
+      await showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Activa tu ubicación'),
+          content: const Text(
+              'El GPS de tu teléfono está apagado. Actívalo para mostrar tu posición en el mapa.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Ahora no')),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                Geolocator.openLocationSettings();
+              },
+              child: const Text('Activar GPS'),
+            ),
+          ],
+        ),
+      );
+      return false;
+    }
+    var perm = await Geolocator.checkPermission();
+    if (perm == LocationPermission.denied) {
+      perm = await Geolocator.requestPermission();
+    }
+    if (perm == LocationPermission.whileInUse || perm == LocationPermission.always) {
+      return true;
+    }
+    if (!context.mounted) return false;
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Se necesita tu ubicación'),
+        content: const Text(
+            'Para mostrar tu posición en el mapa, activa el permiso de ubicación en Ajustes.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Ahora no')),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              Geolocator.openAppSettings();
+            },
+            child: const Text('Abrir Ajustes'),
+          ),
+        ],
+      ),
+    );
+    return false;
   }
 
   // Verifica si el usuario tiene GPS activado, permisos concedidos y está dentro del radio
@@ -84,6 +151,57 @@ class LocationService {
       position: position,
       distanciaKm: distancia / 1000,
     );
+  }
+
+  // ── Zona del restaurante (Maravatío / Acámbaro) ─────────────────────────
+  // Detecta automáticamente a qué municipio pertenece un restaurante según
+  // sus coordenadas o su dirección, para no pedirle al dueño que lo elija
+  // a mano. Usa su propio geocoding (sin forzar "Maravatío" en la búsqueda,
+  // a diferencia de geocodeAddress) para que funcione igual de bien con
+  // direcciones de Acámbaro.
+  static String zonaFromCoords(double lat, double lng) {
+    final dMaravatio = Geolocator.distanceBetween(lat, lng, _lat, _lng);
+    final dAcambaro  = Geolocator.distanceBetween(lat, lng, _latAcambaro, _lngAcambaro);
+    return dAcambaro < dMaravatio ? 'acambaro' : 'maravatio';
+  }
+
+  static Future<String> detectZona(String address) async {
+    if (address.trim().isEmpty) return 'maravatio';
+    try {
+      final coords = await _geocodeSinMunicipioForzado(address);
+      if (coords == null) return 'maravatio';
+      return zonaFromCoords(coords.lat, coords.lng);
+    } catch (_) {
+      return 'maravatio';
+    }
+  }
+
+  static Future<({double lat, double lng})?> _geocodeSinMunicipioForzado(String address) async {
+    if (!kIsWeb) {
+      try {
+        var locations = await geo.locationFromAddress('$address, México');
+        if (locations.isEmpty) locations = await geo.locationFromAddress(address);
+        if (locations.isNotEmpty) {
+          return (lat: locations.first.latitude, lng: locations.first.longitude);
+        }
+      } catch (_) {}
+    }
+    try {
+      final query = Uri.encodeComponent('$address, México');
+      final uri = Uri.parse(
+          'https://maps.googleapis.com/maps/api/geocode/json'
+          '?address=$query&key=${AppConstants.googleMapsApiKey}');
+      final res = await http.get(uri).timeout(const Duration(seconds: 8));
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      if (data['status'] == 'OK') {
+        final results = data['results'] as List;
+        if (results.isNotEmpty) {
+          final loc = (results[0]['geometry'] as Map)['location'] as Map;
+          return (lat: (loc['lat'] as num).toDouble(), lng: (loc['lng'] as num).toDouble());
+        }
+      }
+    } catch (_) {}
+    return null;
   }
 
   // Bounding box de Maravatío: minLon,maxLat,maxLon,minLat

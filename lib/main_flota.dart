@@ -5,15 +5,19 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'core/constants.dart';
 import 'screens/flota_screen.dart';
 import 'screens/flota_login_screen.dart';
+import 'screens/flota_rider_detail_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await SystemChrome.setPreferredOrientations(
+      [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown]);
   if (kIsWeb) usePathUrlStrategy();
   await Supabase.initialize(
     url: AppConstants.supabaseUrl,
@@ -48,6 +52,13 @@ final _flotaRouter = GoRouter(
   routes: [
     GoRoute(path: '/flota-login', builder: (_, _) => const FlotaLoginScreen()),
     GoRoute(path: '/flota',       builder: (_, _) => const FlotaScreen()),
+    GoRoute(
+      path: '/flota/rider/:id',
+      builder: (_, state) => RiderDetailScreen(
+        riderId: state.pathParameters['id']!,
+        initialData: state.extra as Map<String, dynamic>?,
+      ),
+    ),
   ],
 );
 

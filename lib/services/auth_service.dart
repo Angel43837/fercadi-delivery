@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -20,6 +21,7 @@ class AuthService {
   static const _keyPayment      = 'profile_payment';
   static const _keyAvatarColor  = 'profile_avatar_color';
   static const _keyProfilePhoto = 'profile_photo_path';
+  static const _keyZona         = 'profile_zona';
   static const _keyCLABE          = 'bank_clabe';
   static const _keySavedAddresses  = 'saved_addresses';
   static const _keyRestName        = 'restaurant_name';
@@ -121,15 +123,47 @@ class AuthService {
   // ── Perfil de usuario ────────────────────────────────────────────────────────
 
   static Future<String> getDisplayName() async {
+    // La caché local se escribe de inmediato (sin esperar red) en cada
+    // saveDisplayName, así que siempre refleja el último cambio — por eso se
+    // revisa primero. Si se consultara antes 'custom_name' de Supabase, un
+    // cambio recién guardado podía verse "viejo" en otra pantalla mientras esa
+    // llamada de red seguía en curso.
     final prefs = await SharedPreferences.getInstance();
     final key   = await _userKey(_keyDisplayName);
-    return prefs.getString(key) ?? 'Usuario';
+    final local = prefs.getString(key);
+    if (local != null && local.isNotEmpty) return local;
+    // Sin caché local (dispositivo nuevo u otra sesión) — usa 'custom_name' de
+    // Supabase, un campo propio distinto de 'name'/'full_name' que Google
+    // reescribe en cada login con OAuth.
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      final customName = user?.userMetadata?['custom_name'] as String?;
+      if (customName != null && customName.trim().isNotEmpty) {
+        await prefs.setString(key, customName);
+        return customName;
+      }
+      // Si nunca se personalizó, muestra el nombre de Google como valor inicial.
+      final oauthName = (user?.userMetadata?['full_name'] ?? user?.userMetadata?['name']) as String?;
+      if (oauthName != null && oauthName.trim().isNotEmpty) return oauthName;
+    } catch (_) {}
+    return 'Usuario';
   }
 
   static Future<void> saveDisplayName(String name) async {
+    final trimmed = name.trim().isEmpty ? 'Usuario' : name.trim();
     final prefs = await SharedPreferences.getInstance();
     final key   = await _userKey(_keyDisplayName);
-    await prefs.setString(key, name.trim().isEmpty ? 'Usuario' : name.trim());
+    await prefs.setString(key, trimmed);
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user != null) {
+        // Timeout: si la red se cuelga, esto no debe trabar la pantalla de
+        // perfil para siempre esperando una respuesta que nunca llega.
+        await Supabase.instance.client.auth
+            .updateUser(UserAttributes(data: {'custom_name': trimmed}))
+            .timeout(const Duration(seconds: 10));
+      }
+    } catch (_) {}
   }
 
   static Future<String> getPreferredPayment() async {
@@ -142,6 +176,34 @@ class AuthService {
     final prefs = await SharedPreferences.getInstance();
     final key   = await _userKey(_keyPayment);
     await prefs.setString(key, method);
+  }
+
+  // ── Zona (Maravatío / Acámbaro) ───────────────────────────────────────────────
+
+  static Future<String> getZona() async {
+    final prefs = await SharedPreferences.getInstance();
+    final key   = await _userKey(_keyZona);
+    final local = prefs.getString(key);
+    if (local != null && local.isNotEmpty) return local;
+    try {
+      final metaZona = Supabase.instance.client.auth.currentUser?.userMetadata?['zona'] as String?;
+      if (metaZona != null && metaZona.isNotEmpty) return metaZona;
+    } catch (_) {}
+    return 'maravatio';
+  }
+
+  static Future<void> saveZona(String zona) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key   = await _userKey(_keyZona);
+    await prefs.setString(key, zona);
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user != null) {
+        await Supabase.instance.client.auth
+            .updateUser(UserAttributes(data: {'zona': zona}))
+            .timeout(const Duration(seconds: 10));
+      }
+    } catch (_) {}
   }
 
   static Future<int> getAvatarColorIndex() async {
@@ -159,9 +221,26 @@ class AuthService {
   // ── Foto de perfil ───────────────────────────────────────────────────────────
 
   static Future<String?> getProfilePhoto() async {
+    // Misma razón que en getDisplayName: la caché local ya refleja el último
+    // cambio al instante, sin depender de que la subida a Supabase termine.
     final prefs = await SharedPreferences.getInstance();
     final key   = await _userKey(_keyProfilePhoto);
-    return prefs.getString(key);
+    final local = prefs.getString(key);
+    if (local != null) return local;
+    // Sin caché local — usa 'custom_avatar_url' de Supabase (campo propio,
+    // 'avatar_url'/'picture' los puede repoblar Google en cada login) o, si
+    // nunca se personalizó, la foto de Google como valor inicial.
+    try {
+      final user    = Supabase.instance.client.auth.currentUser;
+      final metaUrl = user?.userMetadata?['custom_avatar_url'] as String?;
+      if (metaUrl != null && metaUrl.startsWith('http')) {
+        await prefs.setString(key, metaUrl);
+        return metaUrl;
+      }
+      final picture = user?.userMetadata?['picture'] as String?;
+      if (picture != null && picture.startsWith('http')) return picture;
+    } catch (_) {}
+    return null;
   }
 
   static Future<void> saveProfilePhoto(String? path) async {
@@ -171,6 +250,18 @@ class AuthService {
       await prefs.remove(key);
     } else {
       await prefs.setString(key, path);
+    }
+    // Solo se guarda en Supabase si es una URL real (la subida ya se hizo);
+    // una ruta de archivo local no sirve en otro dispositivo.
+    if (path != null && path.startsWith('http')) {
+      try {
+        final user = Supabase.instance.client.auth.currentUser;
+        if (user != null) {
+          await Supabase.instance.client.auth
+              .updateUser(UserAttributes(data: {'custom_avatar_url': path}))
+              .timeout(const Duration(seconds: 10));
+        }
+      } catch (_) {}
     }
   }
 
@@ -225,7 +316,12 @@ class AuthService {
     double? lng,
   }) async {
     final list = await getSavedAddresses();
-    list.removeWhere((a) => a['label'] == label);
+    // Antes se quitaba por 'label', y como checkout siempre guarda con el
+    // mismo label ('Reciente'), cada pedido borraba la dirección anterior
+    // en vez de acumular varias — el historial nunca pasaba de 1 elemento.
+    // Ahora se deduplica por dirección: la misma dirección se actualiza y
+    // sube al frente, pero direcciones distintas sí se acumulan.
+    list.removeWhere((a) => a['address'] == address);
     list.insert(0, {'label': label, 'address': address, 'lat': lat, 'lng': lng});
     if (list.length > 5) list.removeLast();
 

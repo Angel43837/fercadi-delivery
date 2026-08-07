@@ -129,7 +129,7 @@ class _CartItemTileState extends State<_CartItemTile> {
     final cardSub = widget.cardSub;
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
         color: cardBg,
         borderRadius: BorderRadius.circular(14),
@@ -142,31 +142,32 @@ class _CartItemTileState extends State<_CartItemTile> {
         borderRadius: BorderRadius.circular(14),
         child: Column(
           children: [
-            // fila principal
+            // fila principal — tamaño y proporciones parecidas a las
+            // tarjetas de platillo dentro de un restaurante.
             SizedBox(
-              height: 80,
+              height: 84,
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   // imagen izquierda
                   SizedBox(
-                    width: 90,
+                    width: 84,
                     child: item.product.imageUrl != null && item.product.imageUrl!.isNotEmpty
                         ? Image.network(item.product.imageUrl!, fit: BoxFit.cover,
-                            width: 90, height: 80,
-                            errorBuilder: (_, _, _) => Container(
+                            width: 84, height: 84,
+                            errorBuilder: (_, __, ___) => Container(
                               color: isDark ? AppConstants.surface2Color : Colors.grey.shade200,
-                              child: const Icon(Icons.fastfood, color: accent),
+                              child: const Icon(Icons.fastfood, color: accent, size: 24),
                             ))
                         : Container(
                             color: isDark ? AppConstants.surface2Color : Colors.grey.shade200,
-                            child: const Icon(Icons.fastfood, color: accent),
+                            child: const Icon(Icons.fastfood, color: accent, size: 24),
                           ),
                   ),
                   // info centro
                   Expanded(
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -174,10 +175,12 @@ class _CartItemTileState extends State<_CartItemTile> {
                           Text(item.product.name,
                               maxLines: 1, overflow: TextOverflow.ellipsis,
                               style: TextStyle(fontWeight: FontWeight.bold, color: cardText, fontSize: 14)),
-                          if (item.product.description != null && item.product.description!.isNotEmpty)
+                          if (item.product.description != null && item.product.description!.isNotEmpty) ...[
+                            const SizedBox(height: 2),
                             Text(item.product.description!,
                                 maxLines: 1, overflow: TextOverflow.ellipsis,
                                 style: TextStyle(color: cardSub, fontSize: 11)),
+                          ],
                           const SizedBox(height: 4),
                           Text('\$${(item.product.price * item.quantity).toStringAsFixed(0)} MXN',
                               style: const TextStyle(color: accent, fontWeight: FontWeight.bold, fontSize: 13)),
@@ -187,7 +190,7 @@ class _CartItemTileState extends State<_CartItemTile> {
                   ),
                   // selector cantidad
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.center,
@@ -198,9 +201,9 @@ class _CartItemTileState extends State<_CartItemTile> {
                               .updateQuantity(item.product.id, item.quantity - 1),
                         ),
                         Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
                           child: Text('${item.quantity}',
-                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: cardText)),
+                              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: cardText)),
                         ),
                         _QtyButton(
                           icon: Icons.add, primary: true,
@@ -214,11 +217,11 @@ class _CartItemTileState extends State<_CartItemTile> {
                   GestureDetector(
                     onTap: () => setState(() => _expanded = !_expanded),
                     child: Container(
-                      width: 72,
+                      width: 56,
                       color: accent,
                       child: Icon(
                         _expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
-                        color: Colors.white, size: 36,
+                        color: Colors.white, size: 30,
                       ),
                     ),
                   ),

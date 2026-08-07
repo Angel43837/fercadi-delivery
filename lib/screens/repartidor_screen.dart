@@ -330,9 +330,16 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Scaffold(
-      backgroundColor: isDark ? AppConstants.bgColor : AppConstants.primaryColor,
-      body: _activeOrder == null ? _buildOrderList(isDark) : _buildActiveOrder(isDark),
+    // Con un pedido ya aceptado, solo se puede salir cancelando la entrega.
+    return PopScope(
+      canPop: _activeOrder == null,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) _confirmarCancelarEntrega();
+      },
+      child: Scaffold(
+        backgroundColor: isDark ? AppConstants.bgColor : AppConstants.primaryColor,
+        body: _activeOrder == null ? _buildOrderList(isDark) : _buildActiveOrder(isDark),
+      ),
     );
   }
 
@@ -870,23 +877,86 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
         color: Colors.transparent,
         child: SafeArea(
-          child: SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: _avanzarStep,
-              icon: Icon(_step == 3 ? Icons.arrow_forward : Icons.check, size: 20),
-              label: Text(_stepActions[_step],
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _steps[_step].color,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 15),
+          child: Column(children: [
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _avanzarStep,
+                icon: Icon(_step == 3 ? Icons.arrow_forward : Icons.check, size: 20),
+                label: Text(_stepActions[_step],
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _steps[_step].color,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                ),
               ),
             ),
-          ),
+            if (_step < 3) ...[
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _confirmarCancelarEntrega,
+                  icon: const Icon(Icons.close_rounded, color: Colors.white, size: 18),
+                  label: const Text('Cancelar pedido',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFE53935),
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    elevation: 0,
+                  ),
+                ),
+              ),
+            ],
+          ]),
         ),
       ),
     ]);
+  }
+
+  void _confirmarCancelarEntrega() {
+    final order = _activeOrder;
+    if (order == null) return;
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: AppConstants.surfaceColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('¿Cancelar esta entrega?',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        content: Text(
+          'El pedido de ${order.restaurantName} volverá a estar disponible para otro repartidor.',
+          style: TextStyle(color: Colors.white.withValues(alpha: 0.75), height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: Text('No, seguir', style: TextStyle(color: Colors.white.withValues(alpha: 0.6))),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(dialogCtx);
+              _broadcastTimer?.cancel();
+              _broadcastTimer = null;
+              SupabaseService.stopLocationBroadcast();
+              await SupabaseService.releaseOrderFromRider(order.id);
+              if (!mounted) return;
+              setState(() {
+                _activeOrder = null;
+                _step = 0;
+                _routePoints = [];
+                _lastRouteFetchPos = null;
+              });
+              _loadOrders();
+            },
+            child: const Text('Sí, cancelar',
+                style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildStepper() {

@@ -40,14 +40,20 @@ Cada restaurante registrado en la app.
 | `description` | text | Descripción breve |
 | `address` | text | Dirección de texto libre |
 | `image_url` | text | URL de la foto principal |
-| `owner_id` | uuid | ID del usuario dueño (FK → auth.users) |
+| `owner_id` | uuid | ID del usuario dueño (FK → auth.users) — **no se usa para enrutar el panel del dueño**, ver nota abajo |
 | `is_active` | boolean | Si aparece en la app del cliente |
 | `created_at` | timestamptz | Fecha de registro |
 | `phone` | text | Teléfono de contacto |
+| `lat`, `lng` | double precision | Coordenadas del local (detectadas al registrarse), usadas para calcular `zona` |
+| `zona` | text | `maravatio` o `acambaro` — se detecta sola (`LocationService.zonaFromCoords`/`detectZona`), el cliente solo ve restaurantes de su misma zona |
+| `categorias` | text[] | Lista fija de categorías del restaurante (ej. `Comida rápida`, `Bebidas`, `Postres` — ver `lib/core/restaurant_categories.dart`), elegida por el dueño al registrarse o desde su panel. Alimenta el filtro por categoría de la lista de restaurantes del cliente. **No** son las categorías del menú (tabla `categories`, libres por restaurante) — son dos cosas distintas a propósito |
+| `is_premium` | boolean | Plan del dueño. `false` (gratis) limita a 7 platillos y bloquea banners/promos por platillo; `true` (GOGO Premium) sube el límite a 20 y desbloquea ambos. Solo se cambia por SQL directo (sin UI de pago todavía) |
+
+> **Importante:** el panel del dueño (`dueno_screen.dart`) NO usa `owner_id` para saber qué restaurante mostrar — usa `restaurant_id` guardado en `user_metadata`/`app_metadata` de la cuenta (`AuthService.getRestaurantId()`). `owner_id` solo se escribe al auto-registrarse un restaurante nuevo (`registro_restaurante_screen.dart`) y no se lee en ningún otro lado. Para vincular una cuenta existente a un restaurante hay que actualizar su `user_metadata.restaurant_id`, no la columna `owner_id`.
 
 ### Tabla `categories`
 
-Categorías del menú por restaurante (Tacos, Bebidas, Postres, etc.)
+Categorías del menú por restaurante (Tacos, Bebidas, Postres, etc.) — son las pestañas que organizan los platillos DENTRO de un restaurante. **No** tienen relación con `restaurants.categorias` (el tipo de restaurante usado en el filtro del cliente, ver arriba).
 
 | Columna | Tipo | Descripción |
 |---|---|---|
@@ -55,6 +61,8 @@ Categorías del menú por restaurante (Tacos, Bebidas, Postres, etc.)
 | `restaurant_id` | uuid | FK → restaurants |
 | `name` | text | Nombre de la categoría |
 | `sort_order` | integer | Orden de aparición en el menú |
+
+Hoy no hay UI en la app para crear/editar/eliminar categorías — se insertan directo por SQL al dar de alta un restaurante. Lista genérica fija en `lib/core/product_categories.dart` (`kProductCategories`: Platillos, Entradas, Ensaladas, Desayunos, Acompañamientos, Postres, Bebidas) — usar siempre esta lista, tanto para restaurantes nuevos como al tocar los existentes. Los 15 restaurantes que había al momento de crear esta lista (agosto 2026) ya se migraron: se renombraron categorías específicas (ej. "Hamburguesas"→"Platillos", "Papas"→"Acompañamientos") y se fusionaron las que quedaban duplicadas dentro de un mismo restaurante al generalizar (ej. "Tacos"+"Carnitas por Kilo"+"Antojitos"→"Platillos" en CarnitasElPuerco; "Cafés"+"Frappes"→"Bebidas" en Starbucks; "Nieves"+"Paletas"→"Postres" en Nieves Tepa; "Quesadillas"+"Tacos"→"Platillos" en TacosChuy) reasignando sus platillos a la categoría sobreviviente antes de borrar la fila redundante.
 
 ### Tabla `products`
 
@@ -158,6 +166,39 @@ Ubicación GPS en tiempo real de los repartidores.
 | `lat` | float8 | Latitud GPS |
 | `lng` | float8 | Longitud GPS |
 | `last_seen` | timestamptz | Cuándo fue la última actualización |
+
+### Tabla `ratings` — módulo "Reseñas" de Admin
+
+Calificaciones bidireccionales por pedido: cliente → repartidor (`is_driver = false`) y repartidor → cliente (`is_driver = true`). **No es una reseña de restaurante** — no existe esa función en la app todavía, solo esta calificación sobre la experiencia del pedido.
+
+| Columna | Tipo | Descripción |
+|---|---|---|
+| `order_id` | text | FK → orders |
+| `stars` | int | 1 a 5 |
+| `comment` | text | Comentario opcional |
+| `is_driver` | boolean | `true` = la escribió el repartidor sobre el cliente |
+| `is_hidden` / `is_flagged` / `report_reason` | boolean / boolean / text | Moderación desde Admin → Más → Reseñas |
+
+> **Limitación real, no un bug:** `orders` no tiene `customer_id` (el cliente solo se identifica por un JSON `{name, phone}` sin cuenta ligada). Para reseñas del lado cliente (`is_driver: false`) no hay correo, fecha de registro ni método de login que mostrar — se muestra como "Invitado". Para el lado repartidor sí existe `orders.repartidor_id` → `auth.users`, y esos datos se consultan con la Edge Function `admin-user-lookup` (ver más abajo), nunca con la `service_role key` directo en la app.
+
+`rating_moderation_log` guarda el historial de quién ocultó/reportó/eliminó cada reseña (`admin_email`, `action`, `note`, `created_at`).
+
+### Edge Function `admin-user-lookup`
+
+`supabase/functions/admin-user-lookup/index.ts` — la única forma de consultar datos de `auth.users` (correo, fecha de registro, proveedor Google/email, foto, nombre, suspender cuenta) sin meter la `service_role key` dentro de la app de Admin. Verifica primero que quien llama tenga `role: 'admin'` en su propio JWT, y solo entonces usa la service_role internamente (variable de entorno del lado del servidor). Deploy: `supabase functions deploy admin-user-lookup`.
+
+### Retiros de repartidores — módulo "Retiros" de Admin
+
+Base para pagos a repartidores, **sin Stripe Connect todavía** (solo estructura preparada). Solo aplica a `repartidor_plus` (independientes) — los de flota los paga su jefe de flota fuera de la plataforma.
+
+- `rider_withdrawals`: una solicitud de retiro por fila. `status` es TEXT libre (no ENUM) para poder agregar estados sin tocar el esquema.
+- `rider_payout_accounts`: CLABE del rider + campos `stripe_*` reservados para cuando exista Connect.
+- `withdrawal_status_log`: quién aprobó/rechazó/completó/canceló cada retiro.
+- **El saldo nunca se guarda, siempre se calcula en vivo** (`get_rider_balance()`): `SUM(delivery_fee)` de los pedidos entregados del rider, menos retiros completados, menos retiros abiertos (reservados). Se eligió `delivery_fee` (no el total del pedido ni ningún porcentaje) porque es la única fórmula ya usada de forma consistente en el panel de Flota, y porque se encontraron tres fórmulas distintas e incorrectas coexistiendo en el código antes de esto (`rider_stats.dinero` acumula el 100% del pedido, `repartidor_screen.dart` calculaba 15% sin guardarlo).
+- `request_withdrawal(p_amount)`: función que el rider llama para solicitar un retiro. Valida monto mínimo ($200), que no sea de flota, que no tenga ya un retiro abierto, y que no exceda su saldo. La garantía real contra dos solicitudes simultáneas es un índice único parcial (`one_open_withdrawal_per_rider`), no la validación en sí.
+- `admin_transition_withdrawal(...)`: solo admin: pendiente→en_proceso/rechazado/cancelado, en_proceso→completado/rechazado/cancelado. Actualiza y registra en `withdrawal_status_log` en la misma transacción.
+- **Bug de seguridad encontrado y corregido en esta misma sesión:** `is_admin()` regresaba `NULL` (no `false`) cuando quien llama no tiene sesión — y `IF NOT is_admin()` en PL/pgSQL trata `NULL` como "no entrar", no como "denegar". Un llamado sin sesión casi lograba pasar el checkeo de administrador en `admin_transition_withdrawal` (se detuvo por una restricción NOT NULL no relacionada, no por el checkeo en sí). Se corrigió `is_admin()` para usar `COALESCE(..., false)` internamente, y las funciones nuevas también lo hacen explícito por su cuenta.
+- Capas Dart: `lib/models/rider_withdrawal.dart`, `lib/repositories/rider_withdrawal_repository.dart` (única capa que habla con Supabase), `lib/services/rider_withdrawal_service.dart` (validación + traducción de errores), `lib/controllers/rider_withdrawal_controller.dart` (`ChangeNotifier`, mismo patrón que `AppDataProvider`).
 
 ---
 

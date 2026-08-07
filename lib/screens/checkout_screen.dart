@@ -7,7 +7,8 @@
 //   3. Limpia el carrito
 //   4. Redirige a la pantalla de tracking en tiempo real
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:flutter/material.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:geolocator/geolocator.dart';
@@ -194,16 +195,35 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     );
   }
 
-  // Llama a la Supabase Edge Function, obtiene el clientSecret y abre el PaymentSheet de Stripe
+  void _showPaymentError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(message),
+      backgroundColor: Colors.redAccent,
+      duration: const Duration(seconds: 5),
+    ));
+  }
+
+  // Llama a la Supabase Edge Function, obtiene el clientSecret y abre el PaymentSheet de Stripe.
+  // Cada etapa tiene su propio timeout: si Stripe se cuelga (bug conocido de
+  // flutter_stripe en ciertas versiones de iOS, donde el PaymentSheet se
+  // queda cargando para siempre sin lanzar error), esto evita que el botón
+  // "Confirmar pedido" se quede pegado indefinidamente.
   Future<bool> _payWithStripe(double total) async {
     try {
       // 1. Pedir clientSecret al backend (Edge Function)
+      debugPrint('[Stripe] Solicitando payment intent al backend...');
       final res = await Supabase.instance.client.functions.invoke(
         'create-payment-intent',
         body: {'amount': total, 'currency': 'mxn'},
-      );
-      final clientSecret = res.data['clientSecret'] as String?;
-      if (clientSecret == null) throw Exception('No se obtuvo clientSecret');
+      ).timeout(const Duration(seconds: 20));
+      final clientSecret = res.data?['clientSecret'] as String?;
+      if (clientSecret == null) {
+        debugPrint('[Stripe] El backend no devolvió clientSecret: ${res.data}');
+        _showPaymentError('No se pudo iniciar el pago. Intenta de nuevo.');
+        return false;
+      }
+      debugPrint('[Stripe] Payment intent recibido, iniciando PaymentSheet...');
 
       // 2. Inicializar el PaymentSheet
       await Stripe.instance.initPaymentSheet(
@@ -213,26 +233,26 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           returnURL: 'gogofood://stripe-return',
           style: ThemeMode.light,
         ),
-      );
+      ).timeout(const Duration(seconds: 20));
+      debugPrint('[Stripe] PaymentSheet inicializado, presentando...');
 
-      // 3. Mostrar la hoja de pago
-      await Stripe.instance.presentPaymentSheet();
+      // 3. Mostrar la hoja de pago — timeout amplio porque el usuario puede
+      // tardar en escribir su tarjeta, pero acotado para no quedarse
+      // cargando para siempre si el sheet nunca llega a mostrarse.
+      await Stripe.instance.presentPaymentSheet().timeout(const Duration(seconds: 90));
+      debugPrint('[Stripe] Pago confirmado.');
       return true;
+    } on TimeoutException {
+      debugPrint('[Stripe] Timeout esperando respuesta de Stripe.');
+      _showPaymentError('El pago está tardando demasiado. Revisa tu conexión e intenta de nuevo.');
+      return false;
     } on StripeException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(e.error.localizedMessage ?? 'Pago cancelado'),
-          backgroundColor: Colors.redAccent,
-        ));
-      }
+      debugPrint('[Stripe] StripeException: ${e.error.code} ${e.error.message}');
+      _showPaymentError(e.error.localizedMessage ?? 'Pago cancelado');
       return false;
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Error: $e'),
-          backgroundColor: Colors.redAccent,
-        ));
-      }
+      debugPrint('[Stripe] Error inesperado: $e');
+      _showPaymentError('No se pudo procesar el pago. Revisa tu conexión e intenta de nuevo.');
       return false;
     }
   }
@@ -571,6 +591,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   children: _savedAddresses.map((a) {
                     final label = a['label'] as String? ?? 'Dirección';
                     final addr  = a['address'] as String? ?? '';
+                    // Las direcciones auto-guardadas al confirmar un pedido
+                    // comparten el label genérico 'Reciente' — mostrar la
+                    // dirección real evita que todos los chips digan lo mismo.
+                    final displayLabel = label == 'Reciente'
+                        ? (addr.length > 22 ? '${addr.substring(0, 22)}…' : addr)
+                        : label;
                     final isSelected = _addressCtrl.text == addr;
                     final chipColor = isSelected ? AppConstants.primaryColor : chipBorder;
                     final labelColor = isSelected
@@ -603,7 +629,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                             size: 14, color: labelColor,
                           ),
                           const SizedBox(width: 4),
-                          Text(label, style: TextStyle(
+                          Text(displayLabel, style: TextStyle(
                             color: labelColor, fontSize: 12,
                             fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
                           )),
@@ -839,27 +865,47 @@ class _FormField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hintColor = isDark ? Colors.white.withValues(alpha: 0.25) : Colors.black38;
-    final labelColor = isDark ? Colors.white.withValues(alpha: 0.5) : Colors.black54;
-    return TextFormField(
-      controller: controller,
-      focusNode: focusNode,
-      keyboardType: keyboardType,
-      validator: validator,
-      style: TextStyle(color: textMain),
-      decoration: InputDecoration(
-        labelText: label,
-        hintText: hint,
-        labelStyle: TextStyle(color: labelColor),
-        hintStyle: TextStyle(color: hintColor),
-        prefixIcon: Icon(icon, color: AppConstants.primaryColor, size: 20),
-        filled: true,
-        fillColor: cardBg,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
-        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: AppConstants.primaryColor, width: 1.5)),
-        errorStyle: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 12),
-        errorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Colors.redAccent, width: 2)),
-        focusedErrorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Colors.redAccent, width: 2)),
-      ),
+    final labelColor = isDark ? Colors.white.withValues(alpha: 0.8) : Colors.black87;
+    final borderColor = isDark ? Colors.white.withValues(alpha: 0.2) : Colors.grey.shade300;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Pastilla con el nombre del campo — redonda por completo, separada
+        // de la caja (a petición del dueño), en vez de la pestaña cuadrada.
+        Container(
+          margin: const EdgeInsets.only(left: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          decoration: BoxDecoration(
+            color: cardBg,
+            border: Border.all(color: borderColor),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(label,
+              style: TextStyle(color: labelColor, fontSize: 12, fontWeight: FontWeight.w600)),
+        ),
+        const SizedBox(height: 4),
+        TextFormField(
+          controller: controller,
+          focusNode: focusNode,
+          keyboardType: keyboardType,
+          validator: validator,
+          style: TextStyle(color: textMain),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: TextStyle(color: hintColor),
+            prefixIcon: Icon(icon, color: AppConstants.primaryColor, size: 20),
+            filled: true,
+            fillColor: cardBg,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: borderColor)),
+            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: borderColor)),
+            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: AppConstants.primaryColor, width: 1.5)),
+            errorStyle: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 12),
+            errorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Colors.redAccent, width: 2)),
+            focusedErrorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Colors.redAccent, width: 2)),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -8,8 +8,13 @@ import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../controllers/rider_withdrawal_controller.dart';
+import '../models/withdrawal_status.dart';
+import '../repositories/rider_withdrawal_repository.dart';
 import '../services/auth_service.dart';
+import '../services/location_service.dart';
 import '../services/supabase_service.dart';
 import 'entrega_activa_screen.dart';
 
@@ -20,7 +25,7 @@ class RepartidorPlusScreen extends StatefulWidget {
 }
 
 class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   static const Color _bg      = Color(0xFFFF5722);
   static const Color _card    = Color(0xFFE64A19);
   static const Color _blue    = Color(0xFF27AEEB);
@@ -35,10 +40,10 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
   int    _coins        = 0;
   int    _repartos     = 0;
   double _dinero       = 0;
-  double _porcentaje   = 15.4;
+  final double _porcentaje   = 15.4;
   int    _nivel        = 1;
   int    _nivelProgress = 40;
-  int    _nivelTotal   = 100;
+  final int _nivelTotal   = 100;
 
   // Gasolina y km
   double _precioGas      = 23.50; // default, se actualiza con CRE
@@ -78,6 +83,7 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadUser();
     _fetchGasPrice();
     if (!kIsWeb) _startGPS();
@@ -106,6 +112,7 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _revealController.dispose();
     _flipController.dispose();
     _logroController.dispose();
@@ -113,6 +120,16 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
     _gpsSub?.cancel();
     _orderTimer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Si el usuario fue a Ajustes a activar el permiso de ubicación y
+    // regresa a la app, hay que reintentar — antes solo se pedía una vez
+    // al abrir la pantalla y se quedaba sin GPS aunque ya lo activaran.
+    if (state == AppLifecycleState.resumed && _gpsSub == null && !kIsWeb) {
+      _startGPS();
+    }
   }
 
   void _checkLogros(int prevRepartos) {
@@ -257,11 +274,9 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
   }
 
   Future<void> _startGPS() async {
-    var perm = await Geolocator.checkPermission();
-    if (perm == LocationPermission.denied) {
-      perm = await Geolocator.requestPermission();
-    }
-    if (perm != LocationPermission.whileInUse && perm != LocationPermission.always) return;
+    if (!mounted) return;
+    final granted = await LocationService.ensureLocationPermission(context);
+    if (!granted) return;
     _gpsSub = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.high, distanceFilter: 10),
@@ -349,11 +364,16 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
     if (mounted) setState(() { _nombre = nombre; _phone = phone; });
   }
 
-  void _showProfileSheet() {
+  Future<void> _showProfileSheet() async {
+    final nombreCapital = _nombre.isNotEmpty
+        ? _nombre[0].toUpperCase() + _nombre.substring(1)
+        : _nombre;
     final nameCtrl  = TextEditingController(text: _nombre);
     final phoneCtrl = TextEditingController(text: _phone);
     final rendCtrl  = TextEditingController(text: _rendimiento.toStringAsFixed(0));
+    final clabeCtrl = TextEditingController(text: await AuthService.getCLABE());
     bool saving = false;
+    if (!mounted) return;
 
     showModalBottomSheet(
       context: context,
@@ -385,43 +405,90 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
                       fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 20),
 
-              // Avatar con overlay de cámara
-              GestureDetector(
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await _pickAvatar();
-                  if (mounted) _showProfileSheet();
-                },
-                child: Stack(
-                  children: [
-                    CircleAvatar(
-                      radius: 48,
-                      backgroundColor: Colors.orange.shade900,
-                      backgroundImage: _avatarUrl != null
-                          ? NetworkImage(_avatarUrl!) : null,
-                      child: _avatarUrl == null
-                          ? const Icon(Icons.person, size: 48, color: Colors.white)
-                          : null,
-                    ),
-                    Positioned(
-                      bottom: 0, right: 0,
-                      child: Container(
-                        padding: const EdgeInsets.all(7),
-                        decoration: BoxDecoration(
-                          color: _gold,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: const Color(0xFFBF360C), width: 2),
+              // Avatar con overlay de cámara + nombre junto a la foto
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  GestureDetector(
+                    onTap: () async {
+                      Navigator.pop(ctx);
+                      await _pickAvatar();
+                      if (mounted) _showProfileSheet();
+                    },
+                    child: Stack(
+                      children: [
+                        CircleAvatar(
+                          radius: 40,
+                          backgroundColor: Colors.orange.shade900,
+                          backgroundImage: _avatarUrl != null
+                              ? NetworkImage(_avatarUrl!) : null,
+                          child: _avatarUrl == null
+                              ? const Icon(Icons.person, size: 40, color: Colors.white)
+                              : null,
                         ),
-                        child: const Icon(Icons.camera_alt_rounded,
-                            size: 16, color: Colors.black87),
-                      ),
+                        Positioned(
+                          bottom: 0, right: 0,
+                          child: Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: _gold,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: const Color(0xFFBF360C), width: 2),
+                            ),
+                            child: const Icon(Icons.camera_alt_rounded,
+                                size: 14, color: Colors.black87),
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(nombreCapital,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 19,
+                                fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 4),
+                        const Text('Toca la foto para cambiarla',
+                            style: TextStyle(color: Colors.white54, fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 8),
-              const Text('Toca la foto para cambiarla',
-                  style: TextStyle(color: Colors.white54, fontSize: 12)),
+              const SizedBox(height: 20),
+
+              // Saldo de Coins
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Row(children: [
+                  const Text('🪙', style: TextStyle(fontSize: 22)),
+                  const SizedBox(width: 10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('Coins disponibles',
+                          style: TextStyle(color: Colors.white70, fontSize: 11)),
+                      Text(_formatMoney(_coins.toDouble()),
+                          style: const TextStyle(
+                              color: _gold, fontSize: 18, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ]),
+              ),
               const SizedBox(height: 24),
 
               // Nombre
@@ -448,6 +515,15 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
                 icon: Icons.local_gas_station_outlined,
                 type: TextInputType.number,
               ),
+              const SizedBox(height: 14),
+
+              // CLABE interbancaria (para recibir pagos)
+              _sheetField(
+                controller: clabeCtrl,
+                label: 'CLABE interbancaria',
+                icon: Icons.account_balance_outlined,
+                type: TextInputType.number,
+              ),
               const SizedBox(height: 24),
 
               // Guardar
@@ -463,6 +539,14 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
                     }
                     await _saveProfile(
                         nameCtrl.text.trim(), phoneCtrl.text.trim());
+                    final clabe = clabeCtrl.text.trim();
+                    await AuthService.saveCLABE(clabe);
+                    final uid = Supabase.instance.client.auth.currentUser?.id;
+                    if (uid != null && clabe.isNotEmpty) {
+                      // No es parte del flujo de retiro en sí — solo deja la
+                      // CLABE visible para Admin al procesar un retiro manual.
+                      RiderWithdrawalRepository().saveClabe(uid, clabe).catchError((_) {});
+                    }
                     if (ctx.mounted) Navigator.pop(ctx);
                   },
                   style: ElevatedButton.styleFrom(
@@ -625,34 +709,7 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
                   _buildBanner(),
                   const SizedBox(height: 16),
                   // Toggle stats
-                  GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => setState(() => _statsExpanded = !_statsExpanded),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      child: Row(children: [
-                        Container(
-                          width: 28, height: 4,
-                          decoration: BoxDecoration(
-                            color: Colors.white38,
-                            borderRadius: BorderRadius.circular(2),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Text(
-                          _statsExpanded ? 'Ocultar estadísticas' : 'Ver estadísticas',
-                          style: const TextStyle(color: Colors.white70, fontSize: 12),
-                        ),
-                        const Spacer(),
-                        Icon(
-                          _statsExpanded
-                              ? Icons.keyboard_arrow_up_rounded
-                              : Icons.keyboard_arrow_down_rounded,
-                          color: Colors.white70, size: 20,
-                        ),
-                      ]),
-                    ),
-                  ),
+                  _buildStatsToggle(),
                   if (_statsExpanded) ...[
                     const SizedBox(height: 10),
                     Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -666,6 +723,10 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
                       const SizedBox(width: 12),
                       Expanded(child: _buildDonut(3000000, '55,844 PX', _yellow, 0.55)),
                     ]),
+                    // Segunda flechita para volver a ocultar sin tener que
+                    // subir hasta arriba — misma acción que la de encima.
+                    const SizedBox(height: 6),
+                    _buildStatsToggle(),
                   ],
                 ],
               ),
@@ -726,7 +787,19 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
           children: [
             const Spacer(),
             GestureDetector(
-              onTap: () => context.push('/tienda-rider', extra: _coins),
+              onTap: () async {
+                final result = await context.push<int>('/tienda-rider', extra: _coins);
+                if (!mounted) return;
+                if (result != null) {
+                  // Botón de regreso de la tienda: trae el saldo exacto, sin viaje al servidor.
+                  setState(() => _coins = result);
+                } else {
+                  // Se salió por swipe/back del sistema (sin resultado) — se
+                  // recarga del servidor para no quedar desincronizado.
+                  final uid = Supabase.instance.client.auth.currentUser?.id;
+                  if (uid != null) _loadStats(uid);
+                }
+              },
               child: Container(
                 padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
@@ -753,37 +826,50 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
           ],
         ),
         const SizedBox(height: 8),
-        // Fila inferior: avatar+nombre izq, coins der
+        // Fila inferior: avatar + nombre (uno al lado del otro) izq, coins der
         Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                GestureDetector(
-                  onTap: _showProfileSheet,
-                  child: CircleAvatar(
-                    radius: 40,
-                    backgroundColor: Colors.orange.shade900,
-                    backgroundImage: _avatarUrl != null
-                        ? NetworkImage(_avatarUrl!) : null,
-                    child: _avatarUrl == null
-                        ? const Icon(Icons.person, size: 40, color: Colors.white)
-                        : null,
+            Expanded(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  GestureDetector(
+                    onTap: _showProfileSheet,
+                    child: CircleAvatar(
+                      radius: 34,
+                      backgroundColor: Colors.orange.shade900,
+                      backgroundImage: _avatarUrl != null
+                          ? NetworkImage(_avatarUrl!) : null,
+                      child: _avatarUrl == null
+                          ? const Icon(Icons.person, size: 34, color: Colors.white)
+                          : null,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 10),
-                Text('Hola $nombreCapital',
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold)),
-                const Text('Maravatío, Mich.',
-                    style: TextStyle(color: Colors.white70, fontSize: 13)),
-              ],
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Nombres largos bajan a una segunda línea en vez de
+                        // salirse de la pantalla (antes tapaba el bloque de Coins).
+                        Text('Hola $nombreCapital',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold)),
+                        const Text('Maravatío, Mich.',
+                            style: TextStyle(color: Colors.white70, fontSize: 13)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
-            const Spacer(),
+            const SizedBox(width: 8),
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               mainAxisSize: MainAxisSize.min,
@@ -804,6 +890,37 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
           ],
         ),
       ],
+    );
+  }
+
+  Widget _buildStatsToggle() {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => setState(() => _statsExpanded = !_statsExpanded),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(children: [
+          Container(
+            width: 28, height: 4,
+            decoration: BoxDecoration(
+              color: Colors.white38,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            _statsExpanded ? 'Ocultar estadísticas' : 'Ver estadísticas',
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
+          ),
+          const Spacer(),
+          Icon(
+            _statsExpanded
+                ? Icons.keyboard_arrow_up_rounded
+                : Icons.keyboard_arrow_down_rounded,
+            color: Colors.white70, size: 20,
+          ),
+        ]),
+      ),
     );
   }
 
@@ -939,13 +1056,8 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
 
   void _showRetiros() {
     const orange = _bg;
-    final historial = [
-      {'fecha': '28 Jun 2026', 'monto': 850.0,  'estado': 'Depositado', 'metodo': 'BBVA *4821'},
-      {'fecha': '21 Jun 2026', 'monto': 1200.0, 'estado': 'Depositado', 'metodo': 'BBVA *4821'},
-      {'fecha': '14 Jun 2026', 'monto': 950.0,  'estado': 'Depositado', 'metodo': 'BBVA *4821'},
-      {'fecha': '7 Jun 2026',  'monto': 700.0,  'estado': 'Depositado', 'metodo': 'OXXO Pay'},
-    ];
-    final saldoDisponible = _dinero;
+    final withdrawalController = context.read<RiderWithdrawalController>();
+    withdrawalController.load();
 
     showModalBottomSheet(
       context: context,
@@ -960,94 +1072,189 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
             color: Color(0xFF1A1A1A),
             borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
           ),
-          child: ListView(
-            controller: ctrl,
-            padding: const EdgeInsets.all(20),
-            children: [
-              Center(child: Container(width: 40, height: 4,
-                  decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)))),
-              const SizedBox(height: 18),
-              Row(children: [
-                Container(padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(color: orange.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(10)),
-                    child: const Icon(Icons.account_balance_wallet_rounded, color: orange, size: 22)),
-                const SizedBox(width: 12),
-                const Text('Retiros', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
-              ]),
-              const SizedBox(height: 20),
-              // Saldo disponible
-              Container(
+          child: Consumer<RiderWithdrawalController>(
+            builder: (context, wc, _) {
+              final saldoDisponible = wc.balance.saldoDisponible;
+              final cargando = wc.loading && wc.history.isEmpty;
+              return ListView(
+                controller: ctrl,
                 padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(colors: [orange, _card], begin: Alignment.topLeft, end: Alignment.bottomRight),
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('Saldo disponible', style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 13)),
-                  const SizedBox(height: 6),
-                  Text('\$${saldoDisponible.toStringAsFixed(0)} MXN',
-                      style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                          content: Text('Retiro solicitado — se procesará en 1-2 días hábiles'),
-                          backgroundColor: Color(0xFF22C55E),
-                          duration: Duration(seconds: 4),
-                        ));
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: orange,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: const StadiumBorder(),
-                      ),
-                      child: const Text('Solicitar retiro', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                    ),
-                  ),
-                ]),
-              ),
-              const SizedBox(height: 8),
-              Text('Mínimo de retiro: \$200 MXN · Procesado en 1-2 días hábiles',
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 11), textAlign: TextAlign.center),
-              const SizedBox(height: 24),
-              const Text('Historial', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
-              const SizedBox(height: 12),
-              ...historial.map((h) => Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF242424),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Row(children: [
-                  Container(
-                    width: 40, height: 40,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF22C55E).withValues(alpha: 0.12),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.check_rounded, color: Color(0xFF22C55E), size: 20),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(h['metodo'] as String, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
-                    Text(h['fecha'] as String, style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11)),
-                  ])),
-                  Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                    Text('-\$${(h['monto'] as double).toStringAsFixed(0)}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-                    Text(h['estado'] as String, style: const TextStyle(color: Color(0xFF22C55E), fontSize: 11)),
+                children: [
+                  Center(child: Container(width: 40, height: 4,
+                      decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)))),
+                  const SizedBox(height: 18),
+                  Row(children: [
+                    Container(padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(color: orange.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(10)),
+                        child: const Icon(Icons.account_balance_wallet_rounded, color: orange, size: 22)),
+                    const SizedBox(width: 12),
+                    const Text('Retiros', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
                   ]),
-                ]),
-              )),
-            ],
+                  const SizedBox(height: 20),
+                  // Saldo disponible
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(colors: [orange, _card], begin: Alignment.topLeft, end: Alignment.bottomRight),
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('Saldo disponible', style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 13)),
+                      const SizedBox(height: 6),
+                      cargando
+                          ? const SizedBox(height: 36, width: 36, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                          : Text('\$${saldoDisponible.toStringAsFixed(0)} MXN',
+                              style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: cargando ? null : () => _showSolicitarRetiroDialog(wc, saldoDisponible),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: orange,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: const StadiumBorder(),
+                          ),
+                          child: const Text('Solicitar retiro', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                        ),
+                      ),
+                    ]),
+                  ),
+                  const SizedBox(height: 8),
+                  Text('Mínimo de retiro: \$200 MXN · Sujeto a revisión',
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 11), textAlign: TextAlign.center),
+                  const SizedBox(height: 24),
+                  const Text('Historial', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+                  const SizedBox(height: 12),
+                  if (cargando)
+                    const Padding(padding: EdgeInsets.symmetric(vertical: 20), child: Center(child: CircularProgressIndicator(color: orange)))
+                  else if (wc.history.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 20),
+                      child: Center(child: Text('Todavía no has solicitado ningún retiro',
+                          style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 13))),
+                    )
+                  else
+                    ...wc.history.map((w) {
+                      final (label, color) = WithdrawalStatus.styleFor(w.status);
+                      final f = w.createdAt;
+                      final fecha = '${f.day.toString().padLeft(2, '0')}/${f.month.toString().padLeft(2, '0')}/${f.year}';
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF242424),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Row(children: [
+                          Container(
+                            width: 40, height: 40,
+                            decoration: BoxDecoration(color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
+                            child: Icon(Icons.account_balance_wallet_outlined, color: color, size: 20),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(fecha, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+                            if (w.rejectionReason != null && w.rejectionReason!.isNotEmpty)
+                              Text(w.rejectionReason!, style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11)),
+                          ])),
+                          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                            Text('-\$${w.amount.toStringAsFixed(0)}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                            Text(label, style: TextStyle(color: color, fontSize: 11)),
+                          ]),
+                        ]),
+                      );
+                    }),
+                ],
+              );
+            },
           ),
         ),
       ),
     );
+  }
+
+  Future<void> _showSolicitarRetiroDialog(RiderWithdrawalController wc, double saldoDisponible) async {
+    final amountCtrl = TextEditingController(text: saldoDisponible.toStringAsFixed(0));
+    String? localError;
+    bool submitting = false;
+
+    await showDialog(
+      context: context,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (dialogCtx, setS) => AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          title: const Text('Solicitar retiro', style: TextStyle(color: Colors.white)),
+          content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            TextField(
+              controller: amountCtrl,
+              keyboardType: TextInputType.number,
+              style: const TextStyle(color: Colors.white, fontSize: 20),
+              decoration: InputDecoration(
+                prefixText: '\$ ',
+                prefixStyle: const TextStyle(color: Colors.white, fontSize: 20),
+                hintText: 'Monto a retirar',
+                hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.3)),
+                filled: true,
+                fillColor: const Color(0xFF242424),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text('Disponible: \$${saldoDisponible.toStringAsFixed(0)} MXN · Mínimo \$200 MXN',
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 12)),
+            if (localError != null) ...[
+              const SizedBox(height: 10),
+              Text(localError!, style: const TextStyle(color: Color(0xFFFF453A), fontSize: 12)),
+            ],
+          ]),
+          actions: [
+            TextButton(
+              onPressed: submitting ? null : () => Navigator.pop(dialogCtx),
+              child: Text('Cancelar', style: TextStyle(color: Colors.white.withValues(alpha: 0.5))),
+            ),
+            ElevatedButton(
+              onPressed: submitting ? null : () async {
+                final amount = double.tryParse(amountCtrl.text.trim());
+                if (amount == null || amount <= 0) {
+                  setS(() => localError = 'Ingresa un monto válido.');
+                  return;
+                }
+                if (amount < 200) {
+                  setS(() => localError = 'El monto mínimo de retiro es \$200 MXN.');
+                  return;
+                }
+                if (amount > saldoDisponible) {
+                  setS(() => localError = 'No tienes suficiente saldo disponible.');
+                  return;
+                }
+                setS(() { submitting = true; localError = null; });
+                final ok = await wc.submitWithdrawal(amount);
+                if (!ok) {
+                  setS(() { submitting = false; localError = wc.error ?? 'No se pudo procesar el retiro.'; });
+                  return;
+                }
+                if (dialogCtx.mounted) Navigator.pop(dialogCtx);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content: Text('Retiro solicitado — quedará pendiente de revisión'),
+                    backgroundColor: Color(0xFF22C55E),
+                    duration: Duration(seconds: 4),
+                  ));
+                }
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: _bg),
+              child: submitting
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : const Text('Confirmar', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      ),
+    );
+    amountCtrl.dispose();
   }
 
   Widget _statsCardFront() {
@@ -1082,7 +1289,7 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
                 Text('\$${_formatMoney(_dinero)} mxm',
                     style: const TextStyle(
                         color: Colors.white, fontSize: 30, fontWeight: FontWeight.bold)),
-                const Text('Dinero acumulado',
+                const Text('Valor en pedidos',
                     style: TextStyle(color: Colors.white70, fontSize: 13)),
               ]),
             ),
@@ -1270,7 +1477,9 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
                     ),
                   ),
                 ]),
-                // Cortina: imagen del rider — draggable hacia la izquierda
+                // Cortina completa: imagen + botón se arrastran como una sola
+                // pieza (antes el botón tenía posición fija y solo la imagen
+                // se movía, por lo que "se veía cortado" al deslizar).
                 GestureDetector(
                   onHorizontalDragUpdate: (d) {
                     final newVal = (_revealController.value - d.delta.dx / cardWidth)
@@ -1289,39 +1498,41 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
                     }
                     _revealController.animateTo(target, curve: Curves.easeOut);
                   },
+                  onTap: () {
+                    final target = revealed >= 0.5 ? 0.0 : 1.0;
+                    _revealController.animateTo(target, curve: Curves.easeOut);
+                  },
                   child: Transform.translate(
                     offset: Offset(-cardWidth * revealed, 0),
-                    child: Image.asset(
-                      'assets/images/banner_rider.png',
-                      fit: BoxFit.cover,
-                      width: cardWidth,
-                      height: double.infinity,
-                    ),
-                  ),
-                ),
-                // Botón tap — abre o cierra completo
-                Positioned(
-                  right: 10, top: 8, bottom: 8,
-                  child: GestureDetector(
-                    onTap: () {
-                      final target = revealed >= 0.5 ? 0.0 : 1.0;
-                      _revealController.animateTo(target, curve: Curves.easeOut);
-                    },
-                    child: Container(
-                      width: 36,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(30),
-                      ),
-                      child: Center(
-                        child: Icon(
-                          revealed >= 0.5
-                              ? Icons.keyboard_double_arrow_left_rounded
-                              : Icons.keyboard_double_arrow_right_rounded,
-                          color: _bg,
-                          size: 20,
+                    child: Stack(
+                      children: [
+                        Image.asset(
+                          'assets/images/banner_rider.png',
+                          fit: BoxFit.cover,
+                          width: cardWidth,
+                          height: double.infinity,
                         ),
-                      ),
+                        // Botón — viaja pegado al borde de la imagen
+                        Positioned(
+                          right: 10, top: 8, bottom: 8,
+                          child: Container(
+                            width: 36,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(30),
+                            ),
+                            child: Center(
+                              child: Icon(
+                                revealed >= 0.5
+                                    ? Icons.keyboard_double_arrow_left_rounded
+                                    : Icons.keyboard_double_arrow_right_rounded,
+                                color: _bg,
+                                size: 20,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -1504,6 +1715,7 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
   Widget _buildOrderCard(Map<String, dynamic> pedido) {
     final orderId     = pedido['id'] as String;
     final restaurante = (pedido['restaurants'] as Map?)?['name'] as String? ?? 'Restaurante';
+    final logoUrl     = (pedido['restaurants'] as Map?)?['image_url'] as String?;
     final total       = (pedido['total'] as num?)?.toDouble() ?? 0.0;
     final cliente     = _safeField(pedido['customer_name'], 'name');
     final direccion   = _safeField(pedido['address'], 'address');
@@ -1512,7 +1724,7 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: const Color(0xFFFF7043),
+        color: _bg,
         borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
@@ -1525,11 +1737,16 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
               children: [
                 Container(
                   width: 44, height: 44,
+                  clipBehavior: Clip.antiAlias,
                   decoration: BoxDecoration(
                     color: _bg.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(Icons.fastfood_rounded, color: Colors.white, size: 24),
+                  child: logoUrl != null && logoUrl.isNotEmpty
+                      ? Image.network(logoUrl, fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) =>
+                              const Icon(Icons.fastfood_rounded, color: Colors.white, size: 24))
+                      : const Icon(Icons.fastfood_rounded, color: Colors.white, size: 24),
                 ),
                 const SizedBox(width: 12),
                 Expanded(child: Column(

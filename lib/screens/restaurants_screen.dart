@@ -21,6 +21,12 @@ import '../services/order_history_service.dart';
 import '../services/supabase_service.dart';
 import '../models/restaurant_banner.dart';
 
+// Trunca por caracteres (no solo por ancho/maxLines) para que el título de
+// un platillo nunca empuje el precio ni cambie la altura de la tarjeta,
+// sin depender de en qué línea termine envolviendo el texto.
+String _truncateTitle(String text, [int maxChars = 15]) =>
+    text.length <= maxChars ? text : '${text.substring(0, maxChars)}...';
+
 class RestaurantsScreen extends StatefulWidget {
   const RestaurantsScreen({super.key});
   @override
@@ -33,10 +39,14 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
   bool _checkingLocation = true;
   String  _displayName = '';
   String? _photoPath;
+  String  _zona = 'maravatio';
 
   // Restaurant accordion
   final Set<String> _expandedIds = {};
-  final Map<String, int> _selCat = {};
+  // Categoría activa por restaurante (pestaña única) — el Set siempre
+  // tiene un solo índice, se mantiene como Set por compatibilidad con
+  // _buildProducts/_jumpToProduct.
+  final Map<String, Set<int>> _selCat = {};
   final Map<String, List<Category>> _cats = {};
   final Map<String, Map<String, List<Product>>> _prods = {};
   final Map<String, bool> _loadingMenu = {};
@@ -53,9 +63,19 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
 
   // Search
   final TextEditingController _searchCtrl = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
+  bool _searchExpanded = false;
   String _searchQuery = '';
   List<Restaurant>? _searchResults;
   Set<String> _productMatchIds = {};
+
+  // Filtro por categoría en la lista de restaurantes (no el de dentro de un
+  // restaurante) — se lee directo de Restaurant.categorias (lista fija,
+  // asignada al registrar/editar el restaurante). Vacío = sin filtro.
+  final Set<String> _categoryFilter = {};
+  // Segundo botón de prueba: en vez de abrir una hoja, se expande hacia el
+  // lado (mismo patrón que el buscador) mostrando las categorías inline.
+  bool _categoryInlineOpen = false;
 
   // Active order banner
   Map<String, dynamic>? _activeOrder;
@@ -73,6 +93,9 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
     AuthService.getProfilePhoto().then((p) {
       if (mounted) setState(() => _photoPath = p);
     });
+    AuthService.getZona().then((z) {
+      if (mounted) setState(() => _zona = z);
+    });
     _checkActiveOrder();
     _activeOrderTimer = Timer.periodic(
       const Duration(seconds: 8), (_) => _checkActiveOrder());
@@ -84,6 +107,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
     _promoRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       if (!mounted) return;
       setState(_recomputeBannerDiscounts);
+      _refreshOpenMenus();
     });
     WidgetsBinding.instance.addPostFrameCallback((_) => _promptLocationIfNeeded());
   }
@@ -91,6 +115,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
   @override
   void dispose() {
     _searchCtrl.dispose();
+    _searchFocusNode.dispose();
     _activeOrderTimer?.cancel();
     _promoRefreshTimer?.cancel();
     super.dispose();
@@ -271,6 +296,26 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
     }
   }
 
+  // Vuelve a pedir los platillos de los restaurantes ya abiertos por el
+  // cliente. getProducts() ya filtra is_available=true del lado del
+  // servidor, así que esto es lo único que hace falta para que un platillo
+  // que el dueño acaba de activar/desactivar aparezca o desaparezca solo,
+  // sin que el cliente tenga que cerrar y volver a abrir el restaurante
+  // (_loadMenu de por sí solo carga una vez y nunca se repite).
+  Future<void> _refreshOpenMenus() async {
+    for (final rid in _expandedIds.toList()) {
+      final cats = _cats[rid];
+      if (cats == null || cats.isEmpty) continue;
+      final prodLists = await Future.wait(cats.map((c) => SupabaseService.getProducts(c.id)));
+      if (!mounted) return;
+      setState(() {
+        _prods[rid] = {
+          for (var i = 0; i < cats.length; i++) cats[i].id: prodLists[i],
+        };
+      });
+    }
+  }
+
   Future<void> _loadMenu(String restaurantId) async {
     if (_cats.containsKey(restaurantId)) return;
     setState(() => _loadingMenu[restaurantId] = true);
@@ -291,7 +336,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
       _prods[restaurantId] = prods;
       _banners[restaurantId] = banners;
       _loadingMenu[restaurantId] = false;
-      _selCat[restaurantId] = 0;
+      _selCat[restaurantId] = {0};
       _recomputeBannerDiscounts();
     });
   }
@@ -318,7 +363,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
     for (int i = 0; i < cats.length; i++) {
       if ((prods[cats[i].id] ?? []).any((p) => p.id == productId)) {
         setState(() {
-          _selCat[restaurantId] = i;
+          _selCat[restaurantId] = {i};
           _expandedProductId = productId;
         });
         return;
@@ -329,7 +374,11 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
   void _toggleRestaurant(String id) {
     final opening = !_expandedIds.contains(id);
     setState(() {
-      if (opening) _expandedIds.add(id); else _expandedIds.remove(id);
+      // Solo un restaurante abierto a la vez — al abrir uno nuevo se cierran
+      // los demás (no aplica a la auto-expansión por búsqueda, que sí puede
+      // abrir varios a propósito).
+      _expandedIds.clear();
+      if (opening) _expandedIds.add(id);
       _expandedProductId = null;
     });
     if (opening) _loadMenu(id);
@@ -351,16 +400,21 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
       appBar: AppBar(
         automaticallyImplyLeading: false,
         elevation: 0,
+        leadingWidth: 60,
+        titleSpacing: 4,
         // ── Usuario a la izquierda ───────────────────────────────────────────
         leading: GestureDetector(
           onTap: () async {
             await context.push('/profile');
             final n = await AuthService.getDisplayName();
             final p = await AuthService.getProfilePhoto();
-            if (mounted) setState(() { _displayName = n; _photoPath = p; });
+            final z = await AuthService.getZona();
+            if (mounted) setState(() { _displayName = n; _photoPath = p; _zona = z; });
           },
           child: Padding(
-            padding: const EdgeInsets.all(8),
+            // Alineado con el margen de 16px que usan las tarjetas de
+            // restaurantes de la lista, en vez de quedar pegado al borde.
+            padding: const EdgeInsets.only(left: 16, top: 8, bottom: 8, right: 8),
             child: _photoPath != null
                 ? ClipOval(
                     child: _photoPath!.startsWith('http')
@@ -429,25 +483,36 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
 
   Widget _buildActiveOrderBannerInline() {
     final name = (_activeOrder!['restaurantName'] as String?) ?? 'Tu pedido';
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+    // SafeArea + margen abajo — sin esto quedaba pegado hasta el borde de
+    // la pantalla (detrás del indicador de inicio en iPhone).
+    return SafeArea(
+      top: false,
+      child: Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
       child: GestureDetector(
         onTap: () => context.go('/tracking', extra: _activeOrder!),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           decoration: BoxDecoration(
-            color: AppConstants.primaryColor,
+            color: Colors.white,
             borderRadius: BorderRadius.circular(18),
             boxShadow: [
               BoxShadow(
-                color: AppConstants.primaryColor.withValues(alpha: 0.45),
+                color: Colors.black.withValues(alpha: 0.18),
                 blurRadius: 16,
                 offset: const Offset(0, 4),
               ),
             ],
           ),
           child: Row(children: [
-            const Icon(Icons.delivery_dining, color: Colors.white, size: 26),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: AppConstants.primaryColor.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.delivery_dining, color: AppConstants.primaryColor, size: 22),
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -456,25 +521,36 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                 children: [
                   const Text('Pedido en curso',
                       style: TextStyle(
-                          color: Colors.white,
+                          color: Colors.black87,
                           fontWeight: FontWeight.bold,
                           fontSize: 14)),
                   Text(name,
                       style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.75),
+                          color: Colors.black.withValues(alpha: 0.55),
                           fontSize: 12)),
                 ],
               ),
             ),
-            const Text('Ver seguimiento',
-                style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13)),
-            const SizedBox(width: 4),
-            const Icon(Icons.chevron_right, color: Colors.white, size: 20),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+              decoration: BoxDecoration(
+                color: AppConstants.primaryColor,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                Text('Seguimiento',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12)),
+                SizedBox(width: 2),
+                Icon(Icons.chevron_right, color: Colors.white, size: 16),
+              ]),
+            ),
           ]),
         ),
+      ),
       ),
     );
   }
@@ -538,7 +614,17 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
         ListTile(
           leading: Icon(Icons.person_outline, color: isDark ? AppConstants.primaryColor : Colors.white),
           title: Text('Mi perfil', style: TextStyle(color: textColor)),
-          onTap: () { Navigator.pop(context); context.push('/profile'); },
+          onTap: () async {
+            Navigator.pop(context);
+            // Igual que el avatar del encabezado: al regresar de "Mi perfil"
+            // hay que releer estos datos, si no se quedan con el valor viejo
+            // hasta que se reinicie la pantalla.
+            await context.push('/profile');
+            final n = await AuthService.getDisplayName();
+            final p = await AuthService.getProfilePhoto();
+            final z = await AuthService.getZona();
+            if (mounted) setState(() { _displayName = n; _photoPath = p; _zona = z; });
+          },
         ),
         ListTile(
           leading: Icon(Icons.receipt_long_outlined, color: isDark ? AppConstants.primaryColor : Colors.white),
@@ -640,11 +726,31 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
         ]),
       );
 
+  Future<void> _refreshRestaurants() async {
+    // No solo vuelve a pedir los restaurantes — también relee la zona (y el
+    // nombre/foto) guardados en el perfil, por si el usuario los cambió y
+    // llegó aquí sin pasar por alguno de los caminos que ya refrescan esto.
+    final future = SupabaseService.getRestaurants();
+    final zona   = await AuthService.getZona();
+    final name   = await AuthService.getDisplayName();
+    final photo  = await AuthService.getProfilePhoto();
+    setState(() {
+      _futureRestaurants = future;
+      _zona = zona;
+      _displayName = name;
+      _photoPath = photo;
+    });
+    await future;
+  }
+
   Widget _buildBody(AppDataProvider appData, bool isDark) {
     if (_locationResult?.status != LocationStatus.enMaravatio) {
       return _buildFueraDeZona(_locationResult?.status);
     }
-    return FutureBuilder<List<Restaurant>>(
+    return RefreshIndicator(
+      color: AppConstants.primaryColor,
+      onRefresh: _refreshRestaurants,
+      child: FutureBuilder<List<Restaurant>>(
       future: _futureRestaurants,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
@@ -652,13 +758,18 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
               child: CircularProgressIndicator(
                   color: isDark ? AppConstants.primaryColor : Colors.white));
         }
-        final all = snapshot.data ?? [];
+        final zonaRestaurants = (snapshot.data ?? []).where((r) => r.zona == _zona).toList();
+        final all = zonaRestaurants
+            .where((r) => _categoryFilter.isEmpty || r.categorias.any(_categoryFilter.contains))
+            .toList();
         final restaurants = _searchQuery.isEmpty
             ? all
             : (_searchResults ?? all.where((r) => r.name.toLowerCase().contains(_searchQuery)).toList());
         return ListView.builder(
           padding: const EdgeInsets.all(16),
-          itemCount: restaurants.length + 1,
+          // Con la lista vacía, sin el +1 extra el índice 1 (donde vive el
+          // mensaje de "no hay restaurantes") nunca se llegaba a construir.
+          itemCount: restaurants.isEmpty ? 2 : restaurants.length + 1,
           itemBuilder: (context, i) {
             if (i == 0) {
               return Padding(
@@ -704,68 +815,104 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                       ),
                     ]),
                   const SizedBox(height: 20),
-                  // ── Buscador ────────────────────────────────────────────
-                  TextField(
-                    controller: _searchCtrl,
-                    onChanged: (v) async {
-                      final q = v.trim().toLowerCase();
-                      setState(() { _searchQuery = q; _searchResults = null; });
-                      if (q.isEmpty) return;
-                      final all = await _futureRestaurants;
-                      final result = await SupabaseService.searchByQuery(q, all);
-                      if (!mounted || _searchQuery != q) return;
-                      setState(() {
-                        _searchResults = result.restaurants;
-                        _productMatchIds = result.productRestaurantIds;
-                        // Auto-expandir restaurantes que tienen un platillo que coincide
-                        for (final rid in result.productRestaurantIds) {
-                          _expandedIds.add(rid);
-                        }
-                      });
-                      // Cargar menú de los que aún no lo tienen
-                      for (final rid in result.productRestaurantIds) {
-                        if (!_cats.containsKey(rid)) _loadMenu(rid);
-                      }
+                  // ── Buscador: compacto y alineado a la derecha; se expande
+                  // suavemente al tocarlo para escribir ─────────────────────
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      const collapsedWidth = 46.0;
+                      return Align(
+                        alignment: Alignment.centerRight,
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 280),
+                          curve: Curves.easeOutCubic,
+                          width: _searchExpanded ? constraints.maxWidth : collapsedWidth,
+                          height: 46,
+                          decoration: BoxDecoration(
+                            color: _searchExpanded ? Colors.white : Colors.white.withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(23),
+                          ),
+                          child: _searchExpanded
+                              ? TextField(
+                                  controller: _searchCtrl,
+                                  focusNode: _searchFocusNode,
+                                  onChanged: (v) async {
+                                    final q = v.trim().toLowerCase();
+                                    if (q.isEmpty) {
+                                      // Al borrar la búsqueda con teclado (no solo con la X),
+                                      // cierra los restaurantes que se habían auto-expandido.
+                                      setState(() {
+                                        for (final rid in _productMatchIds) { _expandedIds.remove(rid); }
+                                        _searchQuery = '';
+                                        _searchResults = null;
+                                        _productMatchIds = {};
+                                      });
+                                      return;
+                                    }
+                                    setState(() { _searchQuery = q; _searchResults = null; });
+                                    final all = (await _futureRestaurants).where((r) => r.zona == _zona).toList();
+                                    final result = await SupabaseService.searchByQuery(q, all);
+                                    if (!mounted || _searchQuery != q) return;
+                                    setState(() {
+                                      _searchResults = result.restaurants;
+                                      _productMatchIds = result.productRestaurantIds;
+                                      // Auto-expandir restaurantes que tienen un platillo que coincide
+                                      for (final rid in result.productRestaurantIds) {
+                                        _expandedIds.add(rid);
+                                      }
+                                    });
+                                    // Cargar menú de los que aún no lo tienen
+                                    for (final rid in result.productRestaurantIds) {
+                                      if (!_cats.containsKey(rid)) _loadMenu(rid);
+                                    }
+                                  },
+                                  style: const TextStyle(color: Color(0xFF1A1A1A), fontSize: 14),
+                                  decoration: InputDecoration(
+                                    hintText: 'Busca un restaurante o platillo...',
+                                    hintStyle: TextStyle(color: Colors.black.withValues(alpha: 0.35), fontSize: 14),
+                                    prefixIcon: const Icon(Icons.search, color: AppConstants.primaryColor, size: 22),
+                                    suffixIcon: IconButton(
+                                      icon: const Icon(Icons.close, color: Colors.black45, size: 20),
+                                      onPressed: () {
+                                        _searchCtrl.clear();
+                                        _searchFocusNode.unfocus();
+                                        setState(() {
+                                          for (final rid in _productMatchIds) { _expandedIds.remove(rid); }
+                                          _searchExpanded = false;
+                                          _searchQuery = ''; _searchResults = null; _productMatchIds = {};
+                                        });
+                                      },
+                                    ),
+                                    contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                                    border: InputBorder.none,
+                                  ),
+                                )
+                              : IconButton(
+                                  icon: const Icon(Icons.search, color: Colors.white, size: 22),
+                                  onPressed: () {
+                                    setState(() => _searchExpanded = true);
+                                    WidgetsBinding.instance
+                                        .addPostFrameCallback((_) => _searchFocusNode.requestFocus());
+                                  },
+                                ),
+                        ),
+                      );
                     },
-                    style: const TextStyle(color: Colors.white, fontSize: 14),
-                    decoration: InputDecoration(
-                      hintText: 'Busca un restaurante o platillo...',
-                      hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 14),
-                      prefixIcon: const Icon(Icons.search, color: Colors.white70, size: 22),
-                      suffixIcon: _searchQuery.isNotEmpty
-                          ? IconButton(
-                              icon: const Icon(Icons.close, color: Colors.white70, size: 20),
-                              onPressed: () {
-                                _searchCtrl.clear();
-                                setState(() {
-                                  for (final rid in _productMatchIds) { _expandedIds.remove(rid); }
-                                  _searchQuery = ''; _searchResults = null; _productMatchIds = {};
-                                });
-                              },
-                            )
-                          : null,
-                      filled: true,
-                      fillColor: Colors.white.withValues(alpha: 0.18),
-                      contentPadding: const EdgeInsets.symmetric(vertical: 12),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: BorderSide.none,
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: const BorderSide(color: Colors.white54, width: 1),
-                      ),
-                    ),
                   ),
+                  _buildCategoryFilterButton(zonaRestaurants),
+                  _buildCategoryFilterInline(zonaRestaurants),
                 ]),
               );
             }
             if (restaurants.isEmpty) {
+              final zonaLabel = _zona == 'acambaro' ? 'Acámbaro' : 'Maravatío';
               return Center(
                 child: Padding(
                   padding: const EdgeInsets.only(top: 40),
                   child: Text(
-                    'No se encontró "$_searchQuery"',
+                    _searchQuery.isEmpty
+                        ? 'Todavía no hay restaurantes en $zonaLabel'
+                        : 'No se encontró "$_searchQuery"',
+                    textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 14),
                   ),
                 ),
@@ -775,6 +922,214 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
           },
         );
       },
+      ),
+    );
+  }
+
+  // ── Filtro por categoría (lista de restaurantes) ────────────────────────
+  // Distinto del filtro de categorías DENTRO de un restaurante — este filtra
+  // qué restaurantes aparecen en la lista, según lo que venden. Es un botón
+  // (fondo blanco) que abre una hoja con todas las categorías — no una fila
+  // siempre visible.
+  Widget _buildCategoryFilterButton(List<Restaurant> restaurantsInZona) {
+    final names = restaurantsInZona.expand((r) => r.categorias).toSet().toList()..sort();
+    if (names.isEmpty) return const SizedBox.shrink();
+    final activeCount = _categoryFilter.length;
+    return Padding(
+      padding: const EdgeInsets.only(top: 14),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: GestureDetector(
+          onTap: () => _showCategoryFilterSheet(names),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.filter_list, color: AppConstants.primaryColor, size: 18),
+              const SizedBox(width: 6),
+              Text(
+                activeCount == 0 ? 'Categorías' : 'Categorías ($activeCount)',
+                style: const TextStyle(
+                  color: AppConstants.primaryColor,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
+              ),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showCategoryFilterSheet(List<String> names) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) => Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF1E1E1E),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + MediaQuery.of(sheetContext).padding.bottom),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Center(child: Container(width: 40, height: 4,
+                decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)))),
+            const SizedBox(height: 16),
+            const Text('Filtrar por categoría',
+                style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: names.map((name) {
+                final selected = _categoryFilter.contains(name);
+                return GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      if (selected) {
+                        _categoryFilter.remove(name);
+                      } else {
+                        _categoryFilter.add(name);
+                      }
+                    });
+                    setSheetState(() {});
+                  },
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                    decoration: BoxDecoration(
+                      color: selected ? AppConstants.primaryColor : Colors.white.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      if (selected) ...[
+                        const Icon(Icons.check, color: Colors.white, size: 14),
+                        const SizedBox(width: 4),
+                      ],
+                      Text(name,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: selected ? FontWeight.bold : FontWeight.w600,
+                            fontSize: 13,
+                          )),
+                    ]),
+                  ),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 20),
+            if (_categoryFilter.isNotEmpty)
+              TextButton(
+                onPressed: () {
+                  setState(_categoryFilter.clear);
+                  setSheetState(() {});
+                },
+                child: Text('Limpiar filtro', style: TextStyle(color: Colors.white.withValues(alpha: 0.6))),
+              ),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(sheetContext),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppConstants.primaryColor,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                ),
+                child: const Text('Listo', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  // Segundo botón de prueba (mismo patrón de expansión que el buscador):
+  // colapsado es solo el botón; al tocarlo se expande hacia el lado y
+  // muestra las categorías en una fila horizontal, en el mismo lugar.
+  Widget _buildCategoryFilterInline(List<Restaurant> restaurantsInZona) {
+    final names = restaurantsInZona.expand((r) => r.categorias).toSet().toList()..sort();
+    if (names.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          const collapsedWidth = 140.0;
+          return Align(
+            alignment: Alignment.centerLeft,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 280),
+              curve: Curves.easeOutCubic,
+              width: _categoryInlineOpen ? constraints.maxWidth : collapsedWidth,
+              height: 38,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: _categoryInlineOpen
+                  ? Row(children: [
+                      IconButton(
+                        padding: EdgeInsets.zero,
+                        icon: const Icon(Icons.close, color: AppConstants.primaryColor, size: 18),
+                        onPressed: () => setState(() => _categoryInlineOpen = false),
+                      ),
+                      Expanded(
+                        child: ListView(
+                          scrollDirection: Axis.horizontal,
+                          children: names.map((name) {
+                            final selected = _categoryFilter.contains(name);
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: GestureDetector(
+                                onTap: () => setState(() {
+                                  if (selected) {
+                                    _categoryFilter.remove(name);
+                                  } else {
+                                    _categoryFilter.add(name);
+                                  }
+                                }),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                                  alignment: Alignment.center,
+                                  decoration: BoxDecoration(
+                                    color: selected ? AppConstants.primaryColor : const Color(0xFFF0F0F0),
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  child: Text(name,
+                                      style: TextStyle(
+                                        color: selected ? Colors.white : AppConstants.primaryColor,
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 12,
+                                      )),
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                    ])
+                  : GestureDetector(
+                      onTap: () => setState(() => _categoryInlineOpen = true),
+                      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                        const Icon(Icons.filter_list, color: AppConstants.primaryColor, size: 16),
+                        const SizedBox(width: 6),
+                        Text(
+                          _categoryFilter.isEmpty ? 'Categorías' : 'Categorías (${_categoryFilter.length})',
+                          style: const TextStyle(color: AppConstants.primaryColor, fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                      ]),
+                    ),
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -784,7 +1139,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
     final isExpanded = _expandedIds.contains(r.id);
     final isLoading = _loadingMenu[r.id] == true;
     final cats = _cats[r.id] ?? [];
-    final selIdx = _selCat[r.id] ?? 0;
+    final selIdxs = _selCat[r.id] ?? {0};
     const headerColor = AppConstants.primaryColor;
 
     final borderRadius = BorderRadius.only(
@@ -919,8 +1274,8 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                 )
               else if (cats.isNotEmpty) ...[
                 _buildPromoBanner(r),
-                _buildCategoryTabs(r.id, cats, selIdx),
-                _buildProducts(r, cats, selIdx, appData),
+                _buildCategoryTabs(r.id, cats, selIdxs),
+                _buildProducts(r, cats, selIdxs, appData),
                 const SizedBox(height: 8),
               ],
             ]),
@@ -1079,13 +1434,14 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
   }
 
   Widget _buildCategoryTabs(
-      String restaurantId, List<Category> cats, int selIdx) {
+      String restaurantId, List<Category> cats, Set<int> selIdxs) {
     return _CategoryTabsRow(
       restaurantId: restaurantId,
       cats: cats,
-      selIdx: selIdx,
+      selIdxs: selIdxs,
+      // Selección única: tocar una categoría cambia la pestaña activa.
       onSelect: (i) => setState(() {
-        _selCat[restaurantId] = i;
+        _selCat[restaurantId] = {i};
         _expandedProductId = null;
       }),
       categoryIcon: _categoryIcon,
@@ -1095,7 +1451,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
   // ── Product accordion list ─────────────────────────────────────────────
 
   Widget _buildProducts(
-      Restaurant r, List<Category> cats, int selIdx, AppDataProvider appData) {
+      Restaurant r, List<Category> cats, Set<int> selIdxs, AppDataProvider appData) {
     const accent  = Color(0xFFF4510C);
 
     // Si hay búsqueda activa y este restaurante matcheó por platillo,
@@ -1127,14 +1483,26 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
       ]);
     }
 
-    final catId   = cats[selIdx].id;
-    final regular = (_prods[r.id]?[catId] ?? [])
-        .where((p) => appData.getProductAvailability(p.id, p.isAvailable))
-        .toList();
-    final extras  = appData
-        .extraProductsForCategory(r.id, catId)
-        .where((p) => p.isAvailable)
-        .toList();
+    // Varias categorías pueden estar activas a la vez — se juntan los
+    // productos de todas, en el mismo orden en que aparecen las pestañas.
+    final selectedCats = [for (var i = 0; i < cats.length; i++) if (selIdxs.contains(i)) cats[i]];
+    final regular = <Product>[];
+    final extras = <Product>[];
+    for (final cat in selectedCats) {
+      regular.addAll((_prods[r.id]?[cat.id] ?? [])
+          .where((p) => appData.getProductAvailability(p.id, p.isAvailable)));
+      extras.addAll(appData
+          .extraProductsForCategory(r.id, cat.id)
+          .where((p) => p.isAvailable)
+          .map((p) => Product(
+                id: p.id,
+                categoryId: p.categoryIds.first,
+                name: p.name,
+                description: p.description.isEmpty ? null : p.description,
+                price: p.price,
+                imageUrl: p.imagePath,
+              )));
+    }
 
     return Column(children: [
       ...regular.map((p) {
@@ -1146,15 +1514,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
       ...extras.map((p) {
         final isExpanded = _expandedProductId == p.id;
         final qty = _productQty[p.id] ?? 1;
-        final asProduct = Product(
-          id: p.id,
-          categoryId: p.categoryIds.first,
-          name: p.name,
-          description: p.description.isEmpty ? null : p.description,
-          price: p.price,
-          imageUrl: p.imagePath,
-        );
-        return _buildProductTile(asProduct, r.id, r.name, accent, isExpanded, qty);
+        return _buildProductTile(p, r.id, r.name, accent, isExpanded, qty);
       }),
     ]);
   }
@@ -1254,7 +1614,9 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                           ),
                         const SizedBox(height: 3),
                       ],
-                      Text(p.name,
+                      Text(_truncateTitle(p.name),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.bold,
@@ -1652,14 +2014,14 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
 class _CategoryTabsRow extends StatefulWidget {
   final String restaurantId;
   final List<Category> cats;
-  final int selIdx;
+  final Set<int> selIdxs;
   final void Function(int) onSelect;
   final IconData Function(String, String?) categoryIcon;
 
   const _CategoryTabsRow({
     required this.restaurantId,
     required this.cats,
-    required this.selIdx,
+    required this.selIdxs,
     required this.onSelect,
     required this.categoryIcon,
   });
@@ -1708,7 +2070,7 @@ class _CategoryTabsRowState extends State<_CategoryTabsRow> {
         child: Row(
           children: List.generate(widget.cats.length, (i) {
             final cat = widget.cats[i];
-            final isSelected = widget.selIdx == i;
+            final isSelected = widget.selIdxs.contains(i);
             final bgColor = isSelected
                 ? const Color(0xFFF4510C)
                 : Colors.white;
@@ -1735,7 +2097,7 @@ class _CategoryTabsRowState extends State<_CategoryTabsRow> {
                   ],
                 ),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(widget.categoryIcon(cat.name, cat.icon),
+                  Icon(isSelected ? Icons.check_circle : widget.categoryIcon(cat.name, cat.icon),
                       color: fgColor, size: 15),
                   const SizedBox(width: 5),
                   Text(cat.name,

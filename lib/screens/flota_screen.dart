@@ -151,6 +151,7 @@ class _FlotaScreenState extends State<FlotaScreen> {
       body: SafeArea(
         child: Column(children: [
           _buildHeader(),
+          _buildFleetMap(),
           _buildSummary(totalOnline, totalGanancias),
           Expanded(
             child: _loading
@@ -324,15 +325,98 @@ class _FlotaScreenState extends State<FlotaScreen> {
   }
 
   Widget _buildSummary(int online, double ganancias) {
+    // Cada rider opera con una sola moto — "Motos totales" refleja la misma
+    // cuenta que "Riders totales" mientras no exista un dato de flota
+    // vehicular independiente (varias motos por rider, etc.).
     return Container(
-      padding: const EdgeInsets.all(16),
-      child: Row(children: [
-        _summaryCard(Icons.people_rounded, '${_riders.length}', 'Riders totales', const Color(0xFF4F8EF7)),
-        const SizedBox(width: 10),
-        _summaryCard(Icons.circle, '$online', 'En línea', const Color(0xFF22C55E)),
-        const SizedBox(width: 10),
-        _summaryCard(Icons.attach_money_rounded, '\$${ganancias.toStringAsFixed(0)}', 'Ganancias hoy', const Color(0xFFF59E0B)),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      child: Column(children: [
+        Row(children: [
+          _summaryCard(Icons.people_rounded, '${_riders.length}', 'Riders totales', const Color(0xFF4F8EF7)),
+          const SizedBox(width: 10),
+          _summaryCard(Icons.two_wheeler_rounded, '${_riders.length}', 'Motos totales', const Color(0xFFA855F7)),
+        ]),
+        const SizedBox(height: 10),
+        Row(children: [
+          _summaryCard(Icons.circle, '$online', 'En línea', const Color(0xFF22C55E)),
+          const SizedBox(width: 10),
+          _summaryCard(Icons.payments_rounded, '\$${ganancias.toStringAsFixed(0)}', 'Ganancias hoy', const Color(0xFFF59E0B)),
+        ]),
       ]),
+    );
+  }
+
+  Widget _buildFleetMap() {
+    final markers = <Marker>[];
+    for (final r in _riders) {
+      final riderId = r['rider_id'] as String;
+      final loc = _locations[riderId];
+      if (loc == null) continue;
+      final lat = (loc['lat'] as num?)?.toDouble();
+      final lng = (loc['lng'] as num?)?.toDouble();
+      if (lat == null || lng == null) continue;
+      final online = _isOnline(riderId);
+      final color = online ? const Color(0xFF22C55E) : const Color(0xFF6B7280);
+      markers.add(Marker(
+        point: LatLng(lat, lng),
+        width: 44,
+        height: 52,
+        child: GestureDetector(
+          onTap: () => context.push('/flota/rider/$riderId', extra: r),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 36, height: 36,
+              decoration: BoxDecoration(
+                color: color,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2.5),
+                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.4), blurRadius: 6, offset: const Offset(0, 3))],
+              ),
+              child: const Icon(Icons.delivery_dining_rounded, color: Colors.white, size: 18),
+            ),
+            CustomPaint(size: const Size(12, 7), painter: _PinTailPainter(color)),
+          ]),
+        ),
+      ));
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: SizedBox(
+          height: 220,
+          child: Stack(children: [
+            FlutterMap(
+              options: const MapOptions(
+                initialCenter: LatLng(19.8969, -100.4447),
+                initialZoom: 13,
+              ),
+              children: [
+                TileLayer(
+                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  userAgentPackageName: 'com.fercadi.flota',
+                ),
+                MarkerLayer(markers: markers),
+              ],
+            ),
+            Positioned(
+              top: 10, left: 10,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.55),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.circle, color: Color(0xFF22C55E), size: 8),
+                  SizedBox(width: 6),
+                  Text('En vivo', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600)),
+                ]),
+              ),
+            ),
+          ]),
+        ),
+      ),
     );
   }
 
@@ -373,7 +457,13 @@ class _FlotaScreenState extends State<FlotaScreen> {
           color: online ? const Color(0xFF22C55E).withValues(alpha: 0.3) : const Color(0xFF2A2D3E),
         ),
       ),
-      child: Padding(
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => context.push('/flota/rider/$riderId', extra: rider),
+          child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           // Header del rider
@@ -419,7 +509,7 @@ class _FlotaScreenState extends State<FlotaScreen> {
           Row(children: [
             _statChip(Icons.check_circle_outline_rounded, '$entregas', 'entregas hoy', const Color(0xFF4F8EF7)),
             const SizedBox(width: 10),
-            _statChip(Icons.attach_money_rounded, '\$${ganancia.toStringAsFixed(0)}', 'ganado hoy', const Color(0xFFF59E0B)),
+            _statChip(Icons.payments_rounded, '\$${ganancia.toStringAsFixed(0)}', 'ganado hoy', const Color(0xFFF59E0B)),
             const SizedBox(width: 10),
             // Pedido activo
             if (activo != null)
@@ -446,6 +536,8 @@ class _FlotaScreenState extends State<FlotaScreen> {
             ),
           ),
         ]),
+          ),
+        ),
       ),
     );
   }

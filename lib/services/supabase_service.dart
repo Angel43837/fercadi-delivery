@@ -77,12 +77,27 @@ class SupabaseService {
 
   static final _mockCategories = <String, List<Category>>{
     '1': [
-      const Category(id: 'c1', restaurantId: '1', name: 'Hamburguesas', icon: '🍔'),
+      const Category(
+        id: 'c1',
+        restaurantId: '1',
+        name: 'Hamburguesas',
+        icon: '🍔',
+      ),
       const Category(id: 'c2', restaurantId: '1', name: 'Papas', icon: '🍟'),
       const Category(id: 'c3', restaurantId: '1', name: 'Bebidas', icon: '🥤'),
       const Category(id: 'c10', restaurantId: '1', name: 'Postres', icon: '🍦'),
-      const Category(id: 'c11', restaurantId: '1', name: 'Ensaladas', icon: '🥗'),
-      const Category(id: 'c12', restaurantId: '1', name: 'Desayunos', icon: '🥞'),
+      const Category(
+        id: 'c11',
+        restaurantId: '1',
+        name: 'Ensaladas',
+        icon: '🥗',
+      ),
+      const Category(
+        id: 'c12',
+        restaurantId: '1',
+        name: 'Desayunos',
+        icon: '🥞',
+      ),
     ],
     '2': [
       const Category(id: 'c4', restaurantId: '2', name: 'Cafés', icon: '☕'),
@@ -98,39 +113,141 @@ class SupabaseService {
 
   static final _mockProducts = <String, List<Product>>{
     'c1': [
-      const Product(id: 'p1', categoryId: 'c1', name: 'Big Mac', description: 'La hamburguesa clásica con doble carne y salsa especial', price: 89),
-      const Product(id: 'p2', categoryId: 'c1', name: 'Quarter Pounder', description: 'Jugosa y deliciosa con queso cheddar', price: 95),
-      const Product(id: 'p3', categoryId: 'c1', name: 'McPollo Crispy', description: 'Pechuga crujiente con lechuga y mayo', price: 79),
+      const Product(
+        id: 'p1',
+        categoryId: 'c1',
+        name: 'Big Mac',
+        description: 'La hamburguesa clásica con doble carne y salsa especial',
+        price: 89,
+      ),
+      const Product(
+        id: 'p2',
+        categoryId: 'c1',
+        name: 'Quarter Pounder',
+        description: 'Jugosa y deliciosa con queso cheddar',
+        price: 95,
+      ),
+      const Product(
+        id: 'p3',
+        categoryId: 'c1',
+        name: 'McPollo Crispy',
+        description: 'Pechuga crujiente con lechuga y mayo',
+        price: 79,
+      ),
     ],
     'c2': [
-      const Product(id: 'p4', categoryId: 'c2', name: 'Papas Medianas', description: 'Crujientes y bien saladas', price: 35),
-      const Product(id: 'p5', categoryId: 'c2', name: 'Papas Grandes', description: 'Para compartir o para ti solo', price: 45),
+      const Product(
+        id: 'p4',
+        categoryId: 'c2',
+        name: 'Papas Medianas',
+        description: 'Crujientes y bien saladas',
+        price: 35,
+      ),
+      const Product(
+        id: 'p5',
+        categoryId: 'c2',
+        name: 'Papas Grandes',
+        description: 'Para compartir o para ti solo',
+        price: 45,
+      ),
     ],
     'c3': [
-      const Product(id: 'p6', categoryId: 'c3', name: 'Coca-Cola Grande', description: 'Refresco bien frío con hielo', price: 30),
-      const Product(id: 'p7', categoryId: 'c3', name: 'Milkshake Chocolate', description: 'Cremoso y delicioso', price: 55),
+      const Product(
+        id: 'p6',
+        categoryId: 'c3',
+        name: 'Coca-Cola Grande',
+        description: 'Refresco bien frío con hielo',
+        price: 30,
+      ),
+      const Product(
+        id: 'p7',
+        categoryId: 'c3',
+        name: 'Milkshake Chocolate',
+        description: 'Cremoso y delicioso',
+        price: 55,
+      ),
     ],
     'c4': [
-      const Product(id: 'p8', categoryId: 'c4', name: 'Café Americano', description: 'Clásico y aromático, doble shot', price: 65),
-      const Product(id: 'p9', categoryId: 'c4', name: 'Café Latte', description: 'Suave y cremoso con leche vaporizada', price: 75),
+      const Product(
+        id: 'p8',
+        categoryId: 'c4',
+        name: 'Café Americano',
+        description: 'Clásico y aromático, doble shot',
+        price: 65,
+      ),
+      const Product(
+        id: 'p9',
+        categoryId: 'c4',
+        name: 'Café Latte',
+        description: 'Suave y cremoso con leche vaporizada',
+        price: 75,
+      ),
     ],
     'c5': [
-      const Product(id: 'p10', categoryId: 'c5', name: 'Frappé Oreo', description: 'Frío, cremoso y cargado de Oreos', price: 95),
-      const Product(id: 'p11', categoryId: 'c5', name: 'Smoothie Tropical', description: 'Mango, piña y maracuyá', price: 85),
+      const Product(
+        id: 'p10',
+        categoryId: 'c5',
+        name: 'Frappé Oreo',
+        description: 'Frío, cremoso y cargado de Oreos',
+        price: 95,
+      ),
+      const Product(
+        id: 'p11',
+        categoryId: 'c5',
+        name: 'Smoothie Tropical',
+        description: 'Mango, piña y maracuyá',
+        price: 85,
+      ),
     ],
     'c6': [
-      const Product(id: 'p12', categoryId: 'c6', name: 'Croissant de Jamón', description: 'Recién horneado con jamón y queso', price: 55),
+      const Product(
+        id: 'p12',
+        categoryId: 'c6',
+        name: 'Croissant de Jamón',
+        description: 'Recién horneado con jamón y queso',
+        price: 55,
+      ),
     ],
     'c7': [
-      const Product(id: 'p13', categoryId: 'c7', name: 'California Roll', description: '8 piezas de camarón, aguacate y pepino', price: 120),
-      const Product(id: 'p14', categoryId: 'c7', name: 'Dragon Roll', description: '8 piezas premium con tuna y aguacate', price: 145),
+      const Product(
+        id: 'p13',
+        categoryId: 'c7',
+        name: 'California Roll',
+        description: '8 piezas de camarón, aguacate y pepino',
+        price: 120,
+      ),
+      const Product(
+        id: 'p14',
+        categoryId: 'c7',
+        name: 'Dragon Roll',
+        description: '8 piezas premium con tuna y aguacate',
+        price: 145,
+      ),
     ],
     'c8': [
-      const Product(id: 'p15', categoryId: 'c8', name: 'Edamame', description: 'Frijoles japoneses con sal de mar', price: 55),
-      const Product(id: 'p16', categoryId: 'c8', name: 'Gyozas', description: '6 piezas de dumplings al vapor', price: 85),
+      const Product(
+        id: 'p15',
+        categoryId: 'c8',
+        name: 'Edamame',
+        description: 'Frijoles japoneses con sal de mar',
+        price: 55,
+      ),
+      const Product(
+        id: 'p16',
+        categoryId: 'c8',
+        name: 'Gyozas',
+        description: '6 piezas de dumplings al vapor',
+        price: 85,
+      ),
     ],
     'c9': [
-      const Product(id: 'p17', categoryId: 'c9', name: 'Mochi de Fresa', description: 'Postre japonés suave y dulce', price: 45),
+      const Product(
+        id: 'p17',
+        categoryId: 'c9',
+        name: 'Mochi de Fresa',
+        description: 'Postre japonés suave y dulce',
+        price: 45,
+      ),
     ],
   };
 
@@ -143,7 +260,10 @@ class SupabaseService {
     if (useMock) {
       list = List.from(_mockRestaurants);
     } else {
-      final data = await _client.from('restaurants').select().eq('is_open', true);
+      final data = await _client
+          .from('restaurants')
+          .select()
+          .eq('is_open', true);
       list = (data as List).map((e) => Restaurant.fromJson(e)).toList();
     }
 
@@ -173,72 +293,119 @@ class SupabaseService {
   }
 
   // Imágenes override para productos cuya URL en la BD no carga en Flutter web
-  static const _imgFood1 = 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=400&h=300&fit=crop&q=80';
-  static const _imgFood2 = 'https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?w=400&h=300&fit=crop&q=80';
-  static const _imgFood3 = 'https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=400&h=300&fit=crop&q=80';
-  static const _imgPollo1 = 'https://images.unsplash.com/photo-1532550907401-a500c9a57435?w=400&h=300&fit=crop&q=80';
-  static const _imgPollo2 = 'https://images.unsplash.com/photo-1598103442097-8b74394b95c6?w=400&h=300&fit=crop&q=80';
-  static const _imgNieve      = 'https://images.unsplash.com/photo-1501443762994-82bd5dace89a?w=400&h=300&fit=crop&q=80';
-  static const _imgNieveLimon = 'https://images.unsplash.com/photo-1559181567-c3190ca9959b?w=400&h=300&fit=crop&q=80';
-  static const _imgPaleta  = 'https://images.unsplash.com/photo-1488900128323-21503983a07e?w=400&h=300&fit=crop&q=80';
-  static const _imgHotDog1   = 'https://images.pexels.com/photos/1640777/pexels-photo-1640777.jpeg?auto=compress&cs=tinysrgb&w=400&h=300&fit=crop';
-  static const _imgHotDog2   = 'https://images.pexels.com/photos/4518641/pexels-photo-4518641.jpeg?auto=compress&cs=tinysrgb&w=400&h=300&fit=crop';
-  static const _imgArrozFrito = 'https://images.unsplash.com/photo-1603133872878-684f208fb84b?w=400&h=300&fit=crop&q=80';
-  static const _imgChowMein   = 'https://images.unsplash.com/photo-1555126634-323283e090fa?w=400&h=300&fit=crop&q=80';
-  static const _imgAgridulce  = 'https://images.unsplash.com/photo-1563245372-f21724e3856d?w=400&h=300&fit=crop&q=80';
-  static const _imgAlitas1    = 'https://images.unsplash.com/photo-1527477396000-e27163b481c2?w=400&h=300&fit=crop&q=80';
-  static const _imgAlitas2    = 'https://images.unsplash.com/photo-1567620832903-9fc6debc209f?w=400&h=300&fit=crop&q=80';
-  static const _imgPastelChoc = 'https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=400&h=300&fit=crop&q=80';
-  static const _imgTresLeches = 'https://images.unsplash.com/photo-1565958011703-44f9829ba187?w=400&h=300&fit=crop&q=80';
-  static const _imgCapuchino  = 'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=400&h=300&fit=crop&q=80';
-  static const _imgFrappe      = 'https://images.unsplash.com/photo-1572490122747-3e9197aa5d6a?w=400&h=300&fit=crop&q=80';
-  static const _imgCalRoll     = 'https://images.unsplash.com/photo-1553621042-f6e147245754?w=400&h=300&fit=crop&q=80';
-  static const _imgCarnitas1   = 'https://images.unsplash.com/photo-1504544750208-dc0358e63f7f?w=400&h=300&fit=crop&q=80';
-  static const _imgCarnitas2   = 'https://images.unsplash.com/photo-1529543544282-ea669407fca3?w=400&h=300&fit=crop&q=80';
-  static const _imgPizzaHaw    = 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=400&h=300&fit=crop&q=80';
-  static const _imgBirriaTaco  = 'https://images.pexels.com/photos/7613568/pexels-photo-7613568.jpeg?auto=compress&cs=tinysrgb&w=400&h=300&fit=crop';
-  static const _imgBirriaStew  = 'https://images.pexels.com/photos/6896379/pexels-photo-6896379.jpeg?auto=compress&cs=tinysrgb&w=400&h=300&fit=crop';
-  static const _imgConsome      = 'https://images.unsplash.com/photo-1547592180-85f173990554?w=400&h=300&fit=crop&q=80';
-  static const _imgTortaPierna = 'https://images.unsplash.com/photo-1639667911189-700bd2029f5b?w=400&h=300&fit=crop&q=80';
-  static const _imgTortaMilan  = 'https://images.unsplash.com/photo-1702119614788-bae35a7be313?w=400&h=300&fit=crop&q=80';
-  static const _imgTortaCubana = 'https://images.unsplash.com/photo-1642694325494-9b3c23b80cc3?w=400&h=300&fit=crop&q=80';
-  static const _imgCamarones   = 'https://images.unsplash.com/photo-1565299585323-38d6b0865b47?w=400&h=300&fit=crop&q=80';
-  static const _imgFilete      = 'https://images.unsplash.com/photo-1510130387422-82bed34b37e9?w=400&h=300&fit=crop&q=80';
-  static const _imgTacoPastor  = 'https://images.unsplash.com/photo-1624726175512-19b9baf9fbd1?w=400&h=300&fit=crop&q=80';
-  static const _imgTacoBistec  = 'https://images.unsplash.com/photo-1552332386-f8dd00dc2f85?w=400&h=300&fit=crop&q=80';
-  static const _imgTacoChorizo = 'https://images.pexels.com/photos/2092507/pexels-photo-2092507.jpeg?auto=compress&cs=tinysrgb&w=400&h=300&fit=crop';
-  static const _imgQuesadilla  = 'https://images.unsplash.com/photo-1618040996337-56904b7850b9?w=400&h=300&fit=crop&q=80';
+  static const _imgFood2 =
+      'https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?w=400&h=300&fit=crop&q=80';
+  static const _imgFood3 =
+      'https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=400&h=300&fit=crop&q=80';
+  static const _imgPollo1 =
+      'https://images.unsplash.com/photo-1532550907401-a500c9a57435?w=400&h=300&fit=crop&q=80';
+  static const _imgPollo2 =
+      'https://images.unsplash.com/photo-1598103442097-8b74394b95c6?w=400&h=300&fit=crop&q=80';
+  static const _imgNieve =
+      'https://images.unsplash.com/photo-1501443762994-82bd5dace89a?w=400&h=300&fit=crop&q=80';
+  static const _imgNieveLimon =
+      'https://images.unsplash.com/photo-1559181567-c3190ca9959b?w=400&h=300&fit=crop&q=80';
+  static const _imgPaleta =
+      'https://images.unsplash.com/photo-1488900128323-21503983a07e?w=400&h=300&fit=crop&q=80';
+  static const _imgHotDog1 =
+      'https://images.pexels.com/photos/1640777/pexels-photo-1640777.jpeg?auto=compress&cs=tinysrgb&w=400&h=300&fit=crop';
+  static const _imgHotDog2 =
+      'https://images.pexels.com/photos/4518641/pexels-photo-4518641.jpeg?auto=compress&cs=tinysrgb&w=400&h=300&fit=crop';
+  static const _imgArrozFrito =
+      'https://images.unsplash.com/photo-1603133872878-684f208fb84b?w=400&h=300&fit=crop&q=80';
+  static const _imgChowMein =
+      'https://images.unsplash.com/photo-1555126634-323283e090fa?w=400&h=300&fit=crop&q=80';
+  static const _imgAgridulce =
+      'https://images.unsplash.com/photo-1563245372-f21724e3856d?w=400&h=300&fit=crop&q=80';
+  static const _imgAlitas1 =
+      'https://images.unsplash.com/photo-1527477396000-e27163b481c2?w=400&h=300&fit=crop&q=80';
+  static const _imgAlitas2 =
+      'https://images.unsplash.com/photo-1567620832903-9fc6debc209f?w=400&h=300&fit=crop&q=80';
+  static const _imgPastelChoc =
+      'https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=400&h=300&fit=crop&q=80';
+  static const _imgTresLeches =
+      'https://images.unsplash.com/photo-1565958011703-44f9829ba187?w=400&h=300&fit=crop&q=80';
+  static const _imgCapuchino =
+      'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=400&h=300&fit=crop&q=80';
+  static const _imgFrappe =
+      'https://images.unsplash.com/photo-1572490122747-3e9197aa5d6a?w=400&h=300&fit=crop&q=80';
+  static const _imgCalRoll =
+      'https://images.unsplash.com/photo-1553621042-f6e147245754?w=400&h=300&fit=crop&q=80';
+  static const _imgCarnitas1 =
+      'https://images.unsplash.com/photo-1504544750208-dc0358e63f7f?w=400&h=300&fit=crop&q=80';
+  static const _imgCarnitas2 =
+      'https://images.unsplash.com/photo-1529543544282-ea669407fca3?w=400&h=300&fit=crop&q=80';
+  static const _imgPizzaHaw =
+      'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=400&h=300&fit=crop&q=80';
+  static const _imgBirriaTaco =
+      'https://images.pexels.com/photos/7613568/pexels-photo-7613568.jpeg?auto=compress&cs=tinysrgb&w=400&h=300&fit=crop';
+  static const _imgBirriaStew =
+      'https://images.pexels.com/photos/6896379/pexels-photo-6896379.jpeg?auto=compress&cs=tinysrgb&w=400&h=300&fit=crop';
+  static const _imgConsome =
+      'https://images.unsplash.com/photo-1547592180-85f173990554?w=400&h=300&fit=crop&q=80';
+  static const _imgTortaPierna =
+      'https://images.unsplash.com/photo-1639667911189-700bd2029f5b?w=400&h=300&fit=crop&q=80';
+  static const _imgTortaMilan =
+      'https://images.unsplash.com/photo-1702119614788-bae35a7be313?w=400&h=300&fit=crop&q=80';
+  static const _imgTortaCubana =
+      'https://images.unsplash.com/photo-1642694325494-9b3c23b80cc3?w=400&h=300&fit=crop&q=80';
+  static const _imgCamarones =
+      'https://images.unsplash.com/photo-1565299585323-38d6b0865b47?w=400&h=300&fit=crop&q=80';
+  static const _imgFilete =
+      'https://images.unsplash.com/photo-1510130387422-82bed34b37e9?w=400&h=300&fit=crop&q=80';
+  static const _imgTacoPastor =
+      'https://images.unsplash.com/photo-1624726175512-19b9baf9fbd1?w=400&h=300&fit=crop&q=80';
+  static const _imgTacoBistec =
+      'https://images.unsplash.com/photo-1552332386-f8dd00dc2f85?w=400&h=300&fit=crop&q=80';
+  static const _imgTacoChorizo =
+      'https://images.pexels.com/photos/2092507/pexels-photo-2092507.jpeg?auto=compress&cs=tinysrgb&w=400&h=300&fit=crop';
+  static const _imgQuesadilla =
+      'https://images.unsplash.com/photo-1618040996337-56904b7850b9?w=400&h=300&fit=crop&q=80';
 
   static const Map<String, String> _productImageFix = {
     // Carnita
-    'ep1781496944163': 'https://images.pexels.com/photos/1639557/pexels-photo-1639557.jpeg?auto=compress&cs=tinysrgb&w=400&h=300&fit=crop',
+    'ep1781496944163':
+        'https://images.pexels.com/photos/1639557/pexels-photo-1639557.jpeg?auto=compress&cs=tinysrgb&w=400&h=300&fit=crop',
     // Hot Dogs
     'p_hd_1': _imgHotDog1, 'p_hd_2': _imgHotDog2,
     // Nieves
-    'p_nieves_1': _imgNieveLimon, 'p_nieves_2': _imgNieve, 'p_nieves_3': _imgPaleta,
+    'p_nieves_1': _imgNieveLimon,
+    'p_nieves_2': _imgNieve,
+    'p_nieves_3': _imgPaleta,
     // Sushi
     'p13': _imgCalRoll,
     // Tacos Chuy
-    'p_chuy_1': _imgTacoPastor, 'p_chuy_2': _imgTacoBistec, 'p_chuy_3': _imgTacoChorizo,
+    'p_chuy_1': _imgTacoPastor,
+    'p_chuy_2': _imgTacoBistec,
+    'p_chuy_3': _imgTacoChorizo,
     'p_chuy_4': _imgQuesadilla, 'p_chuy_5': _imgQuesadilla,
     // Carnitas
     'p_carnitas_1': _imgCarnitas1, 'p_carnitas_2': _imgCarnitas2,
     'p_carnitas_3': _imgFood3, 'p_carnitas_4': _imgFood2,
     // Birria
-    'p_birria_1': _imgBirriaTaco, 'p_birria_2': _imgBirriaStew, 'p_birria_3': _imgConsome,
+    'p_birria_1': _imgBirriaTaco,
+    'p_birria_2': _imgBirriaStew,
+    'p_birria_3': _imgConsome,
     // Pizza
     'p_pizza_2': _imgPizzaHaw,
     // Mariscos
     'p_mar_1': _imgCamarones, 'p_mar_2': _imgFood3, 'p_mar_3': _imgFilete,
     // Tortas
-    'p_tortas_1': _imgTortaPierna, 'p_tortas_2': _imgTortaMilan, 'p_tortas_3': _imgTortaCubana,
+    'p_tortas_1': _imgTortaPierna,
+    'p_tortas_2': _imgTortaMilan,
+    'p_tortas_3': _imgTortaCubana,
     // Wok
-    'p_wok_1': _imgArrozFrito, 'p_wok_2': _imgChowMein, 'p_wok_3': _imgAgridulce,
+    'p_wok_1': _imgArrozFrito,
+    'p_wok_2': _imgChowMein,
+    'p_wok_3': _imgAgridulce,
     // Alitas
     'p_alitas_1': _imgAlitas1, 'p_alitas_2': _imgAlitas2,
-    'p_alitas_3': 'https://images.unsplash.com/photo-1573080496219-bb080dd4f877?w=400&h=300&fit=crop&q=80',
+    'p_alitas_3':
+        'https://images.unsplash.com/photo-1573080496219-bb080dd4f877?w=400&h=300&fit=crop&q=80',
     // Pastelería
-    'p_past_1': _imgPastelChoc, 'p_past_2': _imgTresLeches, 'p_past_4': _imgCapuchino,
+    'p_past_1': _imgPastelChoc,
+    'p_past_2': _imgTresLeches,
+    'p_past_4': _imgCapuchino,
     // Starbucks
     'p10': _imgFrappe,
     // Pollo Feliz
@@ -256,36 +423,47 @@ class SupabaseService {
   // Imagen genérica por nombre del platillo (fallback cuando no hay URL en la BD)
   static String? _imageByName(String name) {
     final n = name.toLowerCase();
-    if (n.contains('pastor'))                              return _imgTacoPastor;
-    if (n.contains('bistec') || n.contains('bistek'))     return _imgTacoBistec;
-    if (n.contains('chorizo') && n.contains('taco'))      return _imgTacoChorizo;
-    if (n.contains('quesadilla'))                         return _imgQuesadilla;
-    if (n.contains('taco') || n.contains('taquiza'))      return _imgTacoPastor;
-    if (n.contains('consomé') || n.contains('consome'))   return _imgConsome;
-    if (n.contains('birria'))                             return _imgBirriaStew;
-    if (n.contains('carnitas'))                           return _imgCarnitas1;
-    if (n.contains('hot dog') || n.contains('hotdog'))    return _imgHotDog1;
-    if (n.contains('nieve') && (n.contains('limón') || n.contains('limon'))) return _imgNieveLimon;
-    if (n.contains('nieve') || n.contains('helado') || n.contains('nieves')) return _imgNieve;
-    if (n.contains('paleta'))                             return _imgPaleta;
-    if (n.contains('pizza'))                              return _imgPizzaHaw;
-    if (n.contains('arroz') && n.contains('frito'))       return _imgArrozFrito;
-    if (n.contains('chow mein') || n.contains('chowmein'))return _imgChowMein;
-    if (n.contains('agridulce'))                          return _imgAgridulce;
-    if (n.contains('alita') || n.contains('wing'))        return _imgAlitas1;
-    if (n.contains('camarón') || n.contains('camaron') || n.contains('ceviche')) return _imgCamarones;
-    if (n.contains('filete') || n.contains('pescado'))    return _imgFilete;
-    if (n.contains('milanesa'))                           return _imgTortaMilan;
-    if (n.contains('cubana'))                             return _imgTortaCubana;
-    if (n.contains('torta') || n.contains('cemita'))      return _imgTortaPierna;
-    if (n.contains('california') || n.contains('roll'))   return _imgCalRoll;
-    if (n.contains('sushi'))                              return _imgCalRoll;
-    if (n.contains('frappé') || n.contains('frappe') || n.contains('frapé')) return _imgFrappe;
-    if (n.contains('capuchino') || n.contains('cappuccino') || n.contains('café') || n.contains('cafe') || n.contains('latte')) return _imgCapuchino;
-    if (n.contains('tres leches'))                        return _imgTresLeches;
-    if (n.contains('pastel') || n.contains('torta de') || n.contains('cake')) return _imgPastelChoc;
-    if (n.contains('pollo') && (n.contains('frito') || n.contains('crispy'))) return _imgPollo1;
-    if (n.contains('pollo') || n.contains('chicken'))     return _imgPollo2;
+    if (n.contains('pastor')) return _imgTacoPastor;
+    if (n.contains('bistec') || n.contains('bistek')) return _imgTacoBistec;
+    if (n.contains('chorizo') && n.contains('taco')) return _imgTacoChorizo;
+    if (n.contains('quesadilla')) return _imgQuesadilla;
+    if (n.contains('taco') || n.contains('taquiza')) return _imgTacoPastor;
+    if (n.contains('consomé') || n.contains('consome')) return _imgConsome;
+    if (n.contains('birria')) return _imgBirriaStew;
+    if (n.contains('carnitas')) return _imgCarnitas1;
+    if (n.contains('hot dog') || n.contains('hotdog')) return _imgHotDog1;
+    if (n.contains('nieve') && (n.contains('limón') || n.contains('limon')))
+      return _imgNieveLimon;
+    if (n.contains('nieve') || n.contains('helado') || n.contains('nieves'))
+      return _imgNieve;
+    if (n.contains('paleta')) return _imgPaleta;
+    if (n.contains('pizza')) return _imgPizzaHaw;
+    if (n.contains('arroz') && n.contains('frito')) return _imgArrozFrito;
+    if (n.contains('chow mein') || n.contains('chowmein')) return _imgChowMein;
+    if (n.contains('agridulce')) return _imgAgridulce;
+    if (n.contains('alita') || n.contains('wing')) return _imgAlitas1;
+    if (n.contains('camarón') || n.contains('camaron') || n.contains('ceviche'))
+      return _imgCamarones;
+    if (n.contains('filete') || n.contains('pescado')) return _imgFilete;
+    if (n.contains('milanesa')) return _imgTortaMilan;
+    if (n.contains('cubana')) return _imgTortaCubana;
+    if (n.contains('torta') || n.contains('cemita')) return _imgTortaPierna;
+    if (n.contains('california') || n.contains('roll')) return _imgCalRoll;
+    if (n.contains('sushi')) return _imgCalRoll;
+    if (n.contains('frappé') || n.contains('frappe') || n.contains('frapé'))
+      return _imgFrappe;
+    if (n.contains('capuchino') ||
+        n.contains('cappuccino') ||
+        n.contains('café') ||
+        n.contains('cafe') ||
+        n.contains('latte'))
+      return _imgCapuchino;
+    if (n.contains('tres leches')) return _imgTresLeches;
+    if (n.contains('pastel') || n.contains('torta de') || n.contains('cake'))
+      return _imgPastelChoc;
+    if (n.contains('pollo') && (n.contains('frito') || n.contains('crispy')))
+      return _imgPollo1;
+    if (n.contains('pollo') || n.contains('chicken')) return _imgPollo2;
     return null;
   }
 
@@ -294,7 +472,9 @@ class SupabaseService {
     String? imageUrl = _productImageFix[p.id];
 
     // 2. Reparar URL de Unsplash si el formato está incompleto
-    if (imageUrl == null && p.imageUrl != null && p.imageUrl!.contains('unsplash.com')) {
+    if (imageUrl == null &&
+        p.imageUrl != null &&
+        p.imageUrl!.contains('unsplash.com')) {
       imageUrl = _repairUrl(p.imageUrl!);
     }
 
@@ -306,9 +486,14 @@ class SupabaseService {
 
     if (imageUrl == null) return p;
     return Product(
-      id: p.id, categoryId: p.categoryId, name: p.name,
-      description: p.description, price: p.price, imageUrl: imageUrl,
-      isAvailable: p.isAvailable, images: p.images,
+      id: p.id,
+      categoryId: p.categoryId,
+      name: p.name,
+      description: p.description,
+      price: p.price,
+      imageUrl: imageUrl,
+      isAvailable: p.isAvailable,
+      images: p.images,
       promoDiscountPercent: p.promoDiscountPercent,
       promoIs2x1: p.promoIs2x1,
       promoExpiresAt: p.promoExpiresAt,
@@ -322,24 +507,29 @@ class SupabaseService {
         .select()
         .eq('category_id', categoryId)
         .eq('is_available', true);
-    return (data as List).map((e) => _fixProductImage(Product.fromJson(e))).toList();
+    return (data as List)
+        .map((e) => _fixProductImage(Product.fromJson(e)))
+        .toList();
   }
 
   static Future<List<({String name, String icon, List<Product> products})>>
-      getMenuSections(String restaurantId) async {
+  getMenuSections(String restaurantId) async {
     if (useMock) {
       final cats = _mockCategories[restaurantId] ?? [];
       return [
         for (final cat in cats)
-          (name: cat.name, icon: cat.icon ?? '🍽️', products: _mockProducts[cat.id] ?? []),
+          (
+            name: cat.name,
+            icon: cat.icon ?? '🍽️',
+            products: _mockProducts[cat.id] ?? [],
+          ),
       ];
     }
     final catsData = await _client
         .from('categories')
         .select()
         .eq('restaurant_id', restaurantId);
-    final sections =
-        <({String name, String icon, List<Product> products})>[];
+    final sections = <({String name, String icon, List<Product> products})>[];
     for (final cat in catsData as List) {
       final prodsData = await _client
           .from('products')
@@ -349,14 +539,15 @@ class SupabaseService {
       sections.add((
         name: cat['name'] as String,
         icon: cat['emoji_icon'] as String? ?? '🍽️',
-        products:
-            (prodsData as List).map((e) => Product.fromJson(e)).toList(),
+        products: (prodsData as List).map((e) => Product.fromJson(e)).toList(),
       ));
     }
     return sections;
   }
 
-  static Future<List<Product>> getProductsForRestaurant(String restaurantId) async {
+  static Future<List<Product>> getProductsForRestaurant(
+    String restaurantId,
+  ) async {
     if (useMock) return [];
     final data = await _client
         .from('products')
@@ -393,13 +584,15 @@ class SupabaseService {
           'email': email,
           'password': password,
           'user_metadata': {'name': name},
-          'app_metadata':  {'role': 'repartidor'},
+          'app_metadata': {'role': 'repartidor'},
           'email_confirm': true,
         }),
       );
       if (res.statusCode != 200 && res.statusCode != 201) {
         final body = jsonDecode(res.body) as Map<String, dynamic>;
-        return body['msg'] as String? ?? body['message'] as String? ?? 'Error al crear usuario';
+        return body['msg'] as String? ??
+            body['message'] as String? ??
+            'Error al crear usuario';
       }
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       final userId = data['id'] as String;
@@ -416,7 +609,9 @@ class SupabaseService {
   }
 
   // Devuelve los riders vinculados a un jefe
-  static Future<List<Map<String, dynamic>>> getFlotaRiders(String jefeId) async {
+  static Future<List<Map<String, dynamic>>> getFlotaRiders(
+    String jefeId,
+  ) async {
     if (useMock) return [];
     try {
       final data = await _client
@@ -424,7 +619,23 @@ class SupabaseService {
           .select()
           .eq('jefe_id', jefeId);
       return List<Map<String, dynamic>>.from(data);
-    } catch (_) { return []; }
+    } catch (_) {
+      return [];
+    }
+  }
+
+  // Un solo rider de flota_members (placa, nombre/correo denormalizados)
+  static Future<Map<String, dynamic>?> getFlotaMember(String riderId) async {
+    if (useMock) return null;
+    try {
+      return await _client
+          .from('flota_members')
+          .select()
+          .eq('rider_id', riderId)
+          .maybeSingle();
+    } catch (_) {
+      return null;
+    }
   }
 
   // Rider transmite su ubicación (funciona con o sin pedido activo)
@@ -449,7 +660,8 @@ class SupabaseService {
     try {
       final uid = _client.auth.currentUser?.id;
       if (uid == null) return;
-      await _client.from('rider_locations')
+      await _client
+          .from('rider_locations')
           .update({'is_active': false})
           .eq('rider_id', uid);
     } catch (_) {}
@@ -457,7 +669,8 @@ class SupabaseService {
 
   // Obtiene las ubicaciones actuales de una lista de riders
   static Future<Map<String, Map<String, dynamic>>> getRiderLocations(
-      List<String> riderIds) async {
+    List<String> riderIds,
+  ) async {
     if (useMock || riderIds.isEmpty) return {};
     try {
       final data = await _client
@@ -466,18 +679,25 @@ class SupabaseService {
           .inFilter('rider_id', riderIds);
       return {
         for (final r in (data as List))
-          r['rider_id'] as String: r as Map<String, dynamic>
+          r['rider_id'] as String: r as Map<String, dynamic>,
       };
-    } catch (_) { return {}; }
+    } catch (_) {
+      return {};
+    }
   }
 
   // Pedidos de hoy de un rider específico
   static Future<List<Map<String, dynamic>>> getRiderOrdersToday(
-      String riderId) async {
+    String riderId,
+  ) async {
     if (useMock) return [];
     try {
       final today = DateTime.now();
-      final start = DateTime(today.year, today.month, today.day).toUtc().toIso8601String();
+      final start = DateTime(
+        today.year,
+        today.month,
+        today.day,
+      ).toUtc().toIso8601String();
       final data = await _client
           .from('orders')
           .select('id, total, delivery_fee, status, created_at')
@@ -485,11 +705,15 @@ class SupabaseService {
           .gte('created_at', start)
           .order('created_at', ascending: false);
       return List<Map<String, dynamic>>.from(data);
-    } catch (_) { return []; }
+    } catch (_) {
+      return [];
+    }
   }
 
   // Pedido activo actual de un rider
-  static Future<Map<String, dynamic>?> getRiderActiveOrder(String riderId) async {
+  static Future<Map<String, dynamic>?> getRiderActiveOrder(
+    String riderId,
+  ) async {
     if (useMock) return null;
     try {
       final data = await _client
@@ -499,7 +723,109 @@ class SupabaseService {
           .inFilter('status', ['accepted', 'delivering'])
           .maybeSingle();
       return data;
-    } catch (_) { return null; }
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Historial completo de pedidos de un rider (sin filtro de fecha), para la
+  // vista de detalle del jefe de flota. Las estadísticas (hoy/semana/totales)
+  // se calculan del lado del cliente a partir de esta lista.
+  static Future<List<Map<String, dynamic>>> getRiderOrderHistory(
+    String riderId,
+  ) async {
+    if (useMock) return [];
+    try {
+      final data = await _client
+          .from('orders')
+          .select('id, total, delivery_fee, status, created_at')
+          .eq('repartidor_id', riderId)
+          .order('created_at', ascending: false)
+          .limit(200);
+      return List<Map<String, dynamic>>.from(data);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  // Datos de auth.users (user_metadata: name, phone, avatar_url, etc.) de un
+  // rider — el jefe de flota no es ese usuario, así que no puede leerlos con
+  // su propia sesión y se necesita la Admin API (service role key).
+  static Future<Map<String, dynamic>?> getRiderAuthProfile(
+    String riderId,
+  ) async {
+    const key = AppConstants.supabaseServiceRoleKey;
+    if (key.isEmpty) return null;
+    try {
+      final res = await http.get(
+        Uri.parse('${AppConstants.supabaseUrl}/auth/v1/admin/users/$riderId'),
+        headers: {'Authorization': 'Bearer $key', 'apikey': key},
+      );
+      if (res.statusCode != 200) return null;
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Edita el perfil de un rider desde el panel de flota. Nombre/teléfono/foto
+  // se guardan en user_metadata (misma fuente que repartidor_plus_screen.dart
+  // usa para el propio perfil del rider, para no crear una segunda copia que
+  // se desincronice); correo y placa también se reflejan en flota_members
+  // porque getFlotaRiders lee de ahí para la lista. Retorna null si OK, o el
+  // mensaje de error si falla.
+  static Future<String?> updateFlotaMember({
+    required String riderId,
+    required String name,
+    required String email,
+    String? phone,
+    String? plate,
+    String? photoUrl,
+  }) async {
+    const key = AppConstants.supabaseServiceRoleKey;
+    if (key.isEmpty) {
+      return 'Función no disponible: configura supabaseServiceRoleKey en AppConstants o usa una Edge Function.';
+    }
+    try {
+      final current = await getRiderAuthProfile(riderId);
+      final metadata = Map<String, dynamic>.from(
+        current?['user_metadata'] as Map<String, dynamic>? ?? {},
+      );
+      metadata['name'] = name;
+      if (phone != null) metadata['phone'] = phone;
+      if (photoUrl != null) metadata['avatar_url'] = photoUrl;
+
+      final res = await http.put(
+        Uri.parse('${AppConstants.supabaseUrl}/auth/v1/admin/users/$riderId'),
+        headers: {
+          'Authorization': 'Bearer $key',
+          'apikey': key,
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'email': email,
+          'email_confirm': true,
+          'user_metadata': metadata,
+        }),
+      );
+      if (res.statusCode != 200) {
+        final body = jsonDecode(res.body) as Map<String, dynamic>;
+        return body['msg'] as String? ??
+            body['message'] as String? ??
+            'Error al actualizar';
+      }
+      await _client
+          .from('flota_members')
+          .update({
+            'rider_name': name,
+            'rider_email': email,
+            if (plate != null) 'rider_plate': plate,
+          })
+          .eq('rider_id', riderId);
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
   }
 
   // ── Banners promocionales ──────────────────────────────────────────────────
@@ -541,8 +867,10 @@ class SupabaseService {
   }
 
   // Busca restaurantes y platillos por nombre. Devuelve {restaurants, productRestaurantIds}
-  static Future<({List<Restaurant> restaurants, Set<String> productRestaurantIds})>
-      searchByQuery(String query, List<Restaurant> allRestaurants) async {
+  static Future<
+    ({List<Restaurant> restaurants, Set<String> productRestaurantIds})
+  >
+  searchByQuery(String query, List<Restaurant> allRestaurants) async {
     final q = query.toLowerCase();
     final matchRestaurants = allRestaurants
         .where((r) => r.name.toLowerCase().contains(q))
@@ -563,10 +891,16 @@ class SupabaseService {
     }
     // Incluir restaurantes que tienen productos que coinciden (aunque su nombre no coincida)
     final extra = allRestaurants
-        .where((r) => productRestaurantIds.contains(r.id) &&
-            !matchRestaurants.any((m) => m.id == r.id))
+        .where(
+          (r) =>
+              productRestaurantIds.contains(r.id) &&
+              !matchRestaurants.any((m) => m.id == r.id),
+        )
         .toList();
-    return (restaurants: [...matchRestaurants, ...extra], productRestaurantIds: productRestaurantIds);
+    return (
+      restaurants: [...matchRestaurants, ...extra],
+      productRestaurantIds: productRestaurantIds,
+    );
   }
 
   static Future<String?> uploadProductImage(String localPath) async {
@@ -578,6 +912,35 @@ class SupabaseService {
       return null;
     }
   }
+
+  // Detecta el formato real de una imagen por sus bytes mágicos — en web no
+  // se recomprime (_compressToWebP la deja intacta), así que hay que revisar
+  // el contenido real en vez de asumir un formato fijo.
+  static String _detectImageExt(Uint8List bytes) {
+    if (bytes.length >= 12 &&
+        bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46 &&
+        bytes[8] == 0x57 && bytes[9] == 0x45 && bytes[10] == 0x42 && bytes[11] == 0x50) {
+      return 'webp';
+    }
+    if (bytes.length >= 8 &&
+        bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) {
+      return 'png';
+    }
+    if (bytes.length >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF) {
+      return 'jpg';
+    }
+    if (bytes.length >= 4 && bytes[0] == 0x47 && bytes[1] == 0x49 && bytes[2] == 0x46) {
+      return 'gif';
+    }
+    return 'jpg';
+  }
+
+  static String _mimeForExt(String ext) => switch (ext) {
+        'png' => 'image/png',
+        'webp' => 'image/webp',
+        'gif' => 'image/gif',
+        _ => 'image/jpeg',
+      };
 
   // Comprime a WebP con calidad 82. En web no hay soporte nativo, regresa los bytes sin cambio.
   static Future<Uint8List> _compressToWebP(Uint8List bytes) async {
@@ -599,57 +962,146 @@ class SupabaseService {
     if (useMock) return null;
     try {
       final compressed = await _compressToWebP(bytes);
-      final ext      = kIsWeb ? 'jpg' : 'webp';
-      final mimeType = kIsWeb ? 'image/jpeg' : 'image/webp';
+      final ext = kIsWeb ? _detectImageExt(bytes) : 'webp';
+      final mimeType = kIsWeb ? _mimeForExt(ext) : 'image/webp';
       final fileName = '${DateTime.now().millisecondsSinceEpoch}.$ext';
-      await _client.storage.from('product-images').uploadBinary(
-        fileName, compressed,
-        fileOptions: FileOptions(contentType: mimeType, upsert: true),
-      );
+      await _client.storage
+          .from('product-images')
+          .uploadBinary(
+            fileName,
+            compressed,
+            fileOptions: FileOptions(contentType: mimeType, upsert: true),
+          );
       return _client.storage.from('product-images').getPublicUrl(fileName);
     } catch (_) {
       return null;
     }
   }
 
-  static Future<String?> uploadProfilePhotoBytes(Uint8List bytes, String userId) async {
+  static Future<String?> uploadProfilePhotoBytes(
+    Uint8List bytes,
+    String userId,
+  ) async {
     if (useMock) return null;
     try {
       final compressed = await _compressToWebP(bytes);
-      final ext      = kIsWeb ? 'jpg' : 'webp';
-      final mimeType = kIsWeb ? 'image/jpeg' : 'image/webp';
+      final ext = kIsWeb ? _detectImageExt(bytes) : 'webp';
+      final mimeType = kIsWeb ? _mimeForExt(ext) : 'image/webp';
       final fileName = 'profile_$userId.$ext';
-      await _client.storage.from('profile-photos').uploadBinary(
-        fileName, compressed,
-        fileOptions: FileOptions(contentType: mimeType, upsert: true),
-      );
+      await _client.storage
+          .from('profile-photos')
+          .uploadBinary(
+            fileName,
+            compressed,
+            fileOptions: FileOptions(contentType: mimeType, upsert: true),
+          );
       return _client.storage.from('profile-photos').getPublicUrl(fileName);
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[Upload] uploadProfilePhotoBytes error: $e');
       return null;
     }
   }
 
-  static Future<String?> uploadProfilePhoto(String localPath, String userId) async {
+  static Future<String?> uploadProfilePhoto(
+    String localPath,
+    String userId,
+  ) async {
     if (useMock) return null;
     try {
-      final bytes      = await File(localPath).readAsBytes();
+      final bytes = await File(localPath).readAsBytes();
       final compressed = await _compressToWebP(bytes);
-      final ext        = kIsWeb ? localPath.split('.').last.toLowerCase() : 'webp';
-      final mimeType   = kIsWeb ? 'image/${localPath.split('.').last.toLowerCase()}' : 'image/webp';
-      final fileName   = 'profile_$userId.$ext';
-      await _client.storage.from('profile-photos').uploadBinary(
-        fileName, compressed,
-        fileOptions: FileOptions(contentType: mimeType, upsert: true),
-      );
+      final ext = kIsWeb ? localPath.split('.').last.toLowerCase() : 'webp';
+      final mimeType = kIsWeb
+          ? 'image/${localPath.split('.').last.toLowerCase()}'
+          : 'image/webp';
+      final fileName = 'profile_$userId.$ext';
+      await _client.storage
+          .from('profile-photos')
+          .uploadBinary(
+            fileName,
+            compressed,
+            fileOptions: FileOptions(contentType: mimeType, upsert: true),
+          );
       return _client.storage.from('profile-photos').getPublicUrl(fileName);
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[Upload] uploadProfilePhoto error: $e');
       return null;
     }
   }
 
-  static Future<void> updateRestaurantLogo(String restaurantId, String imageUrl) async {
+  static Future<void> updateRestaurantLogo(
+    String restaurantId,
+    String imageUrl,
+  ) async {
     if (useMock) return;
-    await _client.from('restaurants').update({'image_url': imageUrl}).eq('id', restaurantId);
+    await _client
+        .from('restaurants')
+        .update({'image_url': imageUrl})
+        .eq('id', restaurantId);
+  }
+
+  static Future<String> getRestaurantZona(String restaurantId) async {
+    if (useMock) return 'maravatio';
+    try {
+      final row = await _client
+          .from('restaurants')
+          .select('zona')
+          .eq('id', restaurantId)
+          .maybeSingle();
+      return row?['zona'] as String? ?? 'maravatio';
+    } catch (_) {
+      return 'maravatio';
+    }
+  }
+
+  static Future<bool> getRestaurantIsPremium(String restaurantId) async {
+    if (useMock) return false;
+    try {
+      final row = await _client
+          .from('restaurants')
+          .select('is_premium')
+          .eq('id', restaurantId)
+          .maybeSingle();
+      return row?['is_premium'] as bool? ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<List<String>> getRestaurantCategorias(String restaurantId) async {
+    if (useMock) return [];
+    try {
+      final row = await _client
+          .from('restaurants')
+          .select('categorias')
+          .eq('id', restaurantId)
+          .maybeSingle();
+      return (row?['categorias'] as List<dynamic>?)?.cast<String>() ?? [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<void> updateRestaurantZona(
+    String restaurantId,
+    String zona,
+  ) async {
+    if (useMock) return;
+    await _client
+        .from('restaurants')
+        .update({'zona': zona})
+        .eq('id', restaurantId);
+  }
+
+  static Future<void> updateRestaurantCategorias(
+    String restaurantId,
+    List<String> categorias,
+  ) async {
+    if (useMock) return;
+    await _client
+        .from('restaurants')
+        .update({'categorias': categorias})
+        .eq('id', restaurantId);
   }
 
   // ── Likes de productos (realtime) ────────────────────────────────────────────
@@ -664,7 +1116,9 @@ class SupabaseService {
         counts[id] = (counts[id] ?? 0) + 1;
       }
       return counts;
-    } catch (_) { return {}; }
+    } catch (_) {
+      return {};
+    }
   }
 
   static Future<Set<String>> getUserLikedProducts(String email) async {
@@ -675,7 +1129,9 @@ class SupabaseService {
           .select('product_id')
           .eq('user_email', email);
       return {for (final r in data as List) r['product_id'] as String};
-    } catch (_) { return {}; }
+    } catch (_) {
+      return {};
+    }
   }
 
   static Future<void> toggleProductLike(String productId, String email) async {
@@ -693,7 +1149,8 @@ class SupabaseService {
           'user_email': email,
         });
       } else {
-        await _client.from('product_likes')
+        await _client
+            .from('product_likes')
             .delete()
             .eq('product_id', productId)
             .eq('user_email', email);
@@ -718,14 +1175,18 @@ class SupabaseService {
   static Future<Map<String, int>> getRestaurantLikeCounts() async {
     if (useMock) return {};
     try {
-      final data = await _client.from('restaurant_likes').select('restaurant_id');
+      final data = await _client
+          .from('restaurant_likes')
+          .select('restaurant_id');
       final counts = <String, int>{};
       for (final row in data as List) {
         final id = row['restaurant_id'] as String;
         counts[id] = (counts[id] ?? 0) + 1;
       }
       return counts;
-    } catch (_) { return {}; }
+    } catch (_) {
+      return {};
+    }
   }
 
   static Future<Set<String>> getUserLikedRestaurants(String email) async {
@@ -736,10 +1197,15 @@ class SupabaseService {
           .select('restaurant_id')
           .eq('user_email', email);
       return {for (final r in data as List) r['restaurant_id'] as String};
-    } catch (_) { return {}; }
+    } catch (_) {
+      return {};
+    }
   }
 
-  static Future<void> toggleRestaurantLike(String restaurantId, String email) async {
+  static Future<void> toggleRestaurantLike(
+    String restaurantId,
+    String email,
+  ) async {
     if (useMock || email.isEmpty) return;
     try {
       final existing = await _client
@@ -754,7 +1220,8 @@ class SupabaseService {
           'user_email': email,
         });
       } else {
-        await _client.from('restaurant_likes')
+        await _client
+            .from('restaurant_likes')
             .delete()
             .eq('restaurant_id', restaurantId)
             .eq('user_email', email);
@@ -803,9 +1270,15 @@ class SupabaseService {
     });
   }
 
-  static Future<void> setProductAvailability(String productId, bool isAvailable) async {
+  static Future<void> setProductAvailability(
+    String productId,
+    bool isAvailable,
+  ) async {
     if (useMock) return;
-    await _client.from('products').update({'is_available': isAvailable}).eq('id', productId);
+    await _client
+        .from('products')
+        .update({'is_available': isAvailable})
+        .eq('id', productId);
   }
 
   // ── Tracking por base de datos (más confiable que Realtime broadcast) ────────
@@ -820,10 +1293,10 @@ class SupabaseService {
   static Future<void> broadcastLocation(double lat, double lng) async {
     if (_activeOrderId == null) return;
     try {
-      await _client.from('orders').update({
-        'current_lat': lat,
-        'current_lng': lng,
-      }).eq('id', _activeOrderId!);
+      await _client
+          .from('orders')
+          .update({'current_lat': lat, 'current_lng': lng})
+          .eq('id', _activeOrderId!);
     } catch (_) {}
   }
 
@@ -832,7 +1305,9 @@ class SupabaseService {
   }
 
   // El cliente llama esto para obtener la ubicación del repartidor
-  static Future<({double lat, double lng})?> getRepartidorLocation(String orderId) async {
+  static Future<({double lat, double lng})?> getRepartidorLocation(
+    String orderId,
+  ) async {
     try {
       final data = await _client
           .from('orders')
@@ -885,47 +1360,64 @@ class SupabaseService {
       'lng': lng,
     });
     await _client.from('orders').insert({
-      'id':            orderId,
+      'id': orderId,
       'restaurant_id': restaurantId,
-      'total':         total,
-      'delivery_fee':  deliveryFee,
-      'status':        'pending',
+      'total': total,
+      'delivery_fee': deliveryFee,
+      'status': 'pending',
       'customer_name': deliveryJson,
       if (paymentStatus != null) 'payment_status': paymentStatus,
-      if (stripePaymentIntentId != null) 'stripe_payment_intent_id': stripePaymentIntentId,
+      if (stripePaymentIntentId != null)
+        'stripe_payment_intent_id': stripePaymentIntentId,
     });
     if (items.isNotEmpty) {
-      await _client.from('order_items').insert(
-        items.map((i) => {'order_id': orderId, ...i}).toList(),
-      );
+      await _client
+          .from('order_items')
+          .insert(items.map((i) => {'order_id': orderId, ...i}).toList());
     }
     return orderId;
   }
 
   static Future<List<Map<String, dynamic>>> getRestaurantsAdmin() async {
     if (useMock) {
-      return _mockRestaurants.map((r) => {
-        'id':          r.id,
-        'name':        r.name,
-        'description': r.description,
-        'address':     r.address,
-        'emoji_icon':  '🍽️',
-        'is_open':     true,
-        'rating':      r.rating,
-      }).toList();
+      return _mockRestaurants
+          .map(
+            (r) => {
+              'id': r.id,
+              'name': r.name,
+              'description': r.description,
+              'address': r.address,
+              'emoji_icon': '🍽️',
+              'is_open': true,
+              'rating': r.rating,
+            },
+          )
+          .toList();
     }
     final data = await _client.from('restaurants').select().order('name');
     return (data as List).cast<Map<String, dynamic>>();
   }
 
-  static Future<List<Map<String, dynamic>>> getActiveOrders({String? restaurantId}) async {
+  static Future<List<Map<String, dynamic>>> getActiveOrders({
+    String? restaurantId,
+  }) async {
     if (useMock) return [];
     final now = DateTime.now();
-    final startOfDay = DateTime(now.year, now.month, now.day).toUtc().toIso8601String();
+    final startOfDay = DateTime(
+      now.year,
+      now.month,
+      now.day,
+    ).toUtc().toIso8601String();
     var query = _client
         .from('orders')
         .select('*, order_items(quantity, price, notes, products(id, name))')
-        .inFilter('status', ['pending', 'accepted', 'delivering', 'delivered', 'cancelled'])
+        .inFilter('status', [
+          'pending',
+          'accepted',
+          'delivering',
+          'delivered',
+          'cancelled',
+        ])
         .gte('created_at', startOfDay);
     if (restaurantId != null && restaurantId.isNotEmpty) {
       query = query.eq('restaurant_id', restaurantId);
@@ -934,7 +1426,10 @@ class SupabaseService {
     return (data as List).cast<Map<String, dynamic>>();
   }
 
-  static Future<void> adminUpdateOrderStatus(String orderId, String status) async {
+  static Future<void> adminUpdateOrderStatus(
+    String orderId,
+    String status,
+  ) async {
     if (useMock) return;
     await _client.from('orders').update({'status': status}).eq('id', orderId);
     await _sendFcmForStatus(orderId, status);
@@ -952,34 +1447,295 @@ class SupabaseService {
       final id = o['repartidor_id'] as String? ?? '';
       if (id.isNotEmpty) counts[id] = (counts[id] ?? 0) + 1;
     }
-    final result = counts.entries
-        .map((e) => <String, dynamic>{'id': e.key, 'entregas': e.value})
-        .toList()
-      ..sort((a, b) => (b['entregas'] as int).compareTo(a['entregas'] as int));
+    final result =
+        counts.entries
+            .map((e) => <String, dynamic>{'id': e.key, 'entregas': e.value})
+            .toList()
+          ..sort(
+            (a, b) => (b['entregas'] as int).compareTo(a['entregas'] as int),
+          );
     return result;
   }
 
-  static Future<void> setRestaurantOpen(String restaurantId, bool isOpen) async {
+  // ── Alertas de la plataforma ──────────────────────────────────────────────
+
+  static Future<List<Map<String, dynamic>>> getAlerts() async {
+    if (useMock) return [];
+    try {
+      final data = await _client
+          .from('alerts')
+          .select()
+          .order('created_at', ascending: false)
+          .limit(200);
+      return List<Map<String, dynamic>>.from(data);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  // priority: 'critica' | 'alta' | 'media' | 'baja'
+  // category: 'pagos' | 'servidor' | 'restaurante' | 'base_datos' | 'conexion' | 'otro'
+  static Future<void> createAlert({
+    required String title,
+    String? description,
+    String priority = 'media',
+    String category = 'otro',
+  }) async {
     if (useMock) return;
-    await _client.from('restaurants').update({'is_open': isOpen}).eq('id', restaurantId);
+    try {
+      await _client.from('alerts').insert({
+        'title': title,
+        'description': description,
+        'priority': priority,
+        'category': category,
+        'status': 'pendiente',
+      });
+    } catch (_) {}
+  }
+
+  // status: 'pendiente' | 'en_proceso' | 'resuelta'
+  static Future<void> updateAlertStatus(String alertId, String status) async {
+    if (useMock) return;
+    try {
+      await _client
+          .from('alerts')
+          .update({
+            'status': status,
+            'resolved_at': status == 'resuelta'
+                ? DateTime.now().toUtc().toIso8601String()
+                : null,
+          })
+          .eq('id', alertId);
+    } catch (_) {}
+  }
+
+  // ── Tienda de coins del repartidor ───────────────────────────────────────
+  // Productos administrables desde el panel de Admin (antes vivían
+  // hardcodeados en tienda_rider_screen.dart).
+
+  static Future<List<Map<String, dynamic>>> getRiderStoreItems({
+    bool onlyActive = true,
+  }) async {
+    if (useMock) return [];
+    try {
+      final data = onlyActive
+          ? await _client
+                .from('rider_store_items')
+                .select()
+                .eq('is_active', true)
+                .order('sort_order')
+          : await _client
+                .from('rider_store_items')
+                .select()
+                .order('sort_order');
+      return List<Map<String, dynamic>>.from(data);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<void> createRiderStoreItem(Map<String, dynamic> item) async {
+    if (useMock) return;
+    try {
+      await _client.from('rider_store_items').insert(item);
+    } catch (_) {}
+  }
+
+  static Future<void> updateRiderStoreItem(
+    String id,
+    Map<String, dynamic> item,
+  ) async {
+    if (useMock) return;
+    try {
+      await _client.from('rider_store_items').update(item).eq('id', id);
+    } catch (_) {}
+  }
+
+  static Future<void> deleteRiderStoreItem(String id) async {
+    if (useMock) return;
+    try {
+      await _client.from('rider_store_items').delete().eq('id', id);
+    } catch (_) {}
+  }
+
+  // ── Estadísticas de la plataforma (rankings) ─────────────────────────────
+
+  static Future<List<Map<String, dynamic>>> getTopLikedRestaurants({
+    int limit = 10,
+  }) async {
+    if (useMock) return [];
+    try {
+      final data = await _client
+          .from('restaurant_likes')
+          .select('restaurant_id, restaurants(name)');
+      final Map<String, Map<String, dynamic>> agg = {};
+      for (final r in (data as List).cast<Map<String, dynamic>>()) {
+        final rid = r['restaurant_id'] as String? ?? '';
+        if (rid.isEmpty) continue;
+        final restaurant = r['restaurants'] as Map<String, dynamic>?;
+        agg.putIfAbsent(
+          rid,
+          () => {
+            'id': rid,
+            'name': restaurant?['name'] ?? 'Restaurante',
+            'value': 0,
+          },
+        );
+        agg[rid]!['value'] = (agg[rid]!['value'] as int) + 1;
+      }
+      final result = agg.values.toList()
+        ..sort((a, b) => (b['value'] as int).compareTo(a['value'] as int));
+      return result.take(limit).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> getTopLikedProducts({
+    int limit = 10,
+  }) async {
+    if (useMock) return [];
+    try {
+      final data = await _client
+          .from('product_likes')
+          .select('product_id, products(name, restaurants(name))');
+      final Map<String, Map<String, dynamic>> agg = {};
+      for (final r in (data as List).cast<Map<String, dynamic>>()) {
+        final pid = r['product_id'] as String? ?? '';
+        if (pid.isEmpty) continue;
+        final product = r['products'] as Map<String, dynamic>?;
+        final restaurant = product?['restaurants'] as Map<String, dynamic>?;
+        agg.putIfAbsent(
+          pid,
+          () => {
+            'id': pid,
+            'name': product?['name'] ?? 'Producto',
+            'restaurant_name': restaurant?['name'] ?? '',
+            'value': 0,
+          },
+        );
+        agg[pid]!['value'] = (agg[pid]!['value'] as int) + 1;
+      }
+      final result = agg.values.toList()
+        ..sort((a, b) => (b['value'] as int).compareTo(a['value'] as int));
+      return result.take(limit).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> getTopOrderedProducts({
+    int limit = 10,
+  }) async {
+    if (useMock) return [];
+    try {
+      final data = await _client
+          .from('order_items')
+          .select('product_id, quantity, products(name, restaurants(name))')
+          .not('product_id', 'is', null);
+      final Map<String, Map<String, dynamic>> agg = {};
+      for (final it in (data as List).cast<Map<String, dynamic>>()) {
+        final pid = it['product_id'] as String? ?? '';
+        if (pid.isEmpty) continue;
+        final qty = (it['quantity'] as num?)?.toInt() ?? 1;
+        final product = it['products'] as Map<String, dynamic>?;
+        final restaurant = product?['restaurants'] as Map<String, dynamic>?;
+        agg.putIfAbsent(
+          pid,
+          () => {
+            'id': pid,
+            'name': product?['name'] ?? 'Producto',
+            'restaurant_name': restaurant?['name'] ?? '',
+            'value': 0,
+          },
+        );
+        agg[pid]!['value'] = (agg[pid]!['value'] as int) + qty;
+      }
+      final result = agg.values.toList()
+        ..sort((a, b) => (b['value'] as int).compareTo(a['value'] as int));
+      return result.take(limit).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> getTopOrderedRestaurants({
+    int limit = 10,
+  }) async {
+    if (useMock) return [];
+    try {
+      final data = await _client
+          .from('orders')
+          .select('restaurant_id, restaurants(name)')
+          .not('restaurant_id', 'is', null);
+      final Map<String, Map<String, dynamic>> agg = {};
+      for (final o in (data as List).cast<Map<String, dynamic>>()) {
+        final rid = o['restaurant_id'] as String? ?? '';
+        if (rid.isEmpty) continue;
+        final restaurant = o['restaurants'] as Map<String, dynamic>?;
+        agg.putIfAbsent(
+          rid,
+          () => {
+            'id': rid,
+            'name': restaurant?['name'] ?? 'Restaurante',
+            'value': 0,
+          },
+        );
+        agg[rid]!['value'] = (agg[rid]!['value'] as int) + 1;
+      }
+      final result = agg.values.toList()
+        ..sort((a, b) => (b['value'] as int).compareTo(a['value'] as int));
+      return result.take(limit).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<void> setRestaurantOpen(
+    String restaurantId,
+    bool isOpen,
+  ) async {
+    if (useMock) return;
+    await _client
+        .from('restaurants')
+        .update({'is_open': isOpen})
+        .eq('id', restaurantId);
   }
 
   static Future<void> deleteRestaurant(String restaurantId) async {
     if (useMock) return;
     // Obtiene IDs de categorías y productos para borrar en cascada
-    final catRows = await _client.from('categories').select('id').eq('restaurant_id', restaurantId);
-    final catIds  = (catRows as List).map((r) => r['id'] as String).toList();
+    final catRows = await _client
+        .from('categories')
+        .select('id')
+        .eq('restaurant_id', restaurantId);
+    final catIds = (catRows as List).map((r) => r['id'] as String).toList();
 
     if (catIds.isNotEmpty) {
-      final prodRows = await _client.from('products').select('id').inFilter('category_id', catIds);
-      final prodIds  = (prodRows as List).map((r) => r['id'] as String).toList();
+      final prodRows = await _client
+          .from('products')
+          .select('id')
+          .inFilter('category_id', catIds);
+      final prodIds = (prodRows as List).map((r) => r['id'] as String).toList();
       if (prodIds.isNotEmpty) {
-        await _client.from('product_images').delete().inFilter('product_id', prodIds);
-        await _client.from('product_likes').delete().inFilter('product_id', prodIds);
-        await _client.from('order_items').delete().inFilter('product_id', prodIds);
+        await _client
+            .from('product_images')
+            .delete()
+            .inFilter('product_id', prodIds);
+        await _client
+            .from('product_likes')
+            .delete()
+            .inFilter('product_id', prodIds);
+        await _client
+            .from('order_items')
+            .delete()
+            .inFilter('product_id', prodIds);
         await _client.from('products').delete().inFilter('category_id', catIds);
       }
-      await _client.from('categories').delete().eq('restaurant_id', restaurantId);
+      await _client
+          .from('categories')
+          .delete()
+          .eq('restaurant_id', restaurantId);
     }
 
     await _client.from('orders').delete().eq('restaurant_id', restaurantId);
@@ -991,8 +1747,12 @@ class SupabaseService {
     // Muestra pedidos sin repartidor asignado (pending) + pedidos asignados a este repartidor
     final data = await _client
         .from('orders')
-        .select('*, restaurants(name, address), order_items(quantity, price, notes, products(id, name))')
-        .or('status.eq.pending,and(status.eq.accepted,repartidor_id.eq.$userId)')
+        .select(
+          '*, restaurants(name, address, image_url), order_items(quantity, price, notes, products(id, name))',
+        )
+        .or(
+          'status.eq.pending,and(status.eq.accepted,repartidor_id.eq.$userId)',
+        )
         .order('created_at', ascending: false);
     return (data as List).cast<Map<String, dynamic>>();
   }
@@ -1006,6 +1766,16 @@ class SupabaseService {
     await _sendFcmForStatus(orderId, status);
   }
 
+  // El repartidor cancela SU entrega ya aceptada — el pedido vuelve a
+  // 'pending' y sin repartidor asignado para que otro lo pueda tomar. No es
+  // lo mismo que cancelar el pedido del cliente (ese sigue siendo 'cancelled').
+  static Future<void> releaseOrderFromRider(String orderId) async {
+    await _client
+        .from('orders')
+        .update({'status': 'pending', 'repartidor_id': null})
+        .eq('id', orderId);
+  }
+
   static Future<void> _sendFcmForStatus(String orderId, String status) async {
     try {
       final data = await _client
@@ -1016,17 +1786,22 @@ class SupabaseService {
       final token = data['client_fcm_token'] as String?;
       if (token == null || token.isEmpty) return;
       final (title, body) = switch (status) {
-        'accepted'   => ('🍳 ¡Pedido aceptado!',      'Tu pedido está siendo preparado.'),
-        'delivering' => ('🛵 ¡Repartidor en camino!', 'Tu pedido ya viene para acá.'),
-        'delivered'  => ('✅ ¡Pedido entregado!',      '¡Buen provecho!'),
-        _            => ('', ''),
+        'accepted' => (
+          '🍳 ¡Pedido aceptado!',
+          'Tu pedido está siendo preparado.',
+        ),
+        'delivering' => (
+          '🛵 ¡Repartidor en camino!',
+          'Tu pedido ya viene para acá.',
+        ),
+        'delivered' => ('✅ ¡Pedido entregado!', '¡Buen provecho!'),
+        _ => ('', ''),
       };
       if (title.isEmpty) return;
-      await _client.functions.invoke('send-order-notification', body: {
-        'token': token,
-        'title': title,
-        'body':  body,
-      });
+      await _client.functions.invoke(
+        'send-order-notification',
+        body: {'token': token, 'title': title, 'body': body},
+      );
     } catch (_) {}
   }
 
@@ -1053,17 +1828,19 @@ class SupabaseService {
     if (useMock) return;
     try {
       await _client.from('ratings').insert({
-        'order_id':  orderId,
-        'stars':     stars,
-        'comment':   comment.isEmpty ? null : comment,
-        'tip':       tip,
+        'order_id': orderId,
+        'stars': stars,
+        'comment': comment.isEmpty ? null : comment,
+        'tip': tip,
         'is_driver': isDriver,
       });
     } catch (_) {}
   }
 
   // Historial completo de pedidos de un cliente (todas las fechas, no solo hoy).
-  static Future<List<Map<String, dynamic>>> getOrdersByPhone(String phone) async {
+  static Future<List<Map<String, dynamic>>> getOrdersByPhone(
+    String phone,
+  ) async {
     if (useMock) return [];
     final data = await _client
         .from('orders')
@@ -1075,7 +1852,9 @@ class SupabaseService {
   }
 
   // Historial completo de entregas de un repartidor (todas las fechas, no solo hoy).
-  static Future<List<Map<String, dynamic>>> getOrdersByRepartidor(String repartidorId) async {
+  static Future<List<Map<String, dynamic>>> getOrdersByRepartidor(
+    String repartidorId,
+  ) async {
     if (useMock) return [];
     final data = await _client
         .from('orders')
@@ -1087,10 +1866,124 @@ class SupabaseService {
   }
 
   // Calificaciones asociadas a una lista de pedidos (para calcular promedio).
-  static Future<List<Map<String, dynamic>>> getRatingsForOrders(List<String> orderIds) async {
+  // Excluye is_hidden = true: si Admin oculta una reseña, también desaparece
+  // de las vistas normales del cliente/rider, no solo del panel.
+  static Future<List<Map<String, dynamic>>> getRatingsForOrders(
+    List<String> orderIds,
+  ) async {
     if (useMock || orderIds.isEmpty) return [];
-    final data = await _client.from('ratings').select().inFilter('order_id', orderIds);
+    final data = await _client
+        .from('ratings')
+        .select()
+        .inFilter('order_id', orderIds)
+        .eq('is_hidden', false);
     return (data as List).cast<Map<String, dynamic>>();
+  }
+
+  // ── Reseñas (moderación desde Admin) ─────────────────────────────────────
+
+  static Future<List<Map<String, dynamic>>> getAllRatingsForAdmin() async {
+    if (useMock) return [];
+    try {
+      final data = await _client
+          .from('ratings')
+          .select('*, orders(repartidor_id, customer_name)')
+          .order('created_at', ascending: false)
+          .limit(500);
+      return (data as List).cast<Map<String, dynamic>>();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<void> setRatingModeration(
+    String ratingId, {
+    bool? isHidden,
+    bool? isFlagged,
+    String? reportReason,
+  }) async {
+    if (useMock) return;
+    final payload = <String, dynamic>{};
+    if (isHidden != null) payload['is_hidden'] = isHidden;
+    if (isFlagged != null) payload['is_flagged'] = isFlagged;
+    if (reportReason != null) payload['report_reason'] = reportReason;
+    if (payload.isEmpty) return;
+    try {
+      await _client.from('ratings').update(payload).eq('id', ratingId);
+    } catch (_) {}
+  }
+
+  static Future<void> logModerationAction(
+    String ratingId,
+    String adminEmail,
+    String action, {
+    String? note,
+  }) async {
+    if (useMock) return;
+    try {
+      await _client.from('rating_moderation_log').insert({
+        'rating_id': ratingId,
+        'admin_email': adminEmail,
+        'action': action,
+        'note': note,
+      });
+    } catch (_) {}
+  }
+
+  static Future<void> deleteRating(String ratingId) async {
+    if (useMock) return;
+    try {
+      await _client.from('ratings').delete().eq('id', ratingId);
+    } catch (_) {}
+  }
+
+  static Future<List<Map<String, dynamic>>> getModerationLogForRating(
+    String ratingId,
+  ) async {
+    if (useMock) return [];
+    try {
+      final data = await _client
+          .from('rating_moderation_log')
+          .select()
+          .eq('rating_id', ratingId)
+          .order('created_at', ascending: false);
+      return (data as List).cast<Map<String, dynamic>>();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  // Consulta/suspende cuentas via Edge Function — la service_role key nunca
+  // vive en la app, solo en el servidor de esa función.
+  static Future<Map<String, dynamic>?> lookupAuthUser(String userId) async {
+    if (useMock) return null;
+    try {
+      final res = await _client.functions
+          .invoke(
+            'admin-user-lookup',
+            body: {'action': 'lookup', 'userId': userId},
+          )
+          .timeout(const Duration(seconds: 15));
+      if (res.data is Map) return Map<String, dynamic>.from(res.data as Map);
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<bool> setUserBanned(String userId, bool banned) async {
+    if (useMock) return false;
+    try {
+      final res = await _client.functions
+          .invoke(
+            'admin-user-lookup',
+            body: {'action': banned ? 'ban' : 'unban', 'userId': userId},
+          )
+          .timeout(const Duration(seconds: 15));
+      return res.data is Map && (res.data as Map)['ok'] == true;
+    } catch (_) {
+      return false;
+    }
   }
 
   // ── Rider Stats ───────────────────────────────────────────────────────────
@@ -1103,7 +1996,7 @@ class SupabaseService {
           .select()
           .eq('rider_id', riderId)
           .maybeSingle();
-      return (data as Map<String, dynamic>?) ?? {};
+      return data ?? {};
     } catch (_) {
       return {};
     }
@@ -1134,12 +2027,15 @@ class SupabaseService {
   }) async {
     if (useMock) return;
     try {
-      await _client.rpc('increment_rider_stats', params: {
-        'p_rider_id':     riderId,
-        'p_coins_add':    coinsAdd,
-        'p_repartos_add': repartosAdd,
-        'p_dinero_add':   dineroAdd,
-      });
+      await _client.rpc(
+        'increment_rider_stats',
+        params: {
+          'p_rider_id': riderId,
+          'p_coins_add': coinsAdd,
+          'p_repartos_add': repartosAdd,
+          'p_dinero_add': dineroAdd,
+        },
+      );
     } catch (_) {}
   }
 
@@ -1161,7 +2057,9 @@ class SupabaseService {
   static Future<Map<String, String>> getPlatformConfig() async {
     if (useMock) return {'tarifa_base': '15.0', 'tarifa_por_km': '5.0'};
     final rows = await _client.from('platform_config').select('key, value');
-    return {for (final r in rows as List) r['key'] as String: r['value'] as String};
+    return {
+      for (final r in rows as List) r['key'] as String: r['value'] as String,
+    };
   }
 
   static Future<void> setPlatformConfig(String key, String value) async {

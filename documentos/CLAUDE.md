@@ -47,6 +47,8 @@ Supabase real: `false` + credenciales en `lib/core/constants.dart`
 El rol se guarda en `user_metadata.role` en Supabase Auth y en SharedPreferences.
 La sesión persiste: el splash espera el evento `initialSession` de Supabase antes de rutear.
 
+El restaurante de una cuenta dueño se guarda en `user_metadata.restaurant_id` (`AuthService.getRestaurantId()`), **no** en `restaurants.owner_id` — esa columna solo se escribe al auto-registrarse y no se lee para enrutar el panel.
+
 ---
 
 ## Temas
@@ -115,5 +117,45 @@ Para eliminar restaurante desde admin: `SupabaseService.deleteRestaurant(id)` �
 
 ## Geolocalización
 
-- Centro Maravatío: `19.8969° N, 100.4447° W`, radio 30 km
+- Centro Maravatío: `19.8969° N, 100.4447° W`, radio 50 km (cubre también Acámbaro)
 - Mock siempre simula estar dentro del radio
+
+---
+
+## Zonas (Maravatío / Acámbaro)
+
+- `restaurants.zona` (`'maravatio'` | `'acambaro'`) — el cliente solo ve restaurantes de su misma zona en `/restaurants`
+- Se detecta **sola**, no hay botón manual: `LocationService.zonaFromCoords(lat, lng)` (Haversine contra los centros de ambas ciudades) o `detectZona(address)` si no hay coordenadas
+- El cliente elige su zona desde el picker de dirección en `/profile` (`AuthService.getZona()`/`saveZona()`); el dueño la ve de solo lectura en `/dueno`, calculada desde la dirección del local
+
+---
+
+## GOGO Premium (Dueño)
+
+Plan por restaurante, columna `restaurants.is_premium` (sin UI de cobro todavía — se activa a mano por SQL):
+
+| Función | Gratis | Premium |
+|---|---|---|
+| Banners promocionales | ❌ Bloqueado (`_buildPremiumLocked`) | ✅ |
+| Promo por platillo (descuento/2x1) | ❌ Bloqueado | ✅ |
+| Platillos en el menú | Máx. 7 | Máx. 20 |
+
+Todo en `dueno_screen.dart`, gateado con `_isPremium` (leído de `SupabaseService.getRestaurantIsPremium`).
+
+---
+
+## Retiros de repartidores (base, sin Stripe Connect todavía)
+
+Solo `repartidor_plus` independientes (los de flota los paga su jefe de flota fuera de la plataforma). Saldo **siempre calculado en vivo**, nunca guardado: `SUM(delivery_fee)` de pedidos entregados − retiros completados − retiros abiertos (`get_rider_balance()` RPC). El rider solicita con `request_withdrawal(monto)` (mínimo $200, un solo retiro abierto a la vez); Admin transiciona con `admin_transition_withdrawal(...)` desde Más → Retiros.
+
+Tablas: `rider_withdrawals`, `rider_payout_accounts` (CLABE + campos `stripe_*` reservados para el futuro), `withdrawal_status_log`. Capas Dart: `lib/models/rider_withdrawal.dart` → `lib/repositories/rider_withdrawal_repository.dart` → `lib/services/rider_withdrawal_service.dart` → `lib/controllers/rider_withdrawal_controller.dart`.
+
+---
+
+## Categorías de restaurante (filtro del cliente)
+
+`restaurants.categorias` (`TEXT[]`) — lista fija elegida por el dueño al registrarse (`registro_restaurante_screen.dart`) o después desde su panel (`dueno_screen.dart`, sección "Categoría de tu restaurante"). **No** se toma de las categorías del menú de cada restaurante (esas son libres, las inventa cada dueño para organizar sus propios platillos) — son dos cosas distintas a propósito, para que el filtro del cliente sea consistente entre restaurantes.
+
+Lista maestra en `lib/core/restaurant_categories.dart` (`kRestaurantCategories`) — agregar una categoría nueva es una sola línea ahí, sin migración de BD. El filtro en `restaurants_screen.dart` (botón "Categorías" en la lista principal) lee directo de `Restaurant.categorias` de los restaurantes de la zona del cliente.
+
+**Categorías de menú** (tabla `categories`, las pestañas de platillos DENTRO de un restaurante — ej. "Platillos", "Entradas", "Bebidas") son un sistema aparte, sin relación con lo anterior. Hoy se crean solo por SQL directo (no hay UI de creación en la app); no confundir con `restaurants.categorias`. Lista genérica fija en `lib/core/product_categories.dart` (`kProductCategories`: Platillos, Entradas, Ensaladas, Desayunos, Acompañamientos, Postres, Bebidas) — los 15 restaurantes existentes ya se migraron a esta lista (agosto 2026), fusionando donde había nombres muy específicos (ej. "Tacos"+"Carnitas por Kilo"+"Antojitos" → "Platillos" en CarnitasElPuerco; "Cafés"+"Frappes" → "Bebidas" en Starbucks). Usar siempre esta lista para restaurantes nuevos.

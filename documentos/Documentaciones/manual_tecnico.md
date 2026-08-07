@@ -335,24 +335,38 @@ class Product {
 
 ### Validación de zona de cobertura
 
-La app solo funciona dentro de 30 km del centro de Maravatío:
+La app funciona dentro de 50 km del centro de Maravatío (radio ampliado en agosto 2026 para cubrir también Acámbaro):
 
 ```dart
 // lib/services/location_service.dart
-static const double _centerLat = 19.8969;
-static const double _centerLng = -100.4447;
-static const double _maxRadiusKm = 30.0;
+static const double _lat = 19.8969;           // Maravatío
+static const double _lng = -100.4447;
+static const double _latAcambaro = 20.0386;
+static const double _lngAcambaro = -100.7284;
+static const double _radioMetros = 50000;
 
-static Future<bool> isInCoverageArea() async {
-  if (SupabaseService.useMock) return true; // Mock siempre está dentro
-
+static Future<LocationResult> verificarUbicacion() async {
   final position = await Geolocator.getCurrentPosition();
-  final distance = Geolocator.distanceBetween(
-    _centerLat, _centerLng,
+  final distancia = Geolocator.distanceBetween(
     position.latitude, position.longitude,
-  ) / 1000; // Convertir metros a km
+    _lat, _lng,
+  );
 
-  return distance <= _maxRadiusKm;
+  return LocationResult(
+    status: distancia <= _radioMetros
+        ? LocationStatus.enMaravatio
+        : LocationStatus.fueraDeMaravatio,
+    position: position,
+    distanciaKm: distancia / 1000,
+  );
+}
+
+// Zona explícita del restaurante (para filtrar el listado del cliente),
+// separada de la validación de cobertura de arriba:
+static String zonaFromCoords(double lat, double lng) {
+  final dMaravatio = Geolocator.distanceBetween(lat, lng, _lat, _lng);
+  final dAcambaro  = Geolocator.distanceBetween(lat, lng, _latAcambaro, _lngAcambaro);
+  return dAcambaro < dMaravatio ? 'acambaro' : 'maravatio';
 }
 ```
 

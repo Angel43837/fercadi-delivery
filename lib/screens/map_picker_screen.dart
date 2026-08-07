@@ -379,6 +379,12 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
       body: Stack(children: [
 
         gm.GoogleMap(
+          // Map ID (estilo gris) pendiente: Google Maps Platform exige una
+          // tarjeta de facturación activa en la cuenta para usar Map IDs
+          // personalizados, y por ahora no hay una disponible. El Map ID ya
+          // quedó creado y bien configurado en "ProyectoCompartido":
+          // c954c88d2bf2e40dd79e55f9 — solo falta volver a ponerlo aquí
+          // (mapId: 'c954c88d2bf2e40dd79e55f9') cuando se resuelva lo de la tarjeta.
           initialCameraPosition: gm.CameraPosition(target: _gmCenter, zoom: 15.0),
           onMapCreated: (ctrl) {
             _gmCtrl = ctrl;

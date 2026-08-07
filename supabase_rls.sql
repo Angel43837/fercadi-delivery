@@ -284,6 +284,21 @@ CREATE POLICY "read_ratings"
 CREATE POLICY "insert_ratings"
   ON ratings FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
 
+-- ── 17. ALERTS ───────────────────────────────────────────────
+-- Solo el admin lee/escribe. El webhook de Stripe usa service_role
+-- (se salta RLS), así que puede insertar alertas de pago sin política extra.
+
+ALTER TABLE alerts ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "read_alerts"  ON alerts;
+DROP POLICY IF EXISTS "write_alerts" ON alerts;
+
+CREATE POLICY "read_alerts"
+  ON alerts FOR SELECT USING (is_admin());
+
+CREATE POLICY "write_alerts"
+  ON alerts FOR ALL USING (is_admin()) WITH CHECK (is_admin());
+
 -- ── 15. Asignar rol a un usuario (ejecutar como service_role) ──
 -- IMPORTANTE: usar raw_app_meta_data, NO raw_user_meta_data
 --

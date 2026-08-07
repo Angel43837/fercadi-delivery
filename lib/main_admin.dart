@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -6,10 +7,16 @@ import 'core/constants.dart';
 import 'providers/app_data_provider.dart';
 import 'screens/admin_screen.dart';
 import 'screens/admin_login_screen.dart';
+import 'screens/admin_resenas_screen.dart';
+import 'screens/admin_retiros_screen.dart';
 import 'services/auth_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
   await Supabase.initialize(
     url: AppConstants.supabaseUrl,
     anonKey: AppConstants.supabaseAnonKey,
@@ -27,13 +34,15 @@ final _adminRouter = GoRouter(
     return null;
   },
   routes: [
+    GoRoute(path: '/login', builder: (_, _) => const AdminLoginScreen()),
+    GoRoute(path: '/admin', builder: (_, _) => const AdminScreen()),
     GoRoute(
-      path: '/login',
-      builder: (_, _) => const AdminLoginScreen(),
+      path: '/admin/resenas',
+      builder: (_, _) => const AdminResenasScreen(),
     ),
     GoRoute(
-      path: '/admin',
-      builder: (_, _) => const AdminScreen(),
+      path: '/admin/retiros',
+      builder: (_, _) => const AdminRetirosScreen(),
     ),
   ],
 );
@@ -50,7 +59,9 @@ class AdminApp extends StatelessWidget {
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
           scaffoldBackgroundColor: AppConstants.bgColor,
-          colorScheme: const ColorScheme.dark(primary: AppConstants.primaryColor),
+          colorScheme: const ColorScheme.dark(
+            primary: AppConstants.primaryColor,
+          ),
         ),
         routerConfig: _adminRouter,
       ),

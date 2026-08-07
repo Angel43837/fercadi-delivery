@@ -20,9 +20,10 @@ import 'rating_dialog.dart';
 
 const _defaultRestaurantPos = LatLng(19.8969, -100.4447); // Centro Maravatío
 
-// Mismos tonos naranja de GOGO Riders (repartidor_plus_screen.dart)
-const _bg   = Color(0xFFFF5722);
-const _card = Color(0xFFE64A19);
+// Mismos colores que la pantalla de entrega de Motos Flota
+// (repartidor_screen.dart) para que ambas se vean igual.
+const _bg   = AppConstants.primaryColor;
+const _card = AppConstants.surfaceColor;
 
 class EntregaActivaScreen extends StatefulWidget {
   final String orderId;
@@ -50,7 +51,7 @@ class EntregaActivaScreen extends StatefulWidget {
   State<EntregaActivaScreen> createState() => _EntregaActivaScreenState();
 }
 
-class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
+class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsBindingObserver {
   int _step = 0; // 0: ve al restaurante, 1: recoge, 2: en camino al cliente
 
   Position? _myPos;
@@ -67,18 +68,21 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
   static const _steps = [
     (icon: Icons.store,           label: 'Ve al restaurante',    color: Color(0xFFFFB300)),
     (icon: Icons.shopping_bag,    label: 'Recoge el pedido',     color: Color(0xFF7C4DFF)),
-    (icon: Icons.delivery_dining, label: 'En camino al cliente', color: Color(0xFF27AEEB)),
+    (icon: Icons.delivery_dining, label: 'En camino al cliente', color: AppConstants.primaryColor),
+    (icon: Icons.check_circle,    label: '¡Pedido entregado!',   color: Colors.green),
   ];
 
   static const _stepActions = [
     'Ya estoy en el restaurante',
     'Pedido recogido — ¡En camino!',
     'Marcar como entregado',
+    'Ver más pedidos',
   ];
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     SupabaseService.startLocationBroadcast(widget.orderId);
     _geocodedCustomerPos = widget.customerPos;
     if (widget.customerPos == null) _geocodeCustomer(widget.address);
@@ -87,6 +91,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _gpsSub?.cancel();
     _broadcastTimer?.cancel();
     SupabaseService.stopLocationBroadcast();
@@ -94,13 +99,20 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Igual que en repartidor_plus_screen: si fue a activar el permiso en
+    // Ajustes y regresa, hay que reintentar en vez de dejarlo sin GPS.
+    if (state == AppLifecycleState.resumed && _gpsSub == null) {
+      _initGPS();
+    }
+  }
+
   Future<void> _initGPS() async {
     try {
-      var perm = await Geolocator.checkPermission();
-      if (perm == LocationPermission.denied) {
-        perm = await Geolocator.requestPermission();
-      }
-      if (perm != LocationPermission.whileInUse && perm != LocationPermission.always) return;
+      if (!mounted) return;
+      final granted = await LocationService.ensureLocationPermission(context);
+      if (!granted) return;
       _gpsSub = Geolocator.getPositionStream(
         locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 5),
       ).listen((pos) {
@@ -186,6 +198,39 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
     }
   }
 
+  void _confirmarCancelarEntrega() {
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: _card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('¿Cancelar esta entrega?',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        content: Text(
+          'El pedido de ${widget.restaurantName} volverá a estar disponible para otro repartidor.',
+          style: TextStyle(color: Colors.white.withValues(alpha: 0.75), height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: Text('No, seguir', style: TextStyle(color: Colors.white.withValues(alpha: 0.6))),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(dialogCtx);
+              _broadcastTimer?.cancel();
+              SupabaseService.stopLocationBroadcast();
+              await SupabaseService.releaseOrderFromRider(widget.orderId);
+              if (mounted) Navigator.of(context).pop();
+            },
+            child: const Text('Sí, cancelar',
+                style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final sd = _steps[_step];
@@ -194,7 +239,14 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
     final showClientPos = _step >= 2;
     final mapCenter = myLatLng ?? _defaultRestaurantPos;
 
-    return Scaffold(
+    // Bloquea el gesto de deslizar/botón de regreso del sistema — con el
+    // pedido ya aceptado, la única salida es cancelar la entrega.
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) _confirmarCancelarEntrega();
+      },
+      child: Scaffold(
       backgroundColor: _bg,
       body: Column(children: [
         // ── Mapa ──────────────────────────────────────────────────────────
@@ -262,6 +314,29 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
                   ),
                 ),
               ),
+            // Mientras no llega el primer GPS real, avisa que sigue
+            // buscando en vez de dejar el mapa sin el ícono del repartidor
+            // como si algo estuviera roto — a veces tarda unos segundos.
+            if (myLatLng == null)
+              Positioned(
+                bottom: 8, left: 8, right: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppConstants.surfaceColor.withValues(alpha: 0.92),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                    SizedBox(
+                      width: 14, height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    ),
+                    SizedBox(width: 10),
+                    Text('Buscando tu ubicación...',
+                        style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+                  ]),
+                ),
+              ),
             if (_geocodeFailed)
               Positioned(
                 bottom: 8, left: 8, right: 8,
@@ -287,19 +362,12 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
               child: Padding(
                 padding: const EdgeInsets.all(12),
                 child: Row(
+                  // Igual que en Motos Flota: sin botón de cerrar aparte — con
+                  // el pedido aceptado no se puede simplemente salir, solo con
+                  // el botón "Cancelar pedido" de abajo (o el gesto de
+                  // regreso, que muestra la misma confirmación).
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    GestureDetector(
-                      onTap: () => Navigator.of(context).maybePop(),
-                      child: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: _card.withValues(alpha: 0.95),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(Icons.arrow_back, color: Colors.white, size: 18),
-                      ),
-                    ),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                       decoration: BoxDecoration(
@@ -355,7 +423,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: _card,
+                  color: Colors.white,
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: Column(children: [
@@ -373,7 +441,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: _card,
+                  color: Colors.white,
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: Column(
@@ -385,10 +453,10 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
                         child: Row(children: [
                           const Icon(Icons.fastfood, color: AppConstants.primaryColor, size: 16),
                           const SizedBox(width: 10),
-                          Expanded(child: Text(e.value, style: const TextStyle(color: Colors.white, fontSize: 14))),
+                          Expanded(child: Text(e.value, style: const TextStyle(color: Colors.black87, fontSize: 14))),
                         ]),
                       ),
-                      if (!isLast) Divider(height: 1, color: Colors.white.withValues(alpha: 0.06)),
+                      if (!isLast) Divider(height: 1, color: Colors.black12),
                     ]);
                   }).toList(),
                 ),
@@ -410,23 +478,42 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
           child: SafeArea(
             top: false,
-            child: SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: _avanzarStep,
-                icon: const Icon(Icons.check, size: 20),
-                label: Text(_stepActions[_step],
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _steps[_step].color,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 15),
+            child: Column(children: [
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _avanzarStep,
+                  icon: const Icon(Icons.check, size: 20),
+                  label: Text(_stepActions[_step],
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _steps[_step].color,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 15),
+                  ),
                 ),
               ),
-            ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _confirmarCancelarEntrega,
+                  icon: const Icon(Icons.close_rounded, color: Colors.white, size: 18),
+                  label: const Text('Cancelar pedido',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFE53935),
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    elevation: 0,
+                  ),
+                ),
+              ),
+            ]),
           ),
         ),
       ]),
+      ),
     );
   }
 
@@ -446,7 +533,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
                   decoration: BoxDecoration(
                     color: done || active
                         ? sd.color.withValues(alpha: done ? 0.3 : 0.15)
-                        : Colors.white.withValues(alpha: 0.12),
+                        : AppConstants.surface2Color,
                     shape: BoxShape.circle,
                     border: Border.all(
                       color: done || active ? sd.color : Colors.transparent,
@@ -477,7 +564,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> {
                 child: Container(
                   height: 2,
                   margin: const EdgeInsets.only(bottom: 18),
-                  color: i < _step ? Colors.white : Colors.white.withValues(alpha: 0.12),
+                  color: i < _step ? AppConstants.primaryColor : AppConstants.surface2Color,
                 ),
               ),
           ]),
@@ -515,7 +602,7 @@ class _InfoRow extends StatelessWidget {
     return Row(children: [
       Icon(icon, color: AppConstants.primaryColor, size: 16),
       const SizedBox(width: 10),
-      Expanded(child: Text(text, style: const TextStyle(color: Colors.white, fontSize: 13))),
+      Expanded(child: Text(text, style: const TextStyle(color: Colors.black87, fontSize: 13))),
     ]);
   }
 }

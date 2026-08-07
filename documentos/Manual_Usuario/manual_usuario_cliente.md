@@ -148,7 +148,7 @@ Después de confirmar, verás la pantalla de rastreo en tiempo real:
 El costo varía según la distancia entre el restaurante y tu domicilio. Se muestra antes de confirmar el pedido.
 
 **¿Cuál es la zona de entrega?**  
-Por el momento la app funciona dentro de Maravatío, Michoacán y alrededores (hasta 30 km del centro).
+Por el momento la app funciona en Maravatío y Acámbaro, Michoacán, y alrededores (hasta 50 km del centro). Al elegir tu dirección, la app detecta sola a cuál de las dos ciudades perteneces y solo te muestra restaurantes de esa zona.
 
 **¿Puedo cancelar un pedido?**  
 Comunícate directamente con el restaurante. Una vez que el repartidor tomó el pedido, ya no es posible cancelarlo.

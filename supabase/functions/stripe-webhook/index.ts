@@ -81,10 +81,23 @@ Deno.serve(async (req) => {
       else if (event.type === 'payment_intent.canceled') newStatus = 'failed'
 
       if (newStatus) {
-        await supabase
+        const { data: updated } = await supabase
           .from('orders')
           .update({ payment_status: newStatus })
           .eq('stripe_payment_intent_id', paymentIntentId)
+          .select('id')
+          .maybeSingle()
+
+        if (newStatus === 'failed') {
+          const reason = intent?.last_payment_error?.message ?? event.type
+          await supabase.from('alerts').insert({
+            title: 'Pago rechazado o fallido',
+            description: `Pedido ${updated?.id ?? '—'} · PaymentIntent ${paymentIntentId}: ${reason}`,
+            priority: 'alta',
+            category: 'pagos',
+            status: 'pendiente',
+          })
+        }
       }
     }
 

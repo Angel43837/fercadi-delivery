@@ -18,6 +18,7 @@ import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:latlong2/latlong.dart';
 import '../core/constants.dart';
+import '../core/restaurant_categories.dart';
 import '../providers/app_data_provider.dart';
 import 'package:go_router/go_router.dart';
 import '../models/restaurant_banner.dart';
@@ -93,6 +94,12 @@ class _DuenoScreenState extends State<DuenoScreen> {
 
   // ID del restaurante de este dueño
   String _restaurantId = '1';
+  bool   _isPremium    = false;
+
+  // Límites del plan gratuito — con premium se amplían.
+  static const int _maxProductosGratis   = 7;
+  static const int _maxProductosPremium  = 20;
+  int get _maxProductos => _isPremium ? _maxProductosPremium : _maxProductosGratis;
 
   // Configuración del restaurante
   String _restName    = '';
@@ -101,6 +108,8 @@ class _DuenoScreenState extends State<DuenoScreen> {
   String _restAddress = '';
   String _restPhoto   = '';
   String _restEmoji   = '🍴';
+  String _restZona    = 'maravatio';
+  final Set<String> _restCategorias = {};
   LatLng? _restLatLng;
 
   final _restNameCtrl    = TextEditingController();
@@ -144,6 +153,12 @@ class _DuenoScreenState extends State<DuenoScreen> {
       _loadCategories();
       _loadProductsFromSupabase();
       _loadBanners();
+      final zona = await SupabaseService.getRestaurantZona(_restaurantId);
+      if (mounted) setState(() => _restZona = zona);
+      final categorias = await SupabaseService.getRestaurantCategorias(_restaurantId);
+      if (mounted) setState(() { _restCategorias.clear(); _restCategorias.addAll(categorias); });
+      final premium = await SupabaseService.getRestaurantIsPremium(_restaurantId);
+      if (mounted) setState(() => _isPremium = premium);
     }
     _loadRealOrders();
     _ordersChannel = SupabaseService.subscribeToOrders(_loadRealOrders);
@@ -570,12 +585,64 @@ class _DuenoScreenState extends State<DuenoScreen> {
         right: 16, bottom: 16,
         child: FloatingActionButton.extended(
           backgroundColor: AppConstants.primaryColor,
-          onPressed: () => _showProductForm(null, isExtra: false),
+          onPressed: () {
+            if (_products.length >= _maxProductos) {
+              _showLimiteProductosDialog();
+              return;
+            }
+            _showProductForm(null, isExtra: false);
+          },
           icon: const Icon(Icons.add, color: Colors.white),
           label: const Text('Nuevo platillo', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         ),
       ),
     ]);
+  }
+
+  void _showPromoLockedDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppConstants.surfaceColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Promociones por platillo',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        content: Text(
+          'Pon descuentos o 2x1 en tus platillos con GOGO Premium.',
+          style: TextStyle(color: Colors.white.withValues(alpha: 0.75), height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('Entendido', style: TextStyle(color: Colors.white.withValues(alpha: 0.6))),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showLimiteProductosDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppConstants.surfaceColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Llegaste al límite de platillos',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        content: Text(
+          _isPremium
+              ? 'Con GOGO Premium puedes tener hasta $_maxProductosPremium platillos, y ya los usaste todos.'
+              : 'El plan gratuito permite hasta $_maxProductosGratis platillos. Con GOGO Premium puedes tener hasta $_maxProductosPremium.',
+          style: TextStyle(color: Colors.white.withValues(alpha: 0.75), height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('Entendido', style: TextStyle(color: Colors.white.withValues(alpha: 0.6))),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showProductForm(_Product? existing, {bool isExtra = false}) {
@@ -778,17 +845,32 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 ),
                 Expanded(
                   child: GestureDetector(
-                    onTap: () => setModal(() { isPromoMode = true; promoTouched = true; }),
+                    onTap: () {
+                      if (!_isPremium) {
+                        _showPromoLockedDialog();
+                        return;
+                      }
+                      setModal(() { isPromoMode = true; promoTouched = true; });
+                    },
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 150),
                       padding: const EdgeInsets.symmetric(vertical: 12),
                       color: isPromoMode ? Colors.white : Colors.white12,
-                      child: Text('Promo',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: isPromoMode ? AppConstants.primaryColor : Colors.white,
-                          fontWeight: FontWeight.bold, fontSize: 14,
-                        ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          if (!_isPremium) ...[
+                            Icon(Icons.lock, size: 13,
+                                color: isPromoMode ? AppConstants.primaryColor : Colors.white.withValues(alpha: 0.6)),
+                            const SizedBox(width: 5),
+                          ],
+                          Text('Promo',
+                            style: TextStyle(
+                              color: isPromoMode ? AppConstants.primaryColor : Colors.white,
+                              fontWeight: FontWeight.bold, fontSize: 14,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -987,9 +1069,9 @@ class _DuenoScreenState extends State<DuenoScreen> {
               }).toList(),
             ),
             const SizedBox(height: 12),
-            _FormField(controller: nameCtrl,  label: 'Nombre del platillo', icon: Icons.fastfood_outlined, isDark: false),
+            _FormField(controller: nameCtrl,  label: 'Nombre del platillo', icon: Icons.fastfood_outlined, maxLength: 15, isDark: false),
             const SizedBox(height: 12),
-            _FormField(controller: descCtrl,  label: 'Descripción',         icon: Icons.notes, maxLines: 2, isDark: false),
+            _FormField(controller: descCtrl,  label: 'Descripción',         icon: Icons.notes, maxLines: 2, maxLength: 30, isDark: false),
             const SizedBox(height: 12),
             _FormField(controller: priceCtrl, label: 'Precio (MXN)',        icon: Icons.attach_money, keyboardType: TextInputType.number, isDark: false),
             const SizedBox(height: 12),
@@ -1114,13 +1196,56 @@ class _DuenoScreenState extends State<DuenoScreen> {
     setState(() { _bannerList = banners; _loadingBanners = false; });
   }
 
+  // Pantalla de "función bloqueada" para lo que solo viene con GOGO Premium.
+  Widget _buildPremiumLocked({required IconData icon, required String title, required String description}) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.12), shape: BoxShape.circle),
+            child: Icon(icon, size: 44, color: Colors.white),
+          ),
+          const SizedBox(height: 20),
+          Text(title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+          const SizedBox(height: 10),
+          Text(description,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 13, height: 1.4)),
+          const SizedBox(height: 24),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.workspace_premium, color: AppConstants.primaryColor, size: 18),
+              const SizedBox(width: 8),
+              Text('Disponible con GOGO Premium',
+                  style: TextStyle(color: AppConstants.primaryColor, fontWeight: FontWeight.bold, fontSize: 13)),
+            ]),
+          ),
+        ]),
+      ),
+    );
+  }
+
   Widget _buildBanners() {
+    if (!_isPremium) {
+      return _buildPremiumLocked(
+        icon: Icons.campaign_outlined,
+        title: 'Banners promocionales',
+        description: 'Destaca tus platillos y promociones en la pantalla de inicio de los clientes. Disponible con GOGO Premium.',
+      );
+    }
     final colors = [
       const Color(0xFFE53935), const Color(0xFF43A047),
       const Color(0xFF1E88E5), const Color(0xFFFF6F00),
     ];
-    final colorLabels = ['Rojo', 'Verde', 'Azul', 'Naranja'];
-
     Future<void> showAddSheet([RestaurantBanner? existing]) async {
       String imageUrl     = existing?.imageUrl ?? '';
       String title        = existing?.title ?? '';
@@ -1603,7 +1728,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
               decoration: InputDecoration(
                 labelText: 'Dirección del local',
                 labelStyle: TextStyle(color: _textMid),
-                prefixIcon: const Icon(Icons.location_on_outlined, color: AppConstants.primaryColor),
+                prefixIcon: const Icon(Icons.location_on_outlined, color: Colors.white),
                 filled: true,
                 fillColor: _surface,
                 border: OutlineInputBorder(
@@ -1631,8 +1756,8 @@ class _DuenoScreenState extends State<DuenoScreen> {
                   decoration: InputDecoration(
                     labelText: 'Dirección del local',
                     labelStyle: TextStyle(color: _textMid),
-                    prefixIcon: const Icon(Icons.location_on_outlined, color: AppConstants.primaryColor),
-                    suffixIcon: const Icon(Icons.map_outlined, color: AppConstants.primaryColor, size: 20),
+                    prefixIcon: const Icon(Icons.location_on_outlined, color: Colors.white),
+                    suffixIcon: const Icon(Icons.map_outlined, color: Colors.white, size: 20),
                     filled: true,
                     fillColor: _surface,
                     border: OutlineInputBorder(
@@ -1646,6 +1771,57 @@ class _DuenoScreenState extends State<DuenoScreen> {
               ),
             ),
           ),
+        const SizedBox(height: 20),
+
+        // ── Zona — se detecta sola según la dirección, no se elige a mano ──────
+        Row(children: [
+          Icon(Icons.location_on, color: AppConstants.primaryColor, size: 16),
+          const SizedBox(width: 6),
+          Text('Zona: ${_restZona == 'acambaro' ? 'Acámbaro' : 'Maravatío'}',
+              style: TextStyle(color: _textMid, fontSize: 13, fontWeight: FontWeight.w600)),
+        ]),
+        const SizedBox(height: 4),
+        Text('Se detecta sola según la dirección del local',
+            style: TextStyle(color: _textLow, fontSize: 11)),
+        const SizedBox(height: 24),
+
+        // ── Categoría del restaurante — lista fija, para el filtro del cliente ──
+        Text('Categoría de tu restaurante',
+            style: TextStyle(color: _textMid, fontSize: 13, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 4),
+        Text('Así te encuentran los clientes que filtran por categoría',
+            style: TextStyle(color: _textLow, fontSize: 11)),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: kRestaurantCategories.map((cat) {
+            final selected = _restCategorias.contains(cat);
+            return GestureDetector(
+              onTap: () => setState(() {
+                if (selected) {
+                  _restCategorias.remove(cat);
+                } else {
+                  _restCategorias.add(cat);
+                }
+              }),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                decoration: BoxDecoration(
+                  color: selected ? AppConstants.primaryColor : _surface,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(cat,
+                    style: TextStyle(
+                      color: selected ? Colors.white : _textMid,
+                      fontWeight: selected ? FontWeight.bold : FontWeight.w600,
+                      fontSize: 13,
+                    )),
+              ),
+            );
+          }).toList(),
+        ),
         const SizedBox(height: 28),
 
         SizedBox(
@@ -1659,6 +1835,14 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 address: _restAddress,
                 emoji:   _restEmoji,
               );
+              if (!SupabaseService.useMock) {
+                final zona = _restLatLng != null
+                    ? LocationService.zonaFromCoords(_restLatLng!.latitude, _restLatLng!.longitude)
+                    : await LocationService.detectZona(_restAddress);
+                await SupabaseService.updateRestaurantZona(_restaurantId, zona);
+                if (mounted) setState(() => _restZona = zona);
+                await SupabaseService.updateRestaurantCategorias(_restaurantId, _restCategorias.toList());
+              }
               if (!mounted) return;
               setState(() {
                 _restName  = _restNameCtrl.text.trim();
@@ -1713,8 +1897,8 @@ class _StatCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final surface = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE64A19);
-    final textLow = isDark ? Colors.white.withValues(alpha: 0.45) : Colors.white.withValues(alpha: 0.7);
+    final surface = isDark ? const Color(0xFF2A2A2A) : Colors.white;
+    final textLow = isDark ? Colors.white.withValues(alpha: 0.45) : Colors.black54;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(color: surface, borderRadius: BorderRadius.circular(16)),
@@ -1742,29 +1926,6 @@ class _StatusLegend extends StatelessWidget {
       Text('$count', style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 18)),
       Text(label, style: TextStyle(color: textLow, fontSize: 10)),
     ]);
-  }
-}
-
-class _ActionBtn extends StatelessWidget {
-  final String label;
-  final Color color;
-  final VoidCallback onTap;
-  const _ActionBtn({required this.label, required this.color, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: color.withValues(alpha: 0.5)),
-        ),
-        child: Text(label, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 12)),
-      ),
-    );
   }
 }
 
@@ -2148,7 +2309,9 @@ class _NavItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final active = index == current;
-    final inactive = isDark ? Colors.white.withValues(alpha: 0.3) : Colors.black38;
+    // En modo claro el fondo del menú sigue siendo naranja oscuro, no blanco
+    // — un ícono negro ahí casi no se distingue.
+    final inactive = isDark ? Colors.white.withValues(alpha: 0.3) : Colors.white.withValues(alpha: 0.55);
     return Expanded(
       child: InkWell(
         onTap: () => onTap(index),
@@ -2208,7 +2371,7 @@ class _RestField extends StatelessWidget {
         decoration: InputDecoration(
           labelText: label,
           labelStyle: TextStyle(color: textMid),
-          prefixIcon: Icon(icon, color: AppConstants.primaryColor, size: 20),
+          prefixIcon: Icon(icon, color: Colors.white, size: 20),
           filled: true,
           fillColor: fill,
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
@@ -2223,9 +2386,10 @@ class _FormField extends StatelessWidget {
   final String label;
   final IconData icon;
   final int maxLines;
+  final int? maxLength;
   final TextInputType? keyboardType;
   final bool isDark;
-  const _FormField({required this.controller, required this.label, required this.icon, this.maxLines = 1, this.keyboardType, this.isDark = true});
+  const _FormField({required this.controller, required this.label, required this.icon, this.maxLines = 1, this.maxLength, this.keyboardType, this.isDark = true});
 
   @override
   Widget build(BuildContext context) {
@@ -2235,12 +2399,14 @@ class _FormField extends StatelessWidget {
     return TextField(
       controller: controller,
       maxLines: maxLines,
+      maxLength: maxLength,
       keyboardType: keyboardType,
       style: TextStyle(color: text),
       decoration: InputDecoration(
         labelText: label,
         labelStyle: TextStyle(color: textMid),
         prefixIcon: Icon(icon, color: textMid, size: 20),
+        counterStyle: TextStyle(color: textMid, fontSize: 11),
         filled: true,
         fillColor: fillColor,
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
@@ -2250,19 +2416,4 @@ class _FormField extends StatelessWidget {
       ),
     );
   }
-}
-
-InputDecoration _inputDecoration(String label, {bool isDark = true}) {
-  final textMid   = isDark ? Colors.white.withValues(alpha: 0.6) : Colors.black54;
-  final fillColor = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF0F0F0);
-  return InputDecoration(
-    labelText: label,
-    labelStyle: TextStyle(color: textMid),
-    filled: true,
-    fillColor: fillColor,
-    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-    focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: AppConstants.primaryColor)),
-  );
 }

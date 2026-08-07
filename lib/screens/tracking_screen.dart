@@ -5,7 +5,6 @@
 //   - La posición actual del repartidor (se actualiza cada 4 segundos)
 
 import 'dart:async';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:go_router/go_router.dart';
@@ -90,6 +89,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
     final pos = ll.LatLng(loc.lat, loc.lng);
     setState(() => _motoPos = pos);
     if (_step >= 1) _mapCtrl.move(pos, 15.5);
+    _pushWidgetData();
   }
 
   Future<void> _geocodeAddress() async {
@@ -98,6 +98,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _mapCtrl.move(_customerPos, 15.0);
       });
+      _pushWidgetData();
       return;
     }
     if (widget.address.trim().isEmpty) return;
@@ -105,6 +106,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
     if (!mounted) return;
     if (result == null) {
       setState(() => _geocodeFailed = true);
+      _pushWidgetData();
       return;
     }
     setState(() {
@@ -112,66 +114,65 @@ class _TrackingScreenState extends State<TrackingScreen> {
       _geocodeFailed = false;
     });
     _mapCtrl.move(_customerPos, 15.0);
+    _pushWidgetData();
   }
 
   Future<void> _pollStatus() async {
     try {
       final s = await SupabaseService.getOrderStatus(widget.orderId) ?? 'pending';
       if (!mounted) return;
-      _updateHomeWidget(s);
-      if (s == _orderStatus) return;
-      if (s == 'accepted')   NotificationService.pedidoAceptado();
-      if (s == 'delivering') NotificationService.repartidorEnCamino();
-      if (s == 'delivered')  NotificationService.pedidoEntregado();
-      setState(() => _orderStatus = s);
-      if (s == 'delivered' || s == 'cancelled') {
-        _pollTimer?.cancel();
-        _pollTimer = null;
-      }
-      if (s == 'delivered') {
-        await OrderHistoryService.clearActiveOrder();
-        if (mounted) {
-          await showRatingDialog(context, orderId: widget.orderId, isDriver: false);
+      if (s != _orderStatus) {
+        if (s == 'accepted')   NotificationService.pedidoAceptado();
+        if (s == 'delivering') NotificationService.repartidorEnCamino();
+        if (s == 'delivered')  NotificationService.pedidoEntregado();
+        setState(() => _orderStatus = s);
+        if (s == 'delivered' || s == 'cancelled') {
+          _pollTimer?.cancel();
+          _pollTimer = null;
+        }
+        if (s == 'delivered') {
+          await OrderHistoryService.clearActiveOrder();
+          if (mounted) {
+            await showRatingDialog(context, orderId: widget.orderId, isDriver: false);
+          }
+        }
+        if (s == 'cancelled') {
+          await OrderHistoryService.clearActiveOrder();
         }
       }
-      if (s == 'cancelled') {
-        await OrderHistoryService.clearActiveOrder();
-      }
+      // Se manda en cada sondeo (no solo cuando cambia) para que el widget de
+      // pantalla de inicio siempre tenga la posición del repartidor y el
+      // estado más recientes mientras la app está abierta.
+      _pushWidgetData();
     } catch (_) {}
   }
 
-  // Guarda el estado del pedido (y coordenadas para el mini-mapa) para el
-  // widget de pantalla de inicio (iOS). No espera a que Supabase/Home Widget
-  // respondan — no debe frenar el polling.
-  void _updateHomeWidget(String status) {
-    if (kIsWeb) return; // home_widget no tiene implementación en web
-    final active = status != 'delivered' && status != 'cancelled';
-    HomeWidget.saveWidgetData<bool>('hasActiveOrder', active);
-    // El widget consulta Supabase directo cuando la app está cerrada — necesita
-    // el id del pedido y una sesión con la que autenticar esa consulta.
-    HomeWidget.saveWidgetData<String>('orderId', widget.orderId);
-    final token = Supabase.instance.client.auth.currentSession?.accessToken;
-    if (token != null) HomeWidget.saveWidgetData<String>('authToken', token);
-    if (active) {
-      final stepIndex = status == 'accepted' ? 1 : (status == 'delivering' ? 2 : 0);
-      HomeWidget.saveWidgetData<String>('restaurantName', widget.restaurantName);
-      HomeWidget.saveWidgetData<String>('statusText', _statusData[stepIndex].label);
-      HomeWidget.saveWidgetData<String>('address', widget.address);
-      HomeWidget.saveWidgetData<double>('total', widget.total);
-      // Pasos para la tarjeta de seguimiento: 0=Recibido 1=Preparando 2=En camino 3=Entregado
-      final cardStep = status == 'accepted' ? 1 : (status == 'delivering' ? 2 : 0);
-      HomeWidget.saveWidgetData<int>('stepIndex', cardStep);
-      HomeWidget.saveWidgetData<double>('restaurantLat', _kRestaurantPos.latitude);
-      HomeWidget.saveWidgetData<double>('restaurantLng', _kRestaurantPos.longitude);
-      HomeWidget.saveWidgetData<double>('customerLat', _customerPos.latitude);
-      HomeWidget.saveWidgetData<double>('customerLng', _customerPos.longitude);
-      HomeWidget.saveWidgetData<double>('motoLat', _motoPos.latitude);
-      HomeWidget.saveWidgetData<double>('motoLng', _motoPos.longitude);
-    } else {
-      HomeWidget.saveWidgetData<int>('stepIndex', 3);
-    }
-    HomeWidget.updateWidget(iOSName: 'GOGOTrackingWidget');
-    HomeWidget.updateWidget(iOSName: 'GOGOTrackingStepsWidget');
+  // Comparte el pedido activo con el widget de pantalla de inicio (WidgetKit)
+  // vía el App Group — así se puede ver el estado sin abrir la app. El widget
+  // también se refresca solo cada ~15 min consultando Supabase directamente
+  // (con el orderId/authToken guardados aquí), por si la app está cerrada.
+  Future<void> _pushWidgetData() async {
+    try {
+      final active = !_isCancelled && _step < 3;
+      final label  = _isCancelled ? 'Pedido cancelado' : _statusData[_step].label;
+      await HomeWidget.saveWidgetData<String>('orderId', widget.orderId);
+      await HomeWidget.saveWidgetData<String>(
+          'authToken', Supabase.instance.client.auth.currentSession?.accessToken ?? '');
+      await HomeWidget.saveWidgetData<String>('restaurantName', widget.restaurantName);
+      await HomeWidget.saveWidgetData<String>('address', widget.address);
+      await HomeWidget.saveWidgetData<double>('total', widget.total);
+      await HomeWidget.saveWidgetData<double>('restaurantLat', _kRestaurantPos.latitude);
+      await HomeWidget.saveWidgetData<double>('restaurantLng', _kRestaurantPos.longitude);
+      await HomeWidget.saveWidgetData<double>('customerLat', _customerPos.latitude);
+      await HomeWidget.saveWidgetData<double>('customerLng', _customerPos.longitude);
+      await HomeWidget.saveWidgetData<double>('motoLat', _motoPos.latitude);
+      await HomeWidget.saveWidgetData<double>('motoLng', _motoPos.longitude);
+      await HomeWidget.saveWidgetData<bool>('hasActiveOrder', active);
+      await HomeWidget.saveWidgetData<String>('statusText', label);
+      await HomeWidget.saveWidgetData<int>('stepIndex', _step);
+      await HomeWidget.updateWidget(iOSName: 'GOGOTrackingWidget');
+      await HomeWidget.updateWidget(iOSName: 'GOGOTrackingStepsWidget');
+    } catch (_) {}
   }
 
   @override
@@ -292,43 +293,67 @@ class _TrackingScreenState extends State<TrackingScreen> {
         SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              decoration: BoxDecoration(
-                color: AppConstants.surfaceColor.withValues(alpha: 0.96),
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(color: Colors.black.withValues(alpha: 0.5), blurRadius: 14),
-                ],
-              ),
-              child: Row(children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: sd.color.withValues(alpha: 0.15),
-                    shape: BoxShape.circle,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Salir del mapa sin cancelar el pedido — vuelve a
+                // restaurantes, donde el banner "Seguimiento" deja regresar.
+                GestureDetector(
+                  onTap: () => context.go('/restaurants'),
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppConstants.surfaceColor.withValues(alpha: 0.96),
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(color: Colors.black.withValues(alpha: 0.5), blurRadius: 14),
+                      ],
+                    ),
+                    child: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
                   ),
-                  child: Icon(sd.icon, color: sd.color, size: 24),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 10),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(sd.label,
-                          style: const TextStyle(
-                              color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
-                      const SizedBox(height: 2),
-                      Text(_eta,
-                          style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.5), fontSize: 12)),
-                    ],
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                    decoration: BoxDecoration(
+                      color: AppConstants.surfaceColor.withValues(alpha: 0.96),
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(color: Colors.black.withValues(alpha: 0.5), blurRadius: 14),
+                      ],
+                    ),
+                    child: Row(children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: sd.color.withValues(alpha: 0.15),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(sd.icon, color: sd.color, size: 24),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(sd.label,
+                                style: const TextStyle(
+                                    color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+                            const SizedBox(height: 2),
+                            Text(_eta,
+                                style: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.5), fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                      if (_step >= 1 && _step < 3)
+                        _PulsingDot(color: sd.color),
+                    ]),
                   ),
                 ),
-                if (_step >= 1 && _step < 3)
-                  _PulsingDot(color: sd.color),
-              ]),
+              ],
             ),
           ),
         ),

@@ -8,12 +8,10 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'models/restaurant.dart';
 import 'models/product.dart';
 import 'screens/splash_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/restaurants_screen.dart';
-import 'screens/menu_screen.dart';
 import 'screens/product_detail_screen.dart';
 import 'screens/cart_screen.dart';
 import 'screens/checkout_screen.dart';
@@ -100,10 +98,6 @@ final appRouter = GoRouter(
     GoRoute(path: '/',          builder: (_, _) => const SplashScreen()),
     GoRoute(path: '/login',     builder: (_, _) => const LoginScreen()),
     GoRoute(path: '/restaurants', builder: (_, _) => const RestaurantsScreen()),
-    GoRoute(
-      path: '/menu',
-      builder: (context, state) => MenuScreen(restaurant: state.extra as Restaurant),
-    ),
     GoRoute(
       path: '/product-detail',
       builder: (context, state) {

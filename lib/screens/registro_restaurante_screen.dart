@@ -5,7 +5,9 @@ import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../core/restaurant_categories.dart';
 import '../services/auth_service.dart';
+import '../services/location_service.dart';
 
 class RegistroRestauranteScreen extends StatefulWidget {
   const RegistroRestauranteScreen({super.key});
@@ -30,6 +32,7 @@ class _RegistroRestauranteScreenState extends State<RegistroRestauranteScreen> {
   String _nombreRest    = '';
   double? _detectedLat;
   double? _detectedLng;
+  final Set<String> _selectedCategorias = {};
 
   static const _orange  = Color(0xFFFF5722);
   static const _dark    = Color(0xFFE64A19); // naranja oscuro para inputs
@@ -77,6 +80,11 @@ class _RegistroRestauranteScreenState extends State<RegistroRestauranteScreen> {
       await Supabase.instance.client.auth.signInWithPassword(
         email: email, password: pass,
       );
+      // La zona se detecta sola (por GPS si se usó, o geocodificando la
+      // dirección) — no se le pregunta al dueño, para no complicarlo.
+      final zona = (_detectedLat != null && _detectedLng != null)
+          ? LocationService.zonaFromCoords(_detectedLat!, _detectedLng!)
+          : await LocationService.detectZona(address);
       final data = await Supabase.instance.client.from('restaurants').insert({
         'name': restName,
         'description': desc.isEmpty ? null : desc,
@@ -84,6 +92,8 @@ class _RegistroRestauranteScreenState extends State<RegistroRestauranteScreen> {
         'is_open': true,
         'rating': 0.0,
         'owner_id': res.user!.id,
+        'zona': zona,
+        'categorias': _selectedCategorias.toList(),
         if (_detectedLat != null) 'lat': _detectedLat,
         if (_detectedLng != null) 'lng': _detectedLng,
       }).select().single();
@@ -220,6 +230,44 @@ class _RegistroRestauranteScreenState extends State<RegistroRestauranteScreen> {
             _field(ctrl: _phoneCtrl, label: 'Teléfono',
                 hint: '443 000 0000', icon: Icons.phone_outlined,
                 keyboard: TextInputType.phone),
+            const SizedBox(height: 20),
+            Text('Categoría de tu restaurante',
+                style: TextStyle(color: _white.withValues(alpha: 0.9), fontSize: 13, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            Text('Elige una o más — así te encuentran los clientes que buscan por categoría',
+                style: TextStyle(color: _white.withValues(alpha: 0.65), fontSize: 12)),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: kRestaurantCategories.map((cat) {
+                final selected = _selectedCategorias.contains(cat);
+                return GestureDetector(
+                  onTap: () => setState(() {
+                    if (selected) {
+                      _selectedCategorias.remove(cat);
+                    } else {
+                      _selectedCategorias.add(cat);
+                    }
+                  }),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                    decoration: BoxDecoration(
+                      color: selected ? Colors.white : Colors.white.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: Colors.white.withValues(alpha: selected ? 0 : 0.3)),
+                    ),
+                    child: Text(cat,
+                        style: TextStyle(
+                          color: selected ? _orange : Colors.white,
+                          fontWeight: selected ? FontWeight.bold : FontWeight.w600,
+                          fontSize: 13,
+                        )),
+                  ),
+                );
+              }).toList(),
+            ),
             const SizedBox(height: 28),
 
             _section('Tu cuenta de acceso'),

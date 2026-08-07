@@ -14,6 +14,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
+import 'package:http/http.dart' as http;
+import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:path_provider/path_provider.dart';
@@ -56,6 +58,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String  _email      = '';
   String  _role       = '';
   String? _photoPath;
+  String  _originalName  = '';
+  bool    _photoChanged  = false;
+  String  _zona          = 'maravatio';
+
+  bool get _isDirty => _photoChanged || _nameCtrl.text.trim() != _originalName;
 
   // Ubicación de entrega
   String  _addrText    = '';
@@ -77,6 +84,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final photo   = await AuthService.getProfilePhoto();
     final clabe   = await AuthService.getCLABE();
     final defAddr = await AuthService.getDefaultAddress();
+    final zona    = await AuthService.getZona();
     // El rol real siempre se saca de la sesión activa de Supabase (misma
     // fuente que usa el router para proteger rutas) — la sesión "legacy"
     // de AuthService puede quedar con datos de otra cuenta/rol anterior
@@ -86,12 +94,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (!mounted) return;
     setState(() {
       _nameCtrl.text  = name;
+      _originalName   = name;
       _payment        = payment;
       _colorIndex     = color;
       _email          = supaUser?.email ?? session?.email ?? '';
       _role           = realRole ?? session?.role ?? '';
       _photoPath      = photo;
       _clabeCtrl.text = clabe;
+      _zona           = zona;
       if (defAddr != null) {
         _addrText = defAddr['address'] as String? ?? '';
         _addrLat  = (defAddr['lat'] as num?)?.toDouble();
@@ -99,6 +109,52 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
       _loading = false;
     });
+  }
+
+  void _showZonaPicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppConstants.surfaceColor,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (_) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const SizedBox(height: 12),
+          Container(width: 36, height: 4,
+              decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(2))),
+          const SizedBox(height: 16),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 20),
+            child: Align(alignment: Alignment.centerLeft,
+              child: Text('Cambiar zona de entrega',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16))),
+          ),
+          const SizedBox(height: 8),
+          for (final z in const [('maravatio', 'Maravatío'), ('acambaro', 'Acámbaro')])
+            ListTile(
+              leading: Icon(
+                _zona == z.$1 ? Icons.radio_button_checked : Icons.radio_button_off,
+                color: AppConstants.primaryColor,
+              ),
+              title: Text(z.$2, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+              onTap: () {
+                Navigator.pop(context);
+                if (_zona == z.$1) return;
+                setState(() => _zona = z.$1);
+                AuthService.saveZona(z.$1);
+                // Confirmación inmediata — el efecto real (la lista de
+                // restaurantes filtrada) solo se ve hasta regresar a esa
+                // pantalla, así que sin esto parece que no pasó nada.
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text('Zona cambiada a ${z.$2}'),
+                  backgroundColor: AppConstants.primaryColor,
+                  duration: const Duration(seconds: 2),
+                ));
+              },
+            ),
+          const SizedBox(height: 8),
+        ]),
+      ),
+    );
   }
 
   void _showLocationPicker() {
@@ -148,6 +204,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
             title: const Text('Escribir dirección', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
             subtitle: Text('Ingresa tu dirección manualmente', style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 12)),
             onTap: () { Navigator.pop(context); _pickManual(); },
+          ),
+          ListTile(
+            leading: Container(padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(color: AppConstants.primaryColor.withValues(alpha: 0.12), shape: BoxShape.circle),
+              child: const Icon(Icons.map_rounded, color: AppConstants.primaryColor, size: 20)),
+            title: const Text('Zona de entrega', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+            subtitle: Text(_zona == 'acambaro' ? 'Acámbaro' : 'Maravatío',
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 12)),
+            onTap: () { Navigator.pop(context); _showZonaPicker(); },
           ),
           const SizedBox(height: 8),
         ]),
@@ -223,46 +288,169 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  // Solo guarda — no navega. Se lanza sin esperar (fire-and-forget) desde el
+  // botón de regreso para que la pantalla nunca se quede pegada esperando
+  // una respuesta de red; cada llamada interna ya tiene su propio timeout.
   Future<void> _save() async {
-    await AuthService.saveDisplayName(_nameCtrl.text);
-    await AuthService.savePreferredPayment(_payment);
-    await AuthService.saveAvatarColorIndex(_colorIndex);
-    await AuthService.saveProfilePhoto(_photoPath);
-    await AuthService.saveCLABE(_clabeCtrl.text);
+    try {
+      await AuthService.saveDisplayName(_nameCtrl.text);
+      await AuthService.savePreferredPayment(_payment);
+      await AuthService.saveAvatarColorIndex(_colorIndex);
+      await AuthService.saveProfilePhoto(_photoPath);
+      await AuthService.saveCLABE(_clabeCtrl.text);
+    } catch (_) {}
+  }
 
+  void _saveAndExit() {
+    _save();
+    context.go('/restaurants');
+  }
+
+  // A diferencia de _saveAndExit, aquí sí se espera a que termine de guardar
+  // (incluye la llamada a Supabase) antes de confirmar, ya que el usuario se
+  // queda en la pantalla — no hay riesgo de que se trabe la navegación.
+  Future<void> _saveTapped() async {
+    await _save();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Perfil guardado'),
-        backgroundColor: AppConstants.primaryColor,
-        duration: Duration(seconds: 2),
-      ),
+    setState(() {
+      _originalName  = _nameCtrl.text.trim();
+      _photoChanged  = false;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('Cambios guardados'),
+      backgroundColor: AppConstants.primaryColor,
+      duration: Duration(seconds: 2),
+    ));
+  }
+
+  // Abre el recorte estilo WhatsApp: cuadro/círculo para hacer zoom y mover
+  // la foto y elegir qué parte se ve. Devuelve null si el usuario cancela.
+  Future<String?> _cropImage(String sourcePath) async {
+    final cropped = await ImageCropper().cropImage(
+      sourcePath: sourcePath,
+      aspectRatio: const CropAspectRatio(ratioX: 1, ratioY: 1),
+      compressQuality: 90,
+      maxWidth: 800,
+      maxHeight: 800,
+      uiSettings: [
+        AndroidUiSettings(
+          toolbarTitle: 'Ajustar foto',
+          toolbarColor: AppConstants.surfaceColor,
+          toolbarWidgetColor: Colors.white,
+          statusBarLight: false,
+          backgroundColor: AppConstants.bgColor,
+          activeControlsWidgetColor: AppConstants.primaryColor,
+          cropStyle: CropStyle.circle,
+          lockAspectRatio: true,
+        ),
+        IOSUiSettings(
+          title: 'Ajustar foto',
+          cropStyle: CropStyle.circle,
+          aspectRatioLockEnabled: true,
+          resetAspectRatioEnabled: false,
+          rotateClockwiseButtonHidden: true,
+          doneButtonTitle: 'Listo',
+          cancelButtonTitle: 'Cancelar',
+        ),
+      ],
     );
-    context.pop();
+    return cropped?.path;
+  }
+
+  // Supabase sube cada foto nueva a la MISMA url (mismo nombre de archivo por
+  // usuario), así que Image.network la mostraba en caché y no se veía la foto
+  // nueva. Se le agrega un parámetro de versión para forzar que se vuelva a
+  // descargar; Supabase ignora esa parte de la url y sirve el archivo igual.
+  String? _withCacheBust(String? url) =>
+      url == null ? null : '$url?v=${DateTime.now().millisecondsSinceEpoch}';
+
+  // Borra copias locales viejas de la foto — si se reusa el mismo nombre de
+  // archivo, Image.file la muestra desde caché aunque el contenido cambió.
+  Future<void> _cleanOldLocalPhotos(Directory appDir) async {
+    try {
+      await for (final f in appDir.list()) {
+        final name = p.basename(f.path);
+        if (f is File && name.startsWith('profile_photo_') && name.endsWith('.jpg') &&
+            name != 'profile_photo_original.jpg') {
+          await f.delete();
+        }
+      }
+    } catch (_) {}
   }
 
   Future<void> _pickPhoto(ImageSource source) async {
     final picker = ImagePicker();
-    final xfile  = await picker.pickImage(source: source, imageQuality: 80, maxWidth: 400);
+    final xfile  = await picker.pickImage(source: source, imageQuality: 90, maxWidth: 1200);
     if (xfile == null) return;
 
     final userId = _email.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
 
     if (kIsWeb) {
-      // En web: leer bytes directamente y subir a Supabase
+      // En web: leer bytes directamente y subir a Supabase (sin recorte)
       final bytes = await xfile.readAsBytes();
       final remoteUrl = await SupabaseService.uploadProfilePhotoBytes(bytes, userId);
       if (!mounted) return;
-      setState(() => _photoPath = remoteUrl);
+      setState(() { _photoPath = _withCacheBust(remoteUrl); _photoChanged = true; });
     } else {
-      // En móvil: copiar a almacenamiento local permanente
-      final appDir   = await getApplicationDocumentsDirectory();
-      final destPath = p.join(appDir.path, 'profile_photo.jpg');
-      await File(xfile.path).copy(destPath);
+      // Se guarda el original sin recortar aparte — así "Reenfocar foto" puede
+      // volver a abrir el recorte después sin perder calidad.
+      final appDir      = await getApplicationDocumentsDirectory();
+      final originalPath = p.join(appDir.path, 'profile_photo_original.jpg');
+      await File(xfile.path).copy(originalPath);
+
+      final croppedPath = await _cropImage(originalPath);
+      if (croppedPath == null || !mounted) return; // canceló el recorte
+
+      await _cleanOldLocalPhotos(appDir);
+      final destPath = p.join(appDir.path, 'profile_photo_${DateTime.now().millisecondsSinceEpoch}.jpg');
+      await File(croppedPath).copy(destPath);
       final remoteUrl = await SupabaseService.uploadProfilePhoto(destPath, userId);
       if (!mounted) return;
-      setState(() => _photoPath = remoteUrl ?? destPath);
+      setState(() { _photoPath = _withCacheBust(remoteUrl) ?? destPath; _photoChanged = true; });
     }
+    // Se guarda de inmediato (no hasta tocar "Guardar") — si el usuario sale
+    // con el gesto de deslizar de iOS ninguno de los botones del AppBar se
+    // llega a ejecutar, y la foto recién elegida se perdía.
+    await AuthService.saveProfilePhoto(_photoPath);
+  }
+
+  // Vuelve a abrir el recorte sobre la foto ya puesta, para ajustar el
+  // encuadre sin tener que elegir la foto de nuevo (como "editar" en WhatsApp).
+  Future<void> _refocusPhoto() async {
+    if (kIsWeb || _photoPath == null) return;
+    final appDir       = await getApplicationDocumentsDirectory();
+    final originalPath = p.join(appDir.path, 'profile_photo_original.jpg');
+    String? sourcePath;
+
+    if (await File(originalPath).exists()) {
+      sourcePath = originalPath;
+    } else if (_photoPath!.startsWith('http')) {
+      // No hay copia local del original (ej. foto puesta antes de esta
+      // función, o en otro dispositivo) — se descarga la ya subida para
+      // poder recortarla de nuevo.
+      try {
+        final response = await http.get(Uri.parse(_photoPath!)).timeout(const Duration(seconds: 15));
+        if (response.statusCode == 200) {
+          await File(originalPath).writeAsBytes(response.bodyBytes);
+          sourcePath = originalPath;
+        }
+      } catch (_) {}
+    } else {
+      sourcePath = _photoPath;
+    }
+    if (sourcePath == null || !mounted) return;
+
+    final croppedPath = await _cropImage(sourcePath);
+    if (croppedPath == null || !mounted) return;
+
+    await _cleanOldLocalPhotos(appDir);
+    final destPath = p.join(appDir.path, 'profile_photo_${DateTime.now().millisecondsSinceEpoch}.jpg');
+    await File(croppedPath).copy(destPath);
+    final userId    = _email.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
+    final remoteUrl = await SupabaseService.uploadProfilePhoto(destPath, userId);
+    if (!mounted) return;
+    setState(() { _photoPath = _withCacheBust(remoteUrl) ?? destPath; _photoChanged = true; });
+    await AuthService.saveProfilePhoto(_photoPath);
   }
 
   void _showPhotoPicker() {
@@ -287,11 +475,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
             title: const Text('Elegir de galería', style: TextStyle(color: Colors.white)),
             onTap: () { Navigator.pop(context); _pickPhoto(ImageSource.gallery); },
           ),
+          if (_photoPath != null && !kIsWeb)
+            ListTile(
+              leading: const Icon(Icons.center_focus_strong, color: AppConstants.primaryColor),
+              title: const Text('Reenfocar foto', style: TextStyle(color: Colors.white)),
+              onTap: () { Navigator.pop(context); _refocusPhoto(); },
+            ),
           if (_photoPath != null)
             ListTile(
               leading: Icon(Icons.delete_outline, color: Colors.redAccent.withValues(alpha: 0.8)),
               title: Text('Quitar foto', style: TextStyle(color: Colors.redAccent.withValues(alpha: 0.8))),
-              onTap: () { Navigator.pop(context); setState(() => _photoPath = null); },
+              onTap: () { Navigator.pop(context); setState(() { _photoPath = null; _photoChanged = true; }); },
             ),
           const SizedBox(height: 8),
         ]),
@@ -333,10 +527,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.pop(),
+          // Guarda en segundo plano y regresa al instante — no espera a la
+          // red, así nunca se queda pegada en esta pantalla.
+          onPressed: _saveAndExit,
         ),
         title: const Text('Mi perfil', style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
+          if (_isDirty)
+            TextButton(
+              onPressed: _saveTapped,
+              child: const Text('Guardar',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Cerrar sesión',
@@ -346,11 +548,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
               if (!mounted) return;
               router.go('/login');
             },
-          ),
-          TextButton(
-            onPressed: _save,
-            child: const Text('Guardar',
-                style: TextStyle(color: AppConstants.primaryColor, fontWeight: FontWeight.bold, fontSize: 15)),
           ),
         ],
       ),

@@ -37,20 +37,25 @@ Tema oscuro con color primario rosa/magenta `#E91E8C`.
 | Dueño | `/restaurante` → `/dueno` | Panel naranja |
 | Repartidor | `/moto` → `/repartidor` | Solo móvil |
 | Repartidor Plus | `/moto` → `/rider` | Panel naranja con gamificación |
-| Jefe de flota | `/flota-login` → `/flota` | Panel azul con mapas |
-| Admin Fercadi | `GOGOAdmin.apk` → `/admin` | Panel oscuro |
+| Jefe de flota | `main_flota.dart` → `/flota` | App/sitio separados (`com.fercadi.flota`) |
+| Admin Fercadi | `main_admin.dart` → `/admin` | App/sitio separados (`com.fercadi.admin`) |
 
 > `repartidor_plus` es el rider independiente de GOGO con coins, logros y estadísticas. Se registra en `/registro-rider`.
+> Desde julio 2026, **Admin y Jefe de flota ya no viven dentro del router del cliente** — son apps/sitios propios (`lib/main_admin.dart` / `lib/main_flota.dart`, cada uno con su `GoRouter`, bundle id y build). Ver `documentos/Documentaciones/manual_ios.md`.
 
 ### Geolocalización
 
 - Centro de Maravatío: `19.8969°N, 100.4447°W`
-- Radio de cobertura: 30 km
+- Radio de cobertura: 50 km (ampliado agosto 2026 para cubrir también Acámbaro, `20.0386°N, 100.7284°W`)
 - Mock siempre simula estar dentro del radio
+- **Zona explícita por restaurante** (`restaurants.zona`, `maravatio`/`acambaro`): se detecta sola desde `lat`/`lng` o la dirección (`LocationService.zonaFromCoords`/`detectZona`), sin botón manual. El cliente solo ve restaurantes de su misma zona.
 
 ### Tablas de Supabase
 
 `restaurants`, `categories`, `products`, `product_images`, `orders`, `order_items`, `product_likes`, `restaurant_banners`, `flota_members`, `rider_locations`, `rider_stats`
+
+> `restaurants.is_premium` (agosto 2026) — plan del dueño: gratis limita a 7 platillos y bloquea banners/promo por platillo; Premium sube a 20 y desbloquea ambos. Sin UI de cobro todavía, se activa por SQL directo.
+> `restaurants.owner_id` **no enruta el panel del dueño** — solo se escribe al auto-registrarse. La cuenta se vincula por `user_metadata.restaurant_id` (`AuthService.getRestaurantId()`).
 
 > `rider_stats` — coins, repartos, dinero acumulado por rider. Se actualiza vía RPC `increment_rider_stats()` (función SQL necesaria — ver comentario en `supabase_service.dart`).
 
@@ -180,4 +185,4 @@ import 'dart:ui' as ui;
 
 ---
 
-*Última actualización: Julio 2026*
+*Última actualización: Agosto 2026*

@@ -66,12 +66,17 @@ serve(async (req) => {
     })
 
     // OXXO no es compatible con "automatic_payment_methods" en modo automático
-    // sin datos de envío — se pide explícitamente. El resto (tarjeta) sigue
-    // usando automatic_payment_methods para que Stripe elija lo disponible.
+    // sin datos de envío — se pide explícitamente. Para tarjeta se pide
+    // "card" explícito en vez de automatic_payment_methods: con automático,
+    // Stripe intenta ofrecer TODO lo que esté activo en el dashboard (OXXO,
+    // Link, pagos bancarios), y como la app no configura
+    // allowsDelayedPaymentMethods ni soporta esos métodos, el PaymentSheet
+    // se quedaba filtrándolos y nunca llegaba a mostrar la tarjeta —
+    // se veía como "cargando" sin avanzar.
     if (paymentMethodType === 'oxxo') {
       body.set('payment_method_types[]', 'oxxo')
     } else {
-      body.set('automatic_payment_methods[enabled]', 'true')
+      body.set('payment_method_types[]', 'card')
     }
 
     const stripeRes = await fetch('https://api.stripe.com/v1/payment_intents', {

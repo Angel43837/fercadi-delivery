@@ -4,9 +4,10 @@
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
-import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:home_widget/home_widget.dart';
+import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:provider/provider.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -14,18 +15,13 @@ import 'core/constants.dart';
 import 'providers/cart_provider.dart';
 import 'providers/app_data_provider.dart';
 import 'providers/theme_provider.dart';
+import 'controllers/rider_withdrawal_controller.dart';
 import 'router.dart';
 import 'services/supabase_service.dart';
 import 'services/notification_service.dart';
 import 'services/location_service.dart';
 
 Future<void> _startApp() async {
-  // App Group compartido con el widget de pantalla de inicio (solo iOS).
-  // home_widget no tiene implementación en web — sin este guard, el await
-  // lanza MissingPluginException sin capturar y la app nunca llega a
-  // runApp(), quedando en blanco.
-  if (!kIsWeb) await HomeWidget.setAppGroupId('group.com.fercadi.app');
-
   // Inicializa Stripe
   try {
     Stripe.publishableKey = AppConstants.stripePublishableKey;
@@ -54,7 +50,10 @@ Future<void> _startApp() async {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await SystemChrome.setPreferredOrientations(
+      [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown]);
   if (kIsWeb) usePathUrlStrategy();
+  if (!kIsWeb) await HomeWidget.setAppGroupId('group.com.fercadi.app');
 
   // Sin DSN no hay a dónde reportar: inicializar Sentry igual prende sesión
   // replay, tracking de vistas y capturas de pantalla en segundo plano,
@@ -86,6 +85,7 @@ class FercadiApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(create: (_) => CartProvider()),
         ChangeNotifierProvider(create: (_) => AppDataProvider()),
+        ChangeNotifierProvider(create: (_) => RiderWithdrawalController()),
       ],
       child: Consumer<ThemeProvider>(
         builder: (ctx, themeProvider, child) => MaterialApp.router(
@@ -146,6 +146,14 @@ class FercadiApp extends StatelessWidget {
             cardColor: AppConstants.primaryColor,
           ),
           routerConfig: appRouter,
+          // Oculta el teclado al tocar fuera de un campo de texto, en
+          // cualquier pantalla — antes se quedaba abierto hasta que el
+          // usuario tocara el botón de regresar del teclado.
+          builder: (context, child) => GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+            child: child,
+          ),
         ),
       ),
     );

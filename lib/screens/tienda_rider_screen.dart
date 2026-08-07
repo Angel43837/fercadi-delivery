@@ -1,64 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants.dart';
-
-const _items = [
-  _Item(
-    emoji: '⛽',
-    name: 'Tanque de gas',
-    desc: 'Descuento \$50 MXN en tu próxima carga',
-    coins: 300,
-    imageUrl: 'https://images.unsplash.com/photo-1571685261180-cdc9f8bc77f0?w=400&h=260&fit=crop&auto=format',
-  ),
-  _Item(
-    emoji: '📱',
-    name: 'Recarga de celular',
-    desc: '\$30 MXN de tiempo aire para cualquier operadora',
-    coins: 200,
-    imageUrl: 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=400&h=260&fit=crop&auto=format',
-  ),
-  _Item(
-    emoji: '💵',
-    name: 'Bono en efectivo',
-    desc: '\$100 MXN directos a tu saldo de retiro',
-    coins: 600,
-    imageUrl: 'https://images.unsplash.com/photo-1554224155-6726b3ff858f?w=400&h=260&fit=crop&auto=format',
-  ),
-  _Item(
-    emoji: '🧢',
-    name: 'Gorra GOGO',
-    desc: 'Gorra oficial de repartidor GOGO Food',
-    coins: 1000,
-    imageUrl: 'https://images.unsplash.com/photo-1588850561407-ed78c282e89b?w=400&h=260&fit=crop&auto=format',
-  ),
-  _Item(
-    emoji: '🏷️',
-    name: 'Super descuento',
-    desc: '20% de descuento en tu próximo pedido como cliente',
-    coins: 150,
-    imageUrl: 'https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?w=400&h=260&fit=crop&auto=format',
-  ),
-  _Item(
-    emoji: '🎮',
-    name: 'Steam Gift Card',
-    desc: 'Código digital \$200 MXN para Steam',
-    coins: 2000,
-    imageUrl: 'https://images.unsplash.com/photo-1593305841991-05c297ba4575?w=400&h=260&fit=crop&auto=format',
-  ),
-  _Item(
-    emoji: '🍕',
-    name: 'Pedido gratis',
-    desc: 'Un pedido gratis hasta \$150 MXN para ti',
-    coins: 800,
-    imageUrl: 'https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?w=400&h=260&fit=crop&auto=format',
-  ),
-  _Item(
-    emoji: '⚡',
-    name: 'Doble coins',
-    desc: 'Gana 2× coins en todos tus repartos por 24 horas',
-    coins: 500,
-    imageUrl: 'https://images.unsplash.com/photo-1518546305927-5a555bb7020d?w=400&h=260&fit=crop&auto=format',
-  ),
-];
+import '../services/supabase_service.dart';
 
 class _Item {
   final String emoji;
@@ -73,6 +16,14 @@ class _Item {
     required this.coins,
     required this.imageUrl,
   });
+
+  factory _Item.fromMap(Map<String, dynamic> m) => _Item(
+    emoji: m['emoji'] as String? ?? '🎁',
+    name: m['name'] as String? ?? 'Producto',
+    desc: m['description'] as String? ?? '',
+    coins: (m['cost_coins'] as num?)?.toInt() ?? 0,
+    imageUrl: m['image_url'] as String? ?? '',
+  );
 }
 
 class TiendaRiderScreen extends StatefulWidget {
@@ -86,15 +37,19 @@ class TiendaRiderScreen extends StatefulWidget {
 class _TiendaRiderScreenState extends State<TiendaRiderScreen> {
   late int _coins;
   final Set<int> _canjeados = {};
+  late Future<List<_Item>> _futureItems;
 
   @override
   void initState() {
     super.initState();
     _coins = widget.currentCoins;
+    _futureItems = SupabaseService.getRiderStoreItems().then(
+      (rows) => rows.map(_Item.fromMap).toList(),
+    );
   }
 
-  void _openDetail(int index) {
-    final item = _items[index];
+  void _openDetail(List<_Item> items, int index) {
+    final item = items[index];
     final canPay = _coins >= item.coins;
     final done = _canjeados.contains(index);
 
@@ -108,12 +63,14 @@ class _TiendaRiderScreenState extends State<TiendaRiderScreen> {
         done: done,
         onCanjear: done
             ? null
-            : () {
+            : () async {
                 if (!canPay) {
                   Navigator.pop(ctx);
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('Necesitas ${item.coins - _coins} coins más'),
+                      content: Text(
+                        'Necesitas ${item.coins - _coins} coins más',
+                      ),
                       backgroundColor: Colors.red.shade700,
                       behavior: SnackBarBehavior.floating,
                     ),
@@ -121,6 +78,17 @@ class _TiendaRiderScreenState extends State<TiendaRiderScreen> {
                   return;
                 }
                 Navigator.pop(ctx);
+                // Descuenta en el servidor (misma RPC que usa el reparto para
+                // sumar coins, aquí con un valor negativo) para que el saldo
+                // quede persistido y no se pierda al salir de la tienda.
+                final uid = Supabase.instance.client.auth.currentUser?.id;
+                if (uid != null) {
+                  await SupabaseService.incrementRiderStats(
+                    uid,
+                    coinsAdd: -item.coins,
+                  );
+                }
+                if (!mounted) return;
                 setState(() {
                   _coins -= item.coins;
                   _canjeados.add(index);
@@ -141,192 +109,257 @@ class _TiendaRiderScreenState extends State<TiendaRiderScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppConstants.bgColor,
-      body: CustomScrollView(
-        slivers: [
-          // Header naranja
-          SliverToBoxAdapter(
-            child: Container(
-              decoration: const BoxDecoration(
+      body: FutureBuilder<List<_Item>>(
+        future: _futureItems,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(
+              child: CircularProgressIndicator(
                 color: AppConstants.primaryColor,
-                borderRadius: BorderRadius.vertical(bottom: Radius.circular(28)),
               ),
-              padding: const EdgeInsets.fromLTRB(20, 56, 20, 24),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Row(children: [
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 20),
-                    padding: EdgeInsets.zero,
-                  ),
-                  const SizedBox(width: 8),
-                  const Text('Tienda de Coins',
+            );
+          }
+          final items = snapshot.data ?? [];
+          return _buildContent(items);
+        },
+      ),
+    );
+  }
+
+  Widget _buildContent(List<_Item> items) {
+    return CustomScrollView(
+      slivers: [
+        // Header naranja
+        SliverToBoxAdapter(
+          child: Container(
+            decoration: const BoxDecoration(
+              color: AppConstants.primaryColor,
+              borderRadius: BorderRadius.vertical(bottom: Radius.circular(28)),
+            ),
+            padding: const EdgeInsets.fromLTRB(20, 56, 20, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    IconButton(
+                      onPressed: () => Navigator.pop(context, _coins),
+                      icon: const Icon(
+                        Icons.arrow_back_ios_new,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                      padding: EdgeInsets.zero,
+                    ),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Tienda de Coins',
                       style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold)),
-                ]),
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 16),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(16),
                   ),
-                  child: Row(children: [
-                    const Text('🪙', style: TextStyle(fontSize: 28)),
-                    const SizedBox(width: 12),
-                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      const Text('Tus coins disponibles',
-                          style: TextStyle(color: Colors.white70, fontSize: 12)),
-                      Text('$_coins coins',
-                          style: const TextStyle(
+                  child: Row(
+                    children: [
+                      const Text('🪙', style: TextStyle(fontSize: 28)),
+                      const SizedBox(width: 12),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Tus coins disponibles',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                          Text(
+                            '$_coins coins',
+                            style: const TextStyle(
                               color: Color(0xFFFFD700),
                               fontSize: 24,
-                              fontWeight: FontWeight.bold)),
-                    ]),
-                  ]),
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-              ]),
+              ],
             ),
           ),
+        ),
 
-          const SliverToBoxAdapter(child: SizedBox(height: 20)),
+        const SliverToBoxAdapter(child: SizedBox(height: 20)),
 
-          SliverPadding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            sliver: SliverGrid(
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: 0.78,
-              ),
-              delegate: SliverChildBuilderDelegate(
-                (context, i) {
-                  final item = _items[i];
-                  final canPay = _coins >= item.coins;
-                  final done = _canjeados.contains(i);
-                  return GestureDetector(
-                    onTap: () => _openDetail(i),
-                    child: AnimatedOpacity(
-                      duration: const Duration(milliseconds: 200),
-                      opacity: done ? 0.55 : 1.0,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(18),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.08),
-                              blurRadius: 12,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
+        SliverPadding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          sliver: SliverGrid(
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              childAspectRatio: 0.78,
+            ),
+            delegate: SliverChildBuilderDelegate((context, i) {
+              final item = items[i];
+              final canPay = _coins >= item.coins;
+              final done = _canjeados.contains(i);
+              return GestureDetector(
+                onTap: () => _openDetail(items, i),
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 200),
+                  opacity: done ? 0.55 : 1.0,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(18),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.08),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
                         ),
-                        clipBehavior: Clip.hardEdge,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // Imagen
-                            Expanded(
-                              flex: 5,
-                              child: Stack(
-                                fit: StackFit.expand,
-                                children: [
-                                  Image.network(
-                                    item.imageUrl,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (ctx, err, st) => Container(
-                                      color: const Color(0xFFFFE0CC),
-                                      child: Center(
-                                        child: Text(item.emoji,
-                                            style: const TextStyle(fontSize: 40)),
-                                      ),
+                      ],
+                    ),
+                    clipBehavior: Clip.hardEdge,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Imagen
+                        Expanded(
+                          flex: 5,
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              Image.network(
+                                item.imageUrl,
+                                fit: BoxFit.cover,
+                                errorBuilder: (ctx, err, st) => Container(
+                                  color: const Color(0xFFFFE0CC),
+                                  child: Center(
+                                    child: Text(
+                                      item.emoji,
+                                      style: const TextStyle(fontSize: 40),
                                     ),
                                   ),
-                                  if (done)
-                                    Container(
-                                      color: Colors.white.withValues(alpha: 0.65),
-                                      child: const Center(
-                                        child: Icon(Icons.check_circle_rounded,
-                                            color: Colors.green, size: 36),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                            // Info
-                            Expanded(
-                              flex: 4,
-                              child: Padding(
-                                padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(item.name,
-                                        style: const TextStyle(
-                                            color: Color(0xFF1A1A1A),
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 13),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis),
-                                    const SizedBox(height: 3),
-                                    Text(item.desc,
-                                        style: const TextStyle(
-                                            color: Color(0xFF888888),
-                                            fontSize: 10),
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis),
-                                    const Spacer(),
-                                    done
-                                        ? const Text('✓ Canjeado',
-                                            style: TextStyle(
-                                                color: Colors.green,
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.bold))
-                                        : Container(
-                                            padding: const EdgeInsets.symmetric(
-                                                horizontal: 8, vertical: 4),
-                                            decoration: BoxDecoration(
-                                              color: canPay
-                                                  ? AppConstants.primaryColor
-                                                  : const Color(0xFFEEEEEE),
-                                              borderRadius: BorderRadius.circular(20),
-                                            ),
-                                            child: Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                const Text('🪙',
-                                                    style: TextStyle(fontSize: 11)),
-                                                const SizedBox(width: 3),
-                                                Text('${item.coins}',
-                                                    style: TextStyle(
-                                                        color: canPay
-                                                            ? Colors.white
-                                                            : const Color(0xFF999999),
-                                                        fontSize: 11,
-                                                        fontWeight: FontWeight.bold)),
-                                              ],
-                                            ),
-                                          ),
-                                  ],
                                 ),
                               ),
-                            ),
-                          ],
+                              if (done)
+                                Container(
+                                  color: Colors.white.withValues(alpha: 0.65),
+                                  child: const Center(
+                                    child: Icon(
+                                      Icons.check_circle_rounded,
+                                      color: Colors.green,
+                                      size: 36,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
                         ),
-                      ),
+                        // Info
+                        Expanded(
+                          flex: 4,
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  item.name,
+                                  style: const TextStyle(
+                                    color: Color(0xFF1A1A1A),
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  item.desc,
+                                  style: const TextStyle(
+                                    color: Color(0xFF888888),
+                                    fontSize: 10,
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const Spacer(),
+                                done
+                                    ? const Text(
+                                        '✓ Canjeado',
+                                        style: TextStyle(
+                                          color: Colors.green,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      )
+                                    : Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 4,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: canPay
+                                              ? AppConstants.primaryColor
+                                              : const Color(0xFFEEEEEE),
+                                          borderRadius: BorderRadius.circular(
+                                            20,
+                                          ),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Text(
+                                              '🪙',
+                                              style: TextStyle(fontSize: 11),
+                                            ),
+                                            const SizedBox(width: 3),
+                                            Text(
+                                              '${item.coins}',
+                                              style: TextStyle(
+                                                color: canPay
+                                                    ? Colors.white
+                                                    : const Color(0xFF999999),
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  );
-                },
-                childCount: _items.length,
-              ),
-            ),
+                  ),
+                ),
+              );
+            }, childCount: items.length),
           ),
+        ),
 
-          const SliverToBoxAdapter(child: SizedBox(height: 24)),
-        ],
-      ),
+        const SliverToBoxAdapter(child: SizedBox(height: 24)),
+      ],
     );
   }
 }
@@ -389,31 +422,46 @@ class _ItemSheet extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(children: [
-                  Text(item.emoji, style: const TextStyle(fontSize: 26)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(item.name,
+                Row(
+                  children: [
+                    Text(item.emoji, style: const TextStyle(fontSize: 26)),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        item.name,
                         style: const TextStyle(
-                            color: Color(0xFF1A1A1A),
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold)),
-                  ),
-                ]),
-                const SizedBox(height: 8),
-                Text(item.desc,
-                    style: const TextStyle(
-                        color: Color(0xFF666666), fontSize: 14, height: 1.5)),
-                const SizedBox(height: 20),
-                Row(children: [
-                  const Text('🪙', style: TextStyle(fontSize: 22)),
-                  const SizedBox(width: 6),
-                  Text('${item.coins} coins',
-                      style: const TextStyle(
-                          color: Color(0xFFFFD700),
+                          color: Color(0xFF1A1A1A),
                           fontSize: 22,
-                          fontWeight: FontWeight.bold)),
-                ]),
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  item.desc,
+                  style: const TextStyle(
+                    color: Color(0xFF666666),
+                    fontSize: 14,
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    const Text('🪙', style: TextStyle(fontSize: 22)),
+                    const SizedBox(width: 6),
+                    Text(
+                      '${item.coins} coins',
+                      style: const TextStyle(
+                        color: Color(0xFFFFD700),
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 20),
                 SizedBox(
                   width: double.infinity,
@@ -427,14 +475,20 @@ class _ItemSheet extends StatelessWidget {
                           child: const Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.check_circle_rounded,
-                                  color: Colors.green, size: 20),
+                              Icon(
+                                Icons.check_circle_rounded,
+                                color: Colors.green,
+                                size: 20,
+                              ),
                               SizedBox(width: 8),
-                              Text('Ya canjeaste este artículo',
-                                  style: TextStyle(
-                                      color: Colors.green,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 15)),
+                              Text(
+                                'Ya canjeaste este artículo',
+                                style: TextStyle(
+                                  color: Colors.green,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                ),
+                              ),
                             ],
                           ),
                         )
@@ -447,12 +501,15 @@ class _ItemSheet extends StatelessWidget {
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(vertical: 16),
                             shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16)),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
                           ),
                           child: Text(
                             canPay ? 'Canjear ahora' : 'Coins insuficientes',
                             style: const TextStyle(
-                                fontSize: 16, fontWeight: FontWeight.bold),
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                 ),

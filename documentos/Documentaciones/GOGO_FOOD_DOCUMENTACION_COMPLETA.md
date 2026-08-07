@@ -132,7 +132,7 @@ landing_test/                         ← Raíz del proyecto
 │   │   ├── supabase_service.dart     ← CRUD completo: restaurantes, productos, pedidos, flota
 │   │   ├── auth_service.dart         ← Login, registro, logout por rol, sesión persistente
 │   │   ├── notification_service.dart ← Envío y recepción de notificaciones push (FCM)
-│   │   ├── location_service.dart     ← GPS y validación de zona de cobertura (30 km de Maravatío)
+│   │   ├── location_service.dart     ← GPS, cobertura (50 km) y detección de zona (Maravatío/Acámbaro)
 │   │   ├── geocoding_service.dart    ← Convertir coordenadas GPS a dirección en texto
 │   │   ├── fcm_service.dart          ← Envío de notificaciones al repartidor y dueño
 │   │   └── order_history_service.dart ← Historial de pedidos guardado localmente
@@ -279,9 +279,32 @@ rider_locations
 | `description` | text | Descripción del restaurante |
 | `address` | text | Dirección en texto libre |
 | `image_url` | text | URL de la imagen de portada |
-| `owner_id` | uuid | FK al usuario dueño en `auth.users` |
+| `owner_id` | uuid | FK al usuario dueño en `auth.users`. **No se usa para enrutar el panel del dueño** — solo se escribe al auto-registrarse un restaurante nuevo. La cuenta se vincula por `user_metadata.restaurant_id` |
 | `is_active` | boolean | Si aparece en la lista de clientes |
 | `created_at` | timestamptz | Fecha de registro |
+| `lat`, `lng` | double precision | Coordenadas del local |
+| `zona` | text | `maravatio` o `acambaro` — el cliente solo ve restaurantes de su misma zona |
+| `is_premium` | boolean | Plan GOGO Premium del dueño (ver más abajo) |
+
+#### Sistema de Zonas (Maravatío / Acámbaro)
+
+El radio de cobertura GPS (`LocationService`) es de 50 km desde el centro de Maravatío, suficiente para cubrir también Acámbaro. Como ambas ciudades quedan dentro del mismo radio pero un cliente en una no debería ver restaurantes de la otra, se agregó una **zona explícita** por restaurante:
+
+- `restaurants.zona` se calcula solo, sin botón manual: `LocationService.zonaFromCoords(lat, lng)` compara distancia Haversine contra los centros de Maravatío (`19.8969, -100.4447`) y Acámbaro (`20.0386, -100.7284`), o `detectZona(address)` si no hay coordenadas todavía
+- El cliente elige su zona desde el picker de dirección (`/profile` → `AuthService.getZona()`/`saveZona()`) y `restaurants_screen.dart` filtra la lista por esa zona
+- El dueño la ve de solo lectura en `/dueno`, recalculada desde la dirección guardada del local cada vez que guarda cambios
+
+#### GOGO Premium (plan del dueño)
+
+Plan por restaurante controlado por `restaurants.is_premium` — todavía sin flujo de cobro en la app, se activa a mano con SQL directo mientras no exista esa UI:
+
+| Función | Gratis | Premium |
+|---|---|---|
+| Banners promocionales | ❌ Bloqueado | ✅ |
+| Promo por platillo (descuento/2x1) | ❌ Bloqueado | ✅ |
+| Platillos en el menú | Máx. 7 | Máx. 20 |
+
+Implementado en `dueno_screen.dart`: `_isPremium` se lee al abrir el panel (`SupabaseService.getRestaurantIsPremium`) y controla tanto el candado visual de banners/promo (`_buildPremiumLocked`) como el tope de platillos al crear uno nuevo (compara `_products.length` contra `_maxProductos`).
 
 #### `categories` — Categorías de productos
 
@@ -927,17 +950,20 @@ El plan gratuito tiene un problema crítico: **la base de datos se "duerme" desp
 
 ---
 
-### P5 — Panel de dueño no muestra sus productos
-**Síntoma:** El dueño entra a su panel pero ve la lista de productos vacía o recibe error.  
-**Causa:** El `owner_id` del restaurante en la tabla `restaurants` no coincide con el `auth.uid()` del usuario autenticado. RLS rechaza la operación silenciosamente.  
-**Diagnóstico:** Supabase → Table Editor → `restaurants` → verificar que `owner_id` = UUID del dueño.
+### P5 — Panel de dueño muestra el restaurante equivocado (o vacío)
+**Síntoma:** El dueño entra a su panel y ve otro restaurante distinto al que debería, o ve la lista de productos vacía.  
+**Causa real:** El panel (`dueno_screen.dart` → `_initRestaurant()`) decide qué restaurante mostrar leyendo `user_metadata.restaurant_id` (`AuthService.getRestaurantId()`) — **no** la columna `restaurants.owner_id`. Si esa cuenta nunca tuvo `restaurant_id` seteado, cae al valor por defecto `'1'`, que puede ser el restaurante de otra cuenta.  
+> Este fue exactamente el bug que apareció al crear `dueno.prueba@fercadi.com` (agosto 2026): se le asignó `owner_id` en `restaurants` pensando que así quedaba vinculada, pero el panel seguía mostrando el restaurante por defecto hasta que se seteó `user_metadata.restaurant_id` directamente en la cuenta.  
+**Diagnóstico:** revisar `user_metadata` de la cuenta (Supabase → Authentication → usuario → User Metadata), no la tabla `restaurants`.  
+**Fix:** iniciar sesión como ese usuario y llamar `AuthService.saveRestaurantId(id)` desde la app, o actualizar `user_metadata.restaurant_id` vía `PUT /auth/v1/user` con el access token de esa cuenta.
 
 ---
 
 ### P6 — GPS fuera de zona de servicio
-**Síntoma:** La app muestra "Fuera de zona de servicio" aunque el usuario esté en Maravatío.  
-**Causa:** El radio de cobertura configurado es de 30 km desde las coordenadas `19.8969° N, 100.4447° W`. Si el GPS del dispositivo tiene poca precisión, puede reportar una ubicación incorrecta.  
-**Solución para desarrollo:** Activar `useMock = true` en `supabase_service.dart` — en modo mock el GPS siempre simula estar dentro del radio.
+**Síntoma:** La app muestra "Fuera de zona de servicio" aunque el usuario esté en Maravatío o Acámbaro.  
+**Causa:** El radio de cobertura configurado es de 50 km desde las coordenadas `19.8969° N, 100.4447° W` (ampliado en agosto 2026 para cubrir también Acámbaro). Si el GPS del dispositivo tiene poca precisión, puede reportar una ubicación incorrecta.  
+**Solución para desarrollo:** Activar `useMock = true` en `supabase_service.dart` — en modo mock el GPS siempre simula estar dentro del radio.  
+**No confundir con `zona`:** estar dentro del radio de 50 km es el chequeo de "¿el GPS sirve aquí?"; `restaurants.zona` (`maravatio`/`acambaro`) es un filtro aparte que decide qué restaurantes ve el cliente dentro de ese radio.
 
 ---
 
@@ -1068,9 +1094,10 @@ Antes de abrir la app al público en Maravatío, verificar todo lo siguiente:
 ## Geolocalización
 
 - **Centro de Maravatío:** `19.8969° N, 100.4447° W`
-- **Radio de cobertura:** 30 km
+- **Radio de cobertura:** 50 km (ampliado en agosto 2026 para cubrir también Acámbaro, `20.0386° N, 100.7284° W`)
 - **En modo mock (`useMock = true`):** El GPS siempre simula estar dentro del radio
-- **En producción:** Si el usuario está a más de 30 km del centro, la app muestra "Fuera de zona de servicio"
+- **En producción:** Si el usuario está a más de 50 km del centro, la app muestra "Fuera de zona de servicio"
+- **Zona explícita (`restaurants.zona`):** aparte de la validación de cobertura de arriba, cada restaurante tiene una zona (`maravatio`/`acambaro`) detectada sola por coordenadas/dirección — el cliente solo ve restaurantes de su misma zona. Ver sección 5 ("Sistema de Zonas") y `CLAUDE.md`.
 
 ---
 

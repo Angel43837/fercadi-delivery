@@ -13,6 +13,8 @@ class Restaurant {
   final double? lng;       // Longitud GPS del restaurante
   final double rating;     // Calificación promedio (0.0 - 5.0)
   final bool isOpen;       // Si está abierto para recibir pedidos
+  final String zona;       // 'maravatio' o 'acambaro' — a qué zona pertenece
+  final List<String> categorias; // Tipo de restaurante (lista fija, ver kRestaurantCategories) — para el filtro del cliente
 
   const Restaurant({
     required this.id,
@@ -24,6 +26,8 @@ class Restaurant {
     this.lng,
     this.rating = 0,
     this.isOpen = true,
+    this.zona = 'maravatio',
+    this.categorias = const [],
   });
 
   // Crea un Restaurant desde un Map de JSON (respuesta de Supabase)
@@ -37,5 +41,7 @@ class Restaurant {
         lng: (json['lng'] as num?)?.toDouble(),
         rating: (json['rating'] as num? ?? 0).toDouble(),
         isOpen: json['is_open'] as bool? ?? true,
+        zona: json['zona'] as String? ?? 'maravatio',
+        categorias: (json['categorias'] as List<dynamic>?)?.cast<String>() ?? const [],
       );
 }
