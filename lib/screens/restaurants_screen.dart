@@ -898,7 +898,6 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                       );
                     },
                   ),
-                  _buildCategoryFilterButton(zonaRestaurants),
                   _buildCategoryFilterInline(zonaRestaurants),
                 ]),
               );
@@ -928,131 +927,9 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
 
   // ── Filtro por categoría (lista de restaurantes) ────────────────────────
   // Distinto del filtro de categorías DENTRO de un restaurante — este filtra
-  // qué restaurantes aparecen en la lista, según lo que venden. Es un botón
-  // (fondo blanco) que abre una hoja con todas las categorías — no una fila
-  // siempre visible.
-  Widget _buildCategoryFilterButton(List<Restaurant> restaurantsInZona) {
-    final names = restaurantsInZona.expand((r) => r.categorias).toSet().toList()..sort();
-    if (names.isEmpty) return const SizedBox.shrink();
-    final activeCount = _categoryFilter.length;
-    return Padding(
-      padding: const EdgeInsets.only(top: 14),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: GestureDetector(
-          onTap: () => _showCategoryFilterSheet(names),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              const Icon(Icons.filter_list, color: AppConstants.primaryColor, size: 18),
-              const SizedBox(width: 6),
-              Text(
-                activeCount == 0 ? 'Categorías' : 'Categorías ($activeCount)',
-                style: const TextStyle(
-                  color: AppConstants.primaryColor,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13,
-                ),
-              ),
-            ]),
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _showCategoryFilterSheet(List<String> names) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (_) => StatefulBuilder(
-        builder: (sheetContext, setSheetState) => Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFF1E1E1E),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + MediaQuery.of(sheetContext).padding.bottom),
-          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Center(child: Container(width: 40, height: 4,
-                decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)))),
-            const SizedBox(height: 16),
-            const Text('Filtrar por categoría',
-                style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: names.map((name) {
-                final selected = _categoryFilter.contains(name);
-                return GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      if (selected) {
-                        _categoryFilter.remove(name);
-                      } else {
-                        _categoryFilter.add(name);
-                      }
-                    });
-                    setSheetState(() {});
-                  },
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-                    decoration: BoxDecoration(
-                      color: selected ? AppConstants.primaryColor : Colors.white.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      if (selected) ...[
-                        const Icon(Icons.check, color: Colors.white, size: 14),
-                        const SizedBox(width: 4),
-                      ],
-                      Text(name,
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: selected ? FontWeight.bold : FontWeight.w600,
-                            fontSize: 13,
-                          )),
-                    ]),
-                  ),
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 20),
-            if (_categoryFilter.isNotEmpty)
-              TextButton(
-                onPressed: () {
-                  setState(_categoryFilter.clear);
-                  setSheetState(() {});
-                },
-                child: Text('Limpiar filtro', style: TextStyle(color: Colors.white.withValues(alpha: 0.6))),
-              ),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () => Navigator.pop(sheetContext),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppConstants.primaryColor,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-                ),
-                child: const Text('Listo', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-              ),
-            ),
-          ]),
-        ),
-      ),
-    );
-  }
-
-  // Segundo botón de prueba (mismo patrón de expansión que el buscador):
-  // colapsado es solo el botón; al tocarlo se expande hacia el lado y
-  // muestra las categorías en una fila horizontal, en el mismo lugar.
+  // qué restaurantes aparecen en la lista, según lo que venden. Botón blanco
+  // que se expande hacia el lado (mismo patrón que el buscador) y muestra
+  // las categorías ahí mismo, sin abrir una hoja aparte.
   Widget _buildCategoryFilterInline(List<Restaurant> restaurantsInZona) {
     final names = restaurantsInZona.expand((r) => r.categorias).toSet().toList()..sort();
     if (names.isEmpty) return const SizedBox.shrink();
