@@ -326,6 +326,14 @@ struct GOGOTrackingWidget_Previews: PreviewProvider {
 
 private let stepLabels = ["Recibido", "Preparando", "En camino", "Entregado"]
 private let stepIcons = ["checkmark", "fork.knife", "bicycle", "checkmark"]
+// Mismos colores que _statusData en tracking_screen.dart, para que el paso
+// activo se vea igual en la app y en el widget.
+private let stepColors: [Color] = [
+  Color(red: 255 / 255, green: 179 / 255, blue: 0 / 255),   // ámbar — Recibido
+  Color(red: 244 / 255, green: 81 / 255, blue: 12 / 255),   // naranja — Preparando
+  Color(red: 33 / 255, green: 150 / 255, blue: 243 / 255),  // azul — En camino
+  Color.green,                                              // verde — Entregado
+]
 
 struct GOGOTrackingStepsEntry: TimelineEntry {
   let date: Date
@@ -334,38 +342,78 @@ struct GOGOTrackingStepsEntry: TimelineEntry {
   let address: String
   let total: Double
   let stepIndex: Int
+  let logoImageData: Data?
+}
+
+// Descarga el logo del restaurante con timeout corto — si falla o tarda, el
+// widget se queda con el ícono de tienda genérico (mismo patrón que el
+// timeout del mapa en renderMapSnapshot, para que un logo lento nunca
+// trabe el widget).
+private let logoFetchTimeout: TimeInterval = 3.0
+
+private func fetchLogoImage(from url: URL, completion: @escaping (Data?) -> Void) {
+  var didFinish = false
+  let finishOnce: (Data?) -> Void = { data in
+    if !didFinish { didFinish = true; completion(data) }
+  }
+  let task = URLSession.shared.dataTask(with: url) { data, _, error in
+    guard error == nil, let data = data, UIImage(data: data) != nil else {
+      finishOnce(nil)
+      return
+    }
+    finishOnce(data)
+  }
+  DispatchQueue.main.asyncAfter(deadline: .now() + logoFetchTimeout) {
+    task.cancel()
+    finishOnce(nil)
+  }
+  task.resume()
 }
 
 struct GOGOTrackingStepsProvider: TimelineProvider {
   func placeholder(in context: Context) -> GOGOTrackingStepsEntry {
     GOGOTrackingStepsEntry(date: Date(), hasOrder: true, restaurantName: "McDonalds",
-                            address: "Clara Cordoba Moran #16", total: 35, stepIndex: 1)
+                            address: "Clara Cordoba Moran #16", total: 35, stepIndex: 1,
+                            logoImageData: nil)
   }
 
   func getSnapshot(in context: Context, completion: @escaping (GOGOTrackingStepsEntry) -> Void) {
-    completion(currentEntry())
+    buildEntry(completion: completion)
   }
 
   func getTimeline(in context: Context, completion: @escaping (Timeline<GOGOTrackingStepsEntry>) -> Void) {
     refreshOrderFromSupabase { _ in
-      let entry = currentEntry()
-      let policy: TimelineReloadPolicy = entry.hasOrder
-        ? .after(Date().addingTimeInterval(widgetReloadInterval))
-        : .never
-      completion(Timeline(entries: [entry], policy: policy))
+      buildEntry { entry in
+        let policy: TimelineReloadPolicy = entry.hasOrder
+          ? .after(Date().addingTimeInterval(widgetReloadInterval))
+          : .never
+        completion(Timeline(entries: [entry], policy: policy))
+      }
     }
   }
 
-  private func currentEntry() -> GOGOTrackingStepsEntry {
+  private func buildEntry(completion: @escaping (GOGOTrackingStepsEntry) -> Void) {
     let data = UserDefaults(suiteName: appGroupId)
-    return GOGOTrackingStepsEntry(
-      date: Date(),
-      hasOrder: data?.bool(forKey: "hasActiveOrder") ?? false,
-      restaurantName: data?.string(forKey: "restaurantName") ?? "",
-      address: data?.string(forKey: "address") ?? "",
-      total: data?.object(forKey: "total") as? Double ?? 0,
-      stepIndex: data?.object(forKey: "stepIndex") as? Int ?? 0
-    )
+    let hasOrder = data?.bool(forKey: "hasActiveOrder") ?? false
+    let restaurantName = data?.string(forKey: "restaurantName") ?? ""
+    let address = data?.string(forKey: "address") ?? ""
+    let total = data?.object(forKey: "total") as? Double ?? 0
+    let stepIndex = data?.object(forKey: "stepIndex") as? Int ?? 0
+    let logoUrlString = data?.string(forKey: "restaurantImageUrl") ?? ""
+
+    func makeEntry(_ logoImageData: Data?) -> GOGOTrackingStepsEntry {
+      GOGOTrackingStepsEntry(date: Date(), hasOrder: hasOrder, restaurantName: restaurantName,
+                             address: address, total: total, stepIndex: stepIndex,
+                             logoImageData: logoImageData)
+    }
+
+    guard !logoUrlString.isEmpty, let logoUrl = URL(string: logoUrlString) else {
+      completion(makeEntry(nil))
+      return
+    }
+    fetchLogoImage(from: logoUrl) { imageData in
+      completion(makeEntry(imageData))
+    }
   }
 }
 
@@ -380,7 +428,15 @@ struct GOGOTrackingStepsWidgetEntryView: View {
           HStack(alignment: .top) {
             ZStack {
               RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.18))
-              Image(systemName: "storefront.fill").foregroundColor(.white).font(.title3)
+              if let data = entry.logoImageData, let uiImage = UIImage(data: data) {
+                Image(uiImage: uiImage)
+                  .resizable()
+                  .aspectRatio(contentMode: .fill)
+                  .frame(width: 40, height: 40)
+                  .clipShape(RoundedRectangle(cornerRadius: 12))
+              } else {
+                Image(systemName: "storefront.fill").foregroundColor(.white).font(.title3)
+              }
             }
             .frame(width: 40, height: 40)
 
@@ -404,7 +460,7 @@ struct GOGOTrackingStepsWidgetEntryView: View {
           GeometryReader { geo in
             ZStack(alignment: .leading) {
               Capsule().fill(Color.white.opacity(0.2)).frame(height: 4)
-              Capsule().fill(Color.white)
+              Capsule().fill(Color.black)
                 .frame(width: geo.size.width * CGFloat(entry.stepIndex + 1) / 4.0, height: 4)
             }
           }
@@ -415,8 +471,8 @@ struct GOGOTrackingStepsWidgetEntryView: View {
               VStack(spacing: 3) {
                 ZStack {
                   Circle()
-                    .fill(i < entry.stepIndex ? Color.green
-                          : (i == entry.stepIndex ? Color.blue : Color.white.opacity(0.15)))
+                    .fill(i < entry.stepIndex ? Color.blue
+                          : (i == entry.stepIndex ? stepColors[i] : Color.white.opacity(0.15)))
                   Image(systemName: stepIcons[i])
                     .font(.caption)
                     .foregroundColor(i <= entry.stepIndex ? .white : .white.opacity(0.5))

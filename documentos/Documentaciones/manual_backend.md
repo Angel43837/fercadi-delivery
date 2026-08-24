@@ -97,18 +97,17 @@ Cada pedido realizado.
 
 | Columna | Tipo | Descripción |
 |---|---|---|
-| `id` | uuid | Clave primaria |
-| `restaurant_id` | uuid | FK → restaurants |
-| `customer_id` | uuid | FK → auth.users (cliente) |
-| `rider_id` | uuid | FK → auth.users (repartidor, puede ser null) |
-| `status` | text | `pending`, `accepted`, `delivering`, `delivered`, `cancelled` |
+| `id` | text | Clave primaria (`ord_<timestamp>`) |
+| `restaurant_id` | text | FK → restaurants |
 | `total` | numeric | Total del pedido en MXN |
-| `delivery_address` | text | Dirección de entrega |
-| `payment_method` | text | `cash` o `card` |
-| `payment_status` | text | `pending`, `paid`, `failed` |
-| `notes` | text | Notas del cliente |
+| `delivery_fee` | numeric | Cargo de envío (la ganancia real del repartidor) |
+| `status` | text | `pending`, `accepted`, `delivering`, `delivered`, `cancelled` |
+| `customer_name` | text | JSON en texto: `{ name, phone, address, payment, lat, lng }` — escrito a mano en el checkout, no ligado a ningún perfil |
+| `customer_id` | uuid | FK → auth.users — el cliente que hizo el pedido (para mostrarle su foto/nombre real al repartidor, como Uber) |
+| `repartidor_id` | uuid | FK → auth.users — se llena solo al aceptar el pedido, null hasta entonces |
+| `payment_status` | text | Solo para Stripe (OXXO/tarjeta): `pending`, `paid`, `failed` — null para efectivo |
+| `stripe_payment_intent_id` | text | ID del PaymentIntent de Stripe, si aplica |
 | `created_at` | timestamptz | Cuándo se hizo el pedido |
-| `delivered_at` | timestamptz | Cuándo se entregó |
 
 ### Tabla `order_items`
 
@@ -179,13 +178,17 @@ Calificaciones bidireccionales por pedido: cliente → repartidor (`is_driver = 
 | `is_driver` | boolean | `true` = la escribió el repartidor sobre el cliente |
 | `is_hidden` / `is_flagged` / `report_reason` | boolean / boolean / text | Moderación desde Admin → Más → Reseñas |
 
-> **Limitación real, no un bug:** `orders` no tiene `customer_id` (el cliente solo se identifica por un JSON `{name, phone}` sin cuenta ligada). Para reseñas del lado cliente (`is_driver: false`) no hay correo, fecha de registro ni método de login que mostrar — se muestra como "Invitado". Para el lado repartidor sí existe `orders.repartidor_id` → `auth.users`, y esos datos se consultan con la Edge Function `admin-user-lookup` (ver más abajo), nunca con la `service_role key` directo en la app.
+> **Nota (actualizada agosto 2026):** `orders.customer_id` ya existe (agregado para el perfil visible cliente↔repartidor, ver más abajo), pero el módulo de Reseñas de Admin **todavía no lo usa** — para reseñas del lado cliente (`is_driver: false`) sigue sin mostrar correo/fecha de registro/método de login, se muestra como "Invitado". Para el lado repartidor sí existe `orders.repartidor_id` → `auth.users`, y esos datos se consultan con la Edge Function `admin-user-lookup` (ver más abajo), nunca con la `service_role key` directo en la app.
 
 `rating_moderation_log` guarda el historial de quién ocultó/reportó/eliminó cada reseña (`admin_email`, `action`, `note`, `created_at`).
 
 ### Edge Function `admin-user-lookup`
 
 `supabase/functions/admin-user-lookup/index.ts` — la única forma de consultar datos de `auth.users` (correo, fecha de registro, proveedor Google/email, foto, nombre, suspender cuenta) sin meter la `service_role key` dentro de la app de Admin. Verifica primero que quien llama tenga `role: 'admin'` en su propio JWT, y solo entonces usa la service_role internamente (variable de entorno del lado del servidor). Deploy: `supabase functions deploy admin-user-lookup`.
+
+### Edge Function `order-user-lookup`
+
+`supabase/functions/order-user-lookup/index.ts` — permite que el cliente y el repartidor de UN mismo pedido vean el nombre/foto real de perfil del otro (como en Uber). A diferencia de `admin-user-lookup`, aquí **cualquier usuario autenticado** puede llamarla (no solo admin), pero está acotada por pedido: verifica contra `orders` que quien llama sea `customer_id` o `repartidor_id` de ese `orderId` exacto, y que el perfil pedido (`targetUserId`) sea el del otro lado — nunca cualquier usuario arbitrario. Revisa varias keys de `user_metadata` (repartidor de flota, repartidor plus y cliente guardan foto/nombre con keys distintas: `avatar_url`/`custom_avatar_url`/`picture`, `name`/`custom_name`/`full_name`). Cuando quien consulta es el cliente viendo a su repartidor, también regresa `repartos`/`nivel` de `rider_stats` (lectura pública-segura, para las medallas que ve el cliente) — nunca `coins` ni `dinero` (privado). Deploy: `supabase functions deploy order-user-lookup`.
 
 ### Retiros de repartidores — módulo "Retiros" de Admin
 
@@ -330,6 +333,10 @@ Las Edge Functions son código TypeScript que corre en los servidores de Supabas
 | Nombre | Para qué |
 |---|---|
 | `create-payment-intent` | Crea un cobro en Stripe desde el servidor |
+| `stripe-webhook` | Recibe confirmaciones de pago de Stripe |
+| `send-order-notification` | Envía notificación push al crear/actualizar un pedido |
+| `admin-user-lookup` | Consulta/suspende cuentas — solo Admin (ver sección 2) |
+| `order-user-lookup` | Cliente↔repartidor se ven el perfil el uno al otro, solo en su propio pedido (ver sección 2) |
 
 ### Cómo ver los logs de una Edge Function
 

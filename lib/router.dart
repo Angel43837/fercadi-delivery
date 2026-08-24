@@ -10,23 +10,23 @@ import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'models/product.dart';
 import 'screens/splash_screen.dart';
-import 'screens/login_screen.dart';
-import 'screens/restaurants_screen.dart';
-import 'screens/product_detail_screen.dart';
-import 'screens/cart_screen.dart';
-import 'screens/checkout_screen.dart';
-import 'screens/tracking_screen.dart';
-import 'screens/repartidor_screen.dart';
-import 'screens/dueno_screen.dart';
-import 'screens/order_history_screen.dart';
+import 'screens/cliente/login_screen.dart';
+import 'screens/cliente/reset_password_screen.dart';
+import 'screens/legal_document_screen.dart';
+import 'core/legal_content.dart';
+import 'screens/cliente/restaurants_screen.dart';
+import 'screens/cliente/product_detail_screen.dart';
+import 'screens/cliente/cart_screen.dart';
+import 'screens/cliente/checkout_screen.dart';
+import 'screens/cliente/tracking_screen.dart';
+import 'screens/repartidor/repartidor_screen.dart';
+import 'screens/dueno/dueno_screen.dart';
+import 'screens/cliente/order_history_screen.dart';
 import 'screens/profile_screen.dart';
-import 'screens/registro_repartidor_screen.dart';
-import 'screens/registro_restaurante_screen.dart';
-import 'screens/dueno_login_screen.dart';
+import 'screens/dueno/dueno_login_screen.dart';
 import 'screens/repartidor_login_screen.dart';
-import 'screens/repartidor_plus_screen.dart';
-import 'screens/registro_rider_plus_screen.dart';
-import 'screens/tienda_rider_screen.dart';
+import 'screens/repartidor_plus/repartidor_plus_screen.dart';
+import 'screens/repartidor_plus/tienda_rider_screen.dart';
 
 // Notifica a GoRouter cada vez que el estado de autenticación de Supabase cambia.
 // Con refreshListenable el router re-evalúa el redirect al restaurar la sesión del
@@ -49,6 +49,11 @@ const _clientRoutes = {
   '/cart', '/checkout', '/tracking', '/history',
 };
 
+// Subconjunto de _clientRoutes que un invitado (sin cuenta) sí puede
+// explorar libremente — checkout/tracking/history se quedan protegidas,
+// requieren cuenta real.
+const _guestBrowsable = {'/restaurants', '/product-detail', '/cart'};
+
 // 'admin' y 'jefe_flota' tienen sus propias apps separadas (main_admin.dart /
 // main_flota.dart) y no tienen pantallas dentro de este router.
 String _roleHome(String role) {
@@ -70,14 +75,18 @@ final appRouter = GoRouter(
     // Rutas públicas sin restricción
     const open = {
       '/', '/login', '/moto', '/repartidor-login', '/dueno-login',
-      '/restaurante', '/registro-repartidor', '/registro-rider',
-      '/registro-restaurante',
+      '/restaurante', '/reset-password', '/privacy-policy', '/terms',
     };
     if (open.contains(loc)) return null;
 
     final user = Supabase.instance.client.auth.currentUser;
-    // Sin sesión en rutas protegidas → splash, que espera a Supabase y redirige según rol
-    if (user == null) return '/';
+    if (user == null) {
+      // Modo invitado: puede explorar restaurantes/producto/carrito sin
+      // cuenta — solo se le pide iniciar sesión al intentar pagar de verdad
+      // (ver cart_screen.dart/checkout_screen.dart), no antes.
+      if (_guestBrowsable.contains(loc)) return null;
+      return '/';
+    }
 
     final role = ((user.appMetadata['role'] ?? user.userMetadata?['role']) as String?) ?? 'cliente';
 
@@ -96,7 +105,25 @@ final appRouter = GoRouter(
   },
   routes: [
     GoRoute(path: '/',          builder: (_, _) => const SplashScreen()),
-    GoRoute(path: '/login',     builder: (_, _) => const LoginScreen()),
+    GoRoute(
+      path: '/login',
+      builder: (_, state) {
+        final extra = state.extra as Map<String, dynamic>?;
+        return LoginScreen(
+          returnTo: extra?['returnTo'] as String?,
+          startInSignUp: extra?['signUp'] as bool? ?? false,
+        );
+      },
+    ),
+    GoRoute(path: '/reset-password', builder: (_, _) => const ResetPasswordScreen()),
+    GoRoute(
+      path: '/privacy-policy',
+      builder: (_, _) => const LegalDocumentScreen(title: 'Aviso de Privacidad', content: kPrivacyPolicy),
+    ),
+    GoRoute(
+      path: '/terms',
+      builder: (_, _) => const LegalDocumentScreen(title: 'Términos y Condiciones', content: kTermsAndConditions),
+    ),
     GoRoute(path: '/restaurants', builder: (_, _) => const RestaurantsScreen()),
     GoRoute(
       path: '/product-detail',
@@ -114,14 +141,11 @@ final appRouter = GoRouter(
     GoRoute(path: '/dueno',     builder: (_, _) => const DuenoScreen()),
     GoRoute(path: '/history',   builder: (_, _) => const OrderHistoryScreen()),
     GoRoute(path: '/profile',   builder: (_, _) => const ProfileScreen()),
-    GoRoute(path: '/registro-repartidor', builder: (_, _) => const RegistroRepartidorScreen()),
     GoRoute(path: '/restaurante',  builder: (_, _) => const DuenoLoginScreen()),
     GoRoute(path: '/dueno-login',  builder: (_, _) => const DuenoLoginScreen()),
     GoRoute(path: '/moto',         builder: (_, _) => const RepartidorLoginScreen()),
     GoRoute(path: '/repartidor-login', builder: (_, _) => const RepartidorLoginScreen()),
     GoRoute(path: '/rider',        builder: (_, _) => const RepartidorPlusScreen()),
-    GoRoute(path: '/registro-rider', builder: (_, _) => const RegistroRiderPlusScreen()),
-    GoRoute(path: '/registro-restaurante', builder: (_, _) => const RegistroRestauranteScreen()),
     GoRoute(
       path: '/tienda-rider',
       builder: (context, state) => TiendaRiderScreen(currentCoins: (state.extra as int?) ?? 0),
@@ -138,6 +162,7 @@ final appRouter = GoRouter(
           orderId: extra['orderId'] as String? ?? 'o1',
           lat: extra['lat'] as double?,
           lng: extra['lng'] as double?,
+          restaurantImageUrl: extra['restaurantImageUrl'] as String?,
         );
       },
     ),

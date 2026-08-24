@@ -1,54 +1,54 @@
-// ── FCM Service ───────────────────────────────────────────────────────────────
-// Para activar notificaciones cuando la app está CERRADA, sigue estos pasos:
+// fcm_service.dart
+// Notificaciones push reales (app cerrada o en segundo plano), vía Firebase
+// Cloud Messaging + Apple Push Notification service.
 //
-// 1. Ve a https://console.firebase.google.com
-// 2. Crea un proyecto "GOGO" → agrega app Android (com.example.landing_test)
-// 3. Descarga google-services.json → ponlo en android/app/google-services.json
-// 4. En android/settings.gradle.kts → plugins{} agrega:
-//       id("com.google.gms.google-services") version "4.4.2" apply false
-// 5. En android/app/build.gradle.kts → plugins{} agrega:
-//       id("com.google.gms.google-services")
-// 6. En pubspec.yaml → dependencies agrega:
-//       firebase_core: ^3.0.0
-//       firebase_messaging: ^15.0.0
-// 7. Corre: flutter pub get
-// 8. Descomenta el código en FcmService.init() y _backgroundHandler
-// 9. Despliega la Edge Function en supabase/functions/send-order-notification/
+// Requiere un proyecto de Firebase con:
+//   - ios/Runner/GoogleService-Info.plist
+//   - android/app/google-services.json  (+ aplicar el plugin de Gradle,
+//     ver android/app/build.gradle.kts)
 //
-// Mientras tanto, las notificaciones locales (app abierta/minimizada) ya
-// funcionan a través de NotificationService.
-// ─────────────────────────────────────────────────────────────────────────────
+// Sin esos archivos, Firebase.initializeApp() lanza una excepción que se
+// atrapa abajo — la app sigue funcionando exactamente igual que antes, solo
+// con las notificaciones locales de NotificationService (app abierta/recién
+// en segundo plano). En cuanto los archivos existan, esto se activa solo,
+// sin volver a tocar código.
+
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'notification_service.dart';
+
+// Debe ser una función de nivel superior (no un método de clase) para que el
+// motor de Dart pueda lanzarla en un isolate aparte cuando llega un mensaje
+// con la app completamente cerrada.
+@pragma('vm:entry-point')
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+}
 
 class FcmService {
   static String? _token;
 
   static Future<void> init() async {
-    // Descomentar después de completar la configuración de Firebase (pasos arriba):
-    //
-    // await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-    // final messaging = FirebaseMessaging.instance;
-    // await messaging.requestPermission();
-    // _token = await messaging.getToken();
-    // if (_token != null) {
-    //   final user = Supabase.instance.client.auth.currentUser;
-    //   if (user != null) {
-    //     await Supabase.instance.client.from('user_tokens').upsert({
-    //       'user_id': user.id, 'fcm_token': _token, 'updated_at': DateTime.now().toIso8601String(),
-    //     });
-    //   }
-    // }
-    // FirebaseMessaging.onBackgroundMessage(_backgroundHandler);
-    // FirebaseMessaging.onMessage.listen((msg) {
-    //   final n = msg.notification;
-    //   if (n != null) NotificationService.show(title: n.title ?? '', body: n.body ?? '');
-    // });
+    try {
+      await Firebase.initializeApp();
+      final messaging = FirebaseMessaging.instance;
+      await messaging.requestPermission(alert: true, badge: true, sound: true);
+      _token = await messaging.getToken();
+      messaging.onTokenRefresh.listen((newToken) => _token = newToken);
+
+      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+      // En primer plano, FCM no muestra la notificación del sistema sola —
+      // se dispara como notificación local, mismo camino que ya existe.
+      FirebaseMessaging.onMessage.listen((message) {
+        final n = message.notification;
+        if (n != null) {
+          NotificationService.show(title: n.title ?? '', body: n.body ?? '');
+        }
+      });
+    } catch (_) {
+      // Firebase todavía no configurado — no pasa nada, ver comentario arriba.
+    }
   }
 
   static String? get token => _token;
 }
-
-// Descomentar después de configurar Firebase:
-// @pragma('vm:entry-point')
-// Future<void> _backgroundHandler(RemoteMessage message) async {
-//   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-// }

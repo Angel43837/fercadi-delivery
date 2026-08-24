@@ -5,10 +5,10 @@ import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'core/constants.dart';
 import 'providers/app_data_provider.dart';
-import 'screens/admin_screen.dart';
-import 'screens/admin_login_screen.dart';
-import 'screens/admin_resenas_screen.dart';
-import 'screens/admin_retiros_screen.dart';
+import 'screens/admin/admin_screen.dart';
+import 'screens/admin/admin_login_screen.dart';
+import 'screens/admin/admin_resenas_screen.dart';
+import 'screens/admin/admin_retiros_screen.dart';
 import 'services/auth_service.dart';
 
 void main() async {

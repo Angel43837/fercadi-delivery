@@ -12,10 +12,13 @@ class NotificationService {
   static Future<void> init() async {
     if (_initialized) return;
     const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+    // Antes en false: iOS nunca pedía permiso de notificaciones al usuario,
+    // así que cualquier notificación local se descartaba en silencio — por
+    // eso Android sí mostraba avisos de pedidos y iPhone no.
     const ios = DarwinInitializationSettings(
-      requestAlertPermission: false,
-      requestBadgePermission: false,
-      requestSoundPermission: false,
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
     );
     await _plugin.initialize(const InitializationSettings(android: android, iOS: ios));
     await _plugin

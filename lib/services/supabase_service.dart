@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart' hide Category;
@@ -30,24 +31,6 @@ class SupabaseService {
   static const bool useMock = false;
 
   // ── Crear buckets de Storage automáticamente ─────────────────────────────────
-
-  static Future<void> ensureStorageBuckets() async {
-    if (useMock) return;
-    final key = AppConstants.supabaseServiceRoleKey;
-    if (key.isEmpty) return; // Sin service key no podemos crear buckets
-    for (final bucket in ['product-images', 'profile-photos']) {
-      try {
-        await http.post(
-          Uri.parse('${AppConstants.supabaseUrl}/storage/v1/bucket'),
-          headers: {
-            'Authorization': 'Bearer $key',
-            'Content-Type': 'application/json',
-          },
-          body: '{"id":"$bucket","name":"$bucket","public":true}',
-        );
-      } catch (_) {}
-    }
-  }
 
   // ── Mock data ──────────────────────────────────────────────────────────────
 
@@ -281,6 +264,18 @@ class SupabaseService {
         .eq('id', restaurantId)
         .maybeSingle();
     return data == null ? null : Restaurant.fromJson(data);
+  }
+
+  // Estado de aprobación del restaurante (fase 1 del sistema de registro/aprobación).
+  // Devuelve null en mock o si el restaurante no existe.
+  static Future<Map<String, dynamic>?> getRestaurantApprovalStatus(String restaurantId) async {
+    if (useMock) return null;
+    final data = await _client
+        .from('restaurants')
+        .select('approval_status, rejection_reason, correction_notes')
+        .eq('id', restaurantId)
+        .maybeSingle();
+    return data;
   }
 
   static Future<List<Category>> getCategories(String restaurantId) async {
@@ -554,6 +549,29 @@ class SupabaseService {
         .select()
         .eq('restaurant_id', restaurantId);
     return (data as List).map((e) => Product.fromJson(e)).toList();
+  }
+
+  // Precio más barato disponible de cada restaurante — usado por el filtro
+  // "Menos de $100"/"Menos de $200" en restaurants_screen.dart. Una sola
+  // consulta para todos los restaurantes de la zona, no una por restaurante.
+  static Future<Map<String, double>> getMinPricesForRestaurants(
+    List<String> restaurantIds,
+  ) async {
+    if (useMock || restaurantIds.isEmpty) return {};
+    final data = await _client
+        .from('products')
+        .select('restaurant_id, price')
+        .inFilter('restaurant_id', restaurantIds)
+        .eq('is_available', true);
+    final result = <String, double>{};
+    for (final row in (data as List)) {
+      final rid = row['restaurant_id'] as String?;
+      final price = (row['price'] as num?)?.toDouble();
+      if (rid == null || price == null) continue;
+      final current = result[rid];
+      if (current == null || price < current) result[rid] = price;
+    }
+    return result;
   }
 
   // ── Flota de repartidores ──────────────────────────────────────────────────
@@ -942,20 +960,39 @@ class SupabaseService {
         _ => 'image/jpeg',
       };
 
+  // Detalle del último fallo de subida de foto (compresión o Storage) — para
+  // poder mostrar en pantalla EXACTAMENTE cuál paso fue, en vez de un
+  // "no se pudo subir" genérico que no dice nada. Las funciones de subida ya
+  // regresan `null` en caso de error (así estaba, no se cambió ese contrato
+  // para no tener que tocar cada lugar que las llama) — esto solo guarda el
+  // motivo real al lado, que la pantalla de perfil lee cuando ve `null`.
+  static String? lastUploadError;
+
   // Comprime a WebP con calidad 82. En web no hay soporte nativo, regresa los bytes sin cambio.
+  // A propósito NO atrapa errores aquí (antes sí, y con eso "fallaba" en
+  // silencio: si el plugin nativo tronaba, la función regresaba los bytes
+  // originales sin convertir, pero el que llama igual subía el archivo
+  // etiquetado como .webp/image-webp — resultado: un archivo mal etiquetado
+  // que parecía subido bien). Ahora un fallo aquí se propaga y el método de
+  // subida lo trata como lo que es: la subida falló.
   static Future<Uint8List> _compressToWebP(Uint8List bytes) async {
     if (kIsWeb) return bytes;
-    try {
-      final compressed = await FlutterImageCompress.compressWithList(
-        bytes,
-        quality: 82,
-        format: CompressFormat.webp,
-      );
-      // Solo usar la versión comprimida si es más pequeña
-      return compressed.length < bytes.length ? compressed : bytes;
-    } catch (_) {
-      return bytes;
+    // Sin límite de tiempo, si el plugin nativo se quedaba trabado esto
+    // colgaba para siempre — y como el .timeout() de uploadBinary() está
+    // más adelante en la cadena, nunca se llegaba ni siquiera a esa
+    // protección.
+    final compressed = await FlutterImageCompress.compressWithList(
+      bytes,
+      quality: 82,
+      format: CompressFormat.webp,
+    ).timeout(
+      const Duration(seconds: 15),
+      onTimeout: () => throw TimeoutException('conversión a WebP'),
+    );
+    if (compressed.isEmpty) {
+      throw Exception('La conversión a WebP no produjo ningún archivo');
     }
+    return compressed;
   }
 
   static Future<String?> uploadProductImageBytes(Uint8List bytes) async {
@@ -994,10 +1031,13 @@ class SupabaseService {
             fileName,
             compressed,
             fileOptions: FileOptions(contentType: mimeType, upsert: true),
-          );
+          )
+          .timeout(const Duration(seconds: 20));
+      lastUploadError = null;
       return _client.storage.from('profile-photos').getPublicUrl(fileName);
     } catch (e) {
       debugPrint('[Upload] uploadProfilePhotoBytes error: $e');
+      lastUploadError = e.toString();
       return null;
     }
   }
@@ -1015,16 +1055,59 @@ class SupabaseService {
           ? 'image/${localPath.split('.').last.toLowerCase()}'
           : 'image/webp';
       final fileName = 'profile_$userId.$ext';
+      // Sin límite de tiempo, una conexión lenta/caída a medias dejaba el
+      // await esperando para siempre — el spinner de _pickPhoto() nunca se
+      // apagaba porque su finally jamás llegaba a correr.
       await _client.storage
           .from('profile-photos')
           .uploadBinary(
             fileName,
             compressed,
             fileOptions: FileOptions(contentType: mimeType, upsert: true),
-          );
+          )
+          .timeout(const Duration(seconds: 20));
+      lastUploadError = null;
       return _client.storage.from('profile-photos').getPublicUrl(fileName);
     } catch (e) {
       debugPrint('[Upload] uploadProfilePhoto error: $e');
+      lastUploadError = e.toString();
+      return null;
+    }
+  }
+
+  // Foto de perfil de repartidor_plus (bucket rider-avatars) — antes vivía
+  // como código suelto en repartidor_plus_screen.dart, sin WebP y sin
+  // límite de tiempo (mismo bug que ya se arregló aquí para el cliente).
+  static Future<String?> uploadRiderAvatarBytes(
+    Uint8List bytes,
+    String userId,
+  ) async {
+    if (useMock) return null;
+    try {
+      final compressed = await _compressToWebP(bytes);
+      final ext = kIsWeb ? _detectImageExt(bytes) : 'webp';
+      final mimeType = kIsWeb ? _mimeForExt(ext) : 'image/webp';
+      final fileName = 'avatars/$userId.$ext';
+      await _client.storage
+          .from('rider-avatars')
+          .uploadBinary(
+            fileName,
+            compressed,
+            fileOptions: FileOptions(contentType: mimeType, upsert: true),
+          )
+          .timeout(const Duration(seconds: 20));
+      final url = _client.storage.from('rider-avatars').getPublicUrl(fileName);
+      // Limpieza best-effort del .jpg viejo que dejaba la versión anterior
+      // de este flujo (antes de este fix, siempre subía como .jpg) — si no
+      // existe, Storage simplemente no encuentra nada que borrar.
+      if (ext != 'jpg') {
+        unawaited(_client.storage.from('rider-avatars').remove(['avatars/$userId.jpg']).catchError((_) => <FileObject>[]));
+      }
+      lastUploadError = null;
+      return url;
+    } catch (e) {
+      debugPrint('[Upload] uploadRiderAvatarBytes error: $e');
+      lastUploadError = e.toString();
       return null;
     }
   }
@@ -1186,6 +1269,24 @@ class SupabaseService {
       return counts;
     } catch (_) {
       return {};
+    }
+  }
+
+  // Restaurantes de los que el cliente ya ha pedido antes — se usa para
+  // personalizar el orden de /restaurants (categorías favoritas primero).
+  static Future<List<String>> getCustomerOrderedRestaurantIds(String customerId) async {
+    if (useMock || customerId.isEmpty) return [];
+    try {
+      final data = await _client
+          .from('orders')
+          .select('restaurant_id')
+          .eq('customer_id', customerId)
+          .neq('status', 'cancelled')
+          .order('created_at', ascending: false)
+          .limit(50);
+      return [for (final row in data as List) row['restaurant_id'] as String];
+    } catch (_) {
+      return [];
     }
   }
 
@@ -1366,9 +1467,11 @@ class SupabaseService {
       'delivery_fee': deliveryFee,
       'status': 'pending',
       'customer_name': deliveryJson,
+      'customer_id': _client.auth.currentUser?.id,
       if (paymentStatus != null) 'payment_status': paymentStatus,
       if (stripePaymentIntentId != null)
         'stripe_payment_intent_id': stripePaymentIntentId,
+      if (clientFcmToken != null) 'client_fcm_token': clientFcmToken,
     });
     if (items.isNotEmpty) {
       await _client
@@ -1814,6 +1917,21 @@ class SupabaseService {
     return data['status'] as String?;
   }
 
+  // Repartidor asignado al pedido (null hasta que alguien lo acepta) —
+  // usado para mostrarle su nombre/foto al cliente en el seguimiento.
+  static Future<String?> getOrderRepartidorId(String orderId) async {
+    try {
+      final data = await _client
+          .from('orders')
+          .select('repartidor_id')
+          .eq('id', orderId)
+          .single();
+      return data['repartidor_id'] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
+
   // Inserta calificación en tabla `ratings` (crear en Supabase si no existe):
   // CREATE TABLE ratings (id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
   //   order_id text, stars int, comment text, tip numeric, is_driver bool,
@@ -1962,6 +2080,28 @@ class SupabaseService {
           .invoke(
             'admin-user-lookup',
             body: {'action': 'lookup', 'userId': userId},
+          )
+          .timeout(const Duration(seconds: 15));
+      if (res.data is Map) return Map<String, dynamic>.from(res.data as Map);
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Nombre/foto de la contraparte de un pedido (cliente↔repartidor) —
+  // vía Edge Function, que verifica que quien llama de verdad participe
+  // en ese pedido antes de devolver el perfil del otro lado.
+  static Future<Map<String, dynamic>?> getOrderCounterpartProfile(
+    String orderId,
+    String targetUserId,
+  ) async {
+    if (useMock) return null;
+    try {
+      final res = await _client.functions
+          .invoke(
+            'order-user-lookup',
+            body: {'orderId': orderId, 'targetUserId': targetUserId},
           )
           .timeout(const Duration(seconds: 15));
       if (res.data is Map) return Map<String, dynamic>.from(res.data as Map);

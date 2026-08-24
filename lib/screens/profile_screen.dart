@@ -8,6 +8,7 @@
 //   - CLABE interbancaria (solo para repartidores)
 // También tiene los botones de cerrar sesión y reiniciar la app.
 
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -60,6 +61,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String? _photoPath;
   String  _originalName  = '';
   bool    _photoChanged  = false;
+  bool    _photoUploading = false;
+  // Diagnóstico temporal: en qué paso va la subida de foto ahora mismo —
+  // se muestra en pantalla junto al círculo de carga para saber exactamente
+  // dónde se traba, sin depender de que un timeout dispare a tiempo. Quitar
+  // una vez resuelto el bug de la foto que se queda cargando.
+  String? _uploadStage;
   String  _zona          = 'maravatio';
 
   bool get _isDirty => _photoChanged || _nameCtrl.text.trim() != _originalName;
@@ -380,77 +387,196 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _pickPhoto(ImageSource source) async {
     final picker = ImagePicker();
-    final xfile  = await picker.pickImage(source: source, imageQuality: 90, maxWidth: 1200);
-    if (xfile == null) return;
+    final XFile? xfile;
+    try {
+      xfile = await picker.pickImage(source: source, imageQuality: 90, maxWidth: 1200);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('No se pudo abrir la cámara/galería.'),
+            backgroundColor: Colors.redAccent));
+      }
+      return;
+    }
+    if (xfile == null || !mounted) return;
 
+    // Antes no había ningún indicador ni try/catch general aquí — si algo
+    // fallaba a medio camino (ej. el recorte, no solo la subida) la pantalla
+    // se quedaba tal cual, sin aviso y sin que nada se apagara.
+    setState(() => _photoUploading = true);
+    try {
+      // Límite de tiempo TOTAL sobre todo el proceso (recorte + conversión +
+      // subida + guardado) — de respaldo, además de los límites que ya tiene
+      // cada paso por separado: si algo se cuelga en un punto que no
+      // contábamos, esto igual garantiza que el círculo de carga se apague.
+      await _doPickPhotoFlow(xfile).timeout(const Duration(seconds: 150));
+    } on TimeoutException {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Se quedó pegado en: $_uploadStage. Intenta de nuevo.'),
+            backgroundColor: Colors.redAccent));
+      }
+    } catch (e) {
+      // Cualquier otro fallo inesperado (recorte, lectura de archivo, etc.)
+      // — antes esto se perdía en silencio y la pantalla se quedaba igual,
+      // sin foto nueva y sin ningún aviso de qué pasó.
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Error en "$_uploadStage": $e'),
+            backgroundColor: Colors.redAccent));
+      }
+    } finally {
+      if (mounted) setState(() { _photoUploading = false; _uploadStage = null; });
+    }
+  }
+
+  Future<void> _doPickPhotoFlow(XFile xfile) async {
     final userId = _email.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
 
     if (kIsWeb) {
       // En web: leer bytes directamente y subir a Supabase (sin recorte)
+      setState(() => _uploadStage = 'leyendo imagen');
       final bytes = await xfile.readAsBytes();
+      setState(() => _uploadStage = 'subiendo');
       final remoteUrl = await SupabaseService.uploadProfilePhotoBytes(bytes, userId);
       if (!mounted) return;
       setState(() { _photoPath = _withCacheBust(remoteUrl); _photoChanged = true; });
+      if (remoteUrl == null) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('No se pudo subir la foto (${SupabaseService.lastUploadError}). Intenta de nuevo.'),
+            backgroundColor: Colors.redAccent));
+      }
     } else {
       // Se guarda el original sin recortar aparte — así "Reenfocar foto" puede
       // volver a abrir el recorte después sin perder calidad.
+      setState(() => _uploadStage = 'preparando archivo');
       final appDir      = await getApplicationDocumentsDirectory();
       final originalPath = p.join(appDir.path, 'profile_photo_original.jpg');
       await File(xfile.path).copy(originalPath);
 
-      final croppedPath = await _cropImage(originalPath);
+      setState(() => _uploadStage = 'recortando');
+      // Presentar la pantalla de recorte justo cuando la cámara/galería
+      // todavía se está cerrando puede hacer que iOS nunca la muestre de
+      // verdad — el await se queda esperando un "listo" que no va a
+      // llegar porque la pantalla nunca apareció. Esta pausa corta deja
+      // que la animación de cierre anterior termine primero.
+      await Future.delayed(const Duration(milliseconds: 400));
+      if (!mounted) return;
+      final croppedPath = await _cropImage(originalPath).timeout(
+        const Duration(seconds: 90),
+        onTimeout: () => throw TimeoutException('recorte de foto'),
+      );
       if (croppedPath == null || !mounted) return; // canceló el recorte
 
+      setState(() => _uploadStage = 'preparando archivo');
       await _cleanOldLocalPhotos(appDir);
       final destPath = p.join(appDir.path, 'profile_photo_${DateTime.now().millisecondsSinceEpoch}.jpg');
       await File(croppedPath).copy(destPath);
+      setState(() => _uploadStage = 'convirtiendo y subiendo');
       final remoteUrl = await SupabaseService.uploadProfilePhoto(destPath, userId);
       if (!mounted) return;
       setState(() { _photoPath = _withCacheBust(remoteUrl) ?? destPath; _photoChanged = true; });
+      // Si la subida falla, _photoPath se queda con la ruta local — se ve
+      // bien en esta pantalla pero NO se guarda en la cuenta (otros
+      // usuarios/dispositivos nunca la verían) — avisar en vez de fallar en silencio.
+      if (remoteUrl == null) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('No se pudo subir la foto (${SupabaseService.lastUploadError}) — solo se ve en este dispositivo.'),
+            backgroundColor: Colors.redAccent));
+      }
     }
+    setState(() => _uploadStage = 'guardando en tu cuenta');
     // Se guarda de inmediato (no hasta tocar "Guardar") — si el usuario sale
     // con el gesto de deslizar de iOS ninguno de los botones del AppBar se
     // llega a ejecutar, y la foto recién elegida se perdía.
-    await AuthService.saveProfilePhoto(_photoPath);
+    final saved = await AuthService.saveProfilePhoto(_photoPath);
+    // La subida a Storage pudo salir bien pero este segundo paso (guardarla
+    // en la cuenta) fallar aparte — sin este aviso se queda solo en este
+    // dispositivo sin que nadie se entere.
+    if (saved == false && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('La foto se subió pero no se pudo guardar en tu cuenta. Intenta de nuevo.'),
+          backgroundColor: Colors.redAccent));
+    }
   }
 
   // Vuelve a abrir el recorte sobre la foto ya puesta, para ajustar el
   // encuadre sin tener que elegir la foto de nuevo (como "editar" en WhatsApp).
   Future<void> _refocusPhoto() async {
     if (kIsWeb || _photoPath == null) return;
+    setState(() => _photoUploading = true);
+    try {
+      // Mismo respaldo que _pickPhoto(): un límite total además de los que
+      // ya tiene cada paso por separado.
+      await _doRefocusPhotoFlow().timeout(const Duration(seconds: 150));
+    } on TimeoutException {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('La foto tardó demasiado en procesarse. Intenta de nuevo.'),
+            backgroundColor: Colors.redAccent));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('No se pudo procesar la foto. Intenta de nuevo.'),
+            backgroundColor: Colors.redAccent));
+      }
+    } finally {
+      if (mounted) setState(() => _photoUploading = false);
+    }
+  }
+
+  Future<void> _doRefocusPhotoFlow() async {
     final appDir       = await getApplicationDocumentsDirectory();
     final originalPath = p.join(appDir.path, 'profile_photo_original.jpg');
     String? sourcePath;
 
-    if (await File(originalPath).exists()) {
-      sourcePath = originalPath;
-    } else if (_photoPath!.startsWith('http')) {
-      // No hay copia local del original (ej. foto puesta antes de esta
-      // función, o en otro dispositivo) — se descarga la ya subida para
-      // poder recortarla de nuevo.
-      try {
-        final response = await http.get(Uri.parse(_photoPath!)).timeout(const Duration(seconds: 15));
-        if (response.statusCode == 200) {
-          await File(originalPath).writeAsBytes(response.bodyBytes);
-          sourcePath = originalPath;
-        }
-      } catch (_) {}
-    } else {
-      sourcePath = _photoPath;
-    }
-    if (sourcePath == null || !mounted) return;
+      if (await File(originalPath).exists()) {
+        sourcePath = originalPath;
+      } else if (_photoPath!.startsWith('http')) {
+        // No hay copia local del original (ej. foto puesta antes de esta
+        // función, o en otro dispositivo) — se descarga la ya subida para
+        // poder recortarla de nuevo.
+        try {
+          final response = await http.get(Uri.parse(_photoPath!)).timeout(const Duration(seconds: 15));
+          if (response.statusCode == 200) {
+            await File(originalPath).writeAsBytes(response.bodyBytes);
+            sourcePath = originalPath;
+          }
+        } catch (_) {}
+      } else {
+        sourcePath = _photoPath;
+      }
+      if (sourcePath == null || !mounted) return;
 
-    final croppedPath = await _cropImage(sourcePath);
-    if (croppedPath == null || !mounted) return;
+      // Misma pausa que _pickPhoto(): dejar que cualquier pantalla anterior
+      // termine de cerrarse antes de presentar el recorte.
+      await Future.delayed(const Duration(milliseconds: 400));
+      if (!mounted) return;
+      final croppedPath = await _cropImage(sourcePath).timeout(
+        const Duration(seconds: 90),
+        onTimeout: () => throw TimeoutException('recorte de foto'),
+      );
+      if (croppedPath == null || !mounted) return;
 
-    await _cleanOldLocalPhotos(appDir);
-    final destPath = p.join(appDir.path, 'profile_photo_${DateTime.now().millisecondsSinceEpoch}.jpg');
-    await File(croppedPath).copy(destPath);
-    final userId    = _email.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
-    final remoteUrl = await SupabaseService.uploadProfilePhoto(destPath, userId);
-    if (!mounted) return;
-    setState(() { _photoPath = _withCacheBust(remoteUrl) ?? destPath; _photoChanged = true; });
-    await AuthService.saveProfilePhoto(_photoPath);
+      await _cleanOldLocalPhotos(appDir);
+      final destPath = p.join(appDir.path, 'profile_photo_${DateTime.now().millisecondsSinceEpoch}.jpg');
+      await File(croppedPath).copy(destPath);
+      final userId    = _email.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
+      final remoteUrl = await SupabaseService.uploadProfilePhoto(destPath, userId);
+      if (!mounted) return;
+      setState(() { _photoPath = _withCacheBust(remoteUrl) ?? destPath; _photoChanged = true; });
+      if (remoteUrl == null) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('No se pudo subir la foto — solo se ve en este dispositivo. Intenta de nuevo.'),
+            backgroundColor: Colors.redAccent));
+      }
+      final saved = await AuthService.saveProfilePhoto(_photoPath);
+      if (saved == false && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('La foto se subió pero no se pudo guardar en tu cuenta. Intenta de nuevo.'),
+            backgroundColor: Colors.redAccent));
+      }
   }
 
   void _showPhotoPicker() {
@@ -559,7 +685,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           Center(
             child: Column(children: [
               GestureDetector(
-                onTap: _showPhotoPicker,
+                onTap: _photoUploading ? null : _showPhotoPicker,
                 child: Stack(
                   alignment: Alignment.bottomRight,
                   children: [
@@ -578,6 +704,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   style: const TextStyle(color: Colors.white, fontSize: 36, fontWeight: FontWeight.bold)),
                             ),
                     ),
+                    if (_photoUploading)
+                      Container(
+                        width: 96, height: 96,
+                        decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+                        child: const Center(
+                          child: SizedBox(
+                            width: 32, height: 32,
+                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
+                          ),
+                        ),
+                      ),
                     Container(
                       padding: const EdgeInsets.all(6),
                       decoration: const BoxDecoration(color: AppConstants.primaryColor, shape: BoxShape.circle),
@@ -587,8 +724,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
               ),
               const SizedBox(height: 8),
-              Text('Toca para cambiar foto',
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 11)),
+              Text(
+                _photoUploading && _uploadStage != null ? _uploadStage! : 'Toca para cambiar foto',
+                style: TextStyle(
+                  color: _photoUploading ? Colors.white : Colors.white.withValues(alpha: 0.55),
+                  fontSize: 11,
+                  fontWeight: _photoUploading ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
               const SizedBox(height: 12),
               if (_photoPath == null) ...[
                 Text('Elige un color para tu avatar',

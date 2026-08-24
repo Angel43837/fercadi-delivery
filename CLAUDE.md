@@ -159,3 +159,39 @@ Tablas: `rider_withdrawals`, `rider_payout_accounts` (CLABE + campos `stripe_*` 
 Lista maestra en `lib/core/restaurant_categories.dart` (`kRestaurantCategories`) — agregar una categoría nueva es una sola línea ahí, sin migración de BD. El filtro en `restaurants_screen.dart` (botón "Categorías" en la lista principal) lee directo de `Restaurant.categorias` de los restaurantes de la zona del cliente.
 
 **Categorías de menú** (tabla `categories`, las pestañas de platillos DENTRO de un restaurante — ej. "Platillos", "Entradas", "Bebidas") son un sistema aparte, sin relación con lo anterior. Hoy se crean solo por SQL directo (no hay UI de creación en la app); no confundir con `restaurants.categorias`. Lista genérica fija en `lib/core/product_categories.dart` (`kProductCategories`: Platillos, Entradas, Ensaladas, Desayunos, Acompañamientos, Postres, Bebidas) — los 15 restaurantes existentes ya se migraron a esta lista (agosto 2026), fusionando donde había nombres muy específicos (ej. "Tacos"+"Carnitas por Kilo"+"Antojitos" → "Platillos" en CarnitasElPuerco; "Cafés"+"Frappes" → "Bebidas" en Starbucks). Usar siempre esta lista para restaurantes nuevos.
+
+---
+
+## Perfil visible entre cliente y repartidor (como Uber)
+
+Una vez que un repartidor acepta un pedido, cliente y repartidor pueden verse el nombre/foto real de perfil el uno al otro (antes de eso, no — ni el pedido tiene todavía repartidor asignado, ni el repartidor debe ver el perfil de un cliente que aún no le corresponde).
+
+- `orders.customer_id` (`UUID`, nuevo) — se llena solo en `SupabaseService.createOrder` con el `auth.uid()` del cliente que hace el pedido. `orders.repartidor_id` ya existía, se llena al aceptar.
+- Edge Function `order-user-lookup` (separada de `admin-user-lookup`, que sigue exclusiva para Admin) — cualquier usuario autenticado puede llamarla, pero **solo para ver a su contraparte en un pedido donde de verdad participa**: verifica contra la tabla `orders` que quien llama sea `customer_id` o `repartidor_id` de ese pedido, y que el perfil pedido sea el del otro lado. Nunca expone la service role key al cliente.
+- `SupabaseService.getOrderCounterpartProfile(orderId, targetUserId)` — capa Dart que llama a esa función. Revisa varias keys de `user_metadata` (`avatar_url`/`custom_avatar_url`/`picture`, `name`/`custom_name`/`full_name`) porque repartidor de flota, repartidor plus y cliente guardan su foto/nombre con keys distintas entre sí.
+- Cliente: `tracking_screen.dart` muestra una tarjeta propia (foto+nombre) justo arriba del panel del pedido, en cuanto se acepta — tocarla abre el detalle con nivel, entregas y medallas del repartidor.
+- Repartidor: `repartidor_screen.dart` (flota) y `entrega_activa_screen.dart` (repartidor plus) muestran la foto/nombre real del cliente en "Datos del cliente", una vez aceptado el pedido.
+- Medallas por repartos (🚀🔥⚡🏆👑💎) centralizadas en `lib/core/rider_achievements.dart` (`kRiderAchievements`) — antes vivían duplicadas/privadas dentro de `repartidor_plus_screen.dart`; ahora esa pantalla y el detalle del cliente en `tracking_screen.dart` leen la misma lista.
+
+---
+
+## Notificaciones (estado real, agosto 2026)
+
+**No hay push real (FCM/APNs) en ninguna plataforma** — ni Android ni iOS. `firebase_messaging` no está instalado; `lib/services/fcm_service.dart` es un placeholder deliberadamente comentado, a la espera de un proyecto Firebase real. `SupabaseService.createOrder` recibe `clientFcmToken` pero nunca lo guarda; `orders.client_fcm_token` nunca se llena, así que `_sendFcmForStatus` siempre corta antes de invocar la Edge Function `send-order-notification` (que además usa la API legacy de FCM, descontinuada por Google en junio 2024 — habría que reescribirla con la API v1 igual).
+
+Lo que sí existe: **notificaciones locales** (`lib/services/notification_service.dart`, `flutter_local_notifications`) — la propia app, mientras está abierta o recién en background, detecta cambios de estado por *polling* (`tracking_screen.dart` cada 4s) y dispara el aviso localmente. Esto **no llega con la app cerrada o hace rato en segundo plano** — para eso sí se necesita FCM/APNs real.
+
+Bug corregido: `DarwinInitializationSettings` (iOS) tenía las 3 banderas de permiso en `false` — iOS nunca pedía permiso de notificaciones, así que cualquier notificación local se descartaba en silencio. Android sí las pedía. Ya corregido (las 3 en `true`) — con esto iOS debería mostrar las mismas notificaciones que Android mientras la app esté abierta/reciente.
+
+Para push real con la app cerrada: proyecto Firebase (gratis) + cuenta Apple Developer ($99/año, ya pendiente en este archivo) para la key APNs (.p8) + reescribir la Edge Function con la API v1 + descomentar `fcm_service.dart` + guardar el token en `orders`.
+
+---
+
+## Seguimiento del pedido — ya existía, solo se corrigieron bugs de UI/GPS
+
+`tracking_screen.dart` (cliente) ya es una pantalla completa de seguimiento (stepper de 4 pasos + mapa en vivo) — no había que construir nada nuevo ahí. Correcciones aplicadas:
+
+- El marcador del repartidor en el mapa del cliente ya no se muestra si el pedido está `delivered`/`cancelled` (antes seguía "parado" ahí si se reabría un pedido viejo desde el historial).
+- GPS en `entrega_activa_screen.dart`/`repartidor_screen.dart`: antes solo se usaba `getPositionStream()`, que puede tardar mucho en entregar su primer punto en frío — el "arreglo" de abrir Google Maps y volver funcionaba porque eso *despierta* el GPS del sistema, no por nada que hiciera la app. Ahora se pide también un `getCurrentPosition()` puntual al iniciar (mismo efecto, sin salir de la app), y en `entrega_activa_screen.dart` aparece un botón "Reintentar" si sigue sin llegar nada después de 12s.
+- Elementos encimados en el paso "En camino" (`entrega_activa_screen.dart`/`repartidor_screen.dart`): el aviso verde "Transmitiendo ubicación en vivo" se dibujaba en la misma franja que la fila de arriba (chip de paso + "Cómo llegar") — se movió más abajo. Los avisos de "Buscando ubicación"/"Dirección no encontrada" (mismo `Positioned`) ahora se apilan en una `Column` en vez de superponerse si ambos aplican a la vez.
+- Panel de `entrega_activa_screen.dart` ahora es un `DraggableScrollableSheet` (mismo patrón que el sheet de "Retos" en `repartidor_plus_screen.dart`) — el repartidor puede arrastrarlo para ver más mapa o más info del pedido, con los botones de acción siempre fijos abajo.

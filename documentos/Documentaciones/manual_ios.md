@@ -79,6 +79,22 @@ Mismo patrón exacto que Admin. Antes las pantallas de jefe de flota (`/flota-lo
 
 > Nota técnica: el widget de pantalla de inicio (`GOGOTrackingWidgetExtension`) tiene configuraciones de build para todos los flavors (Debug/Release/Profile-flota y -admin) solo porque comparte el mismo proyecto de Xcode — no se usa realmente ni en Admin ni en Flota, es exclusivo de la app cliente.
 
+## 3.2 Flavor "GOGO Pruebas" en iOS
+
+A diferencia de Admin y Flota (apps distintas, con su propio entry point Dart), **GOGO Pruebas es la misma app cliente** (`lib/main.dart`, mismas pantallas y features) — lo único que cambia es a qué proyecto de Supabase se conecta, para poder probar cosas sin arriesgar los datos reales de producción. Vive instalada en el mismo teléfono al lado de GOGO Food normal, como una app separada.
+
+- Mismo entry point: `lib/main.dart` (no hay `main_pruebas.dart`)
+- `ios/Runner/Info-Pruebas.plist` — nombre "GOGO Pruebas", bundle id `com.fercadi.app.pruebas`, esquemas de URL `fercadipruebas://` / `gogofoodpruebas://` (distintos a los de producción para que no choquen)
+- `ios/Flutter/Debug-pruebas.xcconfig`, `Release-pruebas.xcconfig`, `Profile-pruebas.xcconfig`
+- Mismo ícono que GOGO Food (no se hizo uno nuevo) — se distinguen por el nombre debajo del ícono
+- Se corre con:
+  ```bash
+  flutter run --flavor pruebas --target lib/main.dart --dart-define-from-file=pruebas.dart-define.json
+  ```
+  `pruebas.dart-define.json` (en la raíz del repo, no se sube a git del todo en serio — trae la URL y anon key del proyecto Supabase de pruebas) sobreescribe `SUPABASE_URL`/`SUPABASE_ANON_KEY` de `lib/core/constants.dart` (que por default sigue apuntando a producción si no se pasa `--dart-define`).
+- Backend: proyecto Supabase separado **GOGO-Pruebas** (cuenta `eloy41543@gmail.com`), con una copia completa de los datos de producción (restaurantes, pedidos, cuentas de usuario sin contraseña, fotos) al momento de crearse — ver notas del proyecto para el detalle de esa migración.
+- Igual que Admin/Flota, el widget de pantalla de inicio tiene configs de build para este flavor por compartir el mismo proyecto de Xcode, pero al ser la app cliente real sí podría llegar a usarse (comparte el mismo app group `group.com.fercadi.app` que producción — si algún día importa que no se mezclen los datos del widget entre ambas apps, haría falta un app group separado).
+
 ---
 
 ## 4. Publicar en App Store (cuando se pague la cuenta)

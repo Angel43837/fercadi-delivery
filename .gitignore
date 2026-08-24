@@ -58,3 +58,4 @@ docker/certbot/conf/
 docker/data/
 fercadi-release.jks
 android/key.properties
+supabase/.dev-db-password.txt

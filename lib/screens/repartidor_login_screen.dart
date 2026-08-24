@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../services/auth_service.dart';
 
 const _orange = Color(0xFFFF5722);
@@ -161,17 +162,18 @@ class _RepartidorLoginScreenState extends State<RepartidorLoginScreen> {
                 ),
               ),
               const SizedBox(height: 20),
+              // El registro de riders vive en un sitio aparte (fuera de esta
+              // app, a petición del negocio) — ver
+              // https://gogo-registro.vercel.app. Antes había dos botones
+              // que llevaban a dos formularios distintos pero redundantes
+              // (creaban la misma cuenta 'repartidor_plus') — se
+              // consolidaron en uno solo del lado del sitio nuevo.
               Center(
                 child: TextButton(
-                  onPressed: () => context.go('/registro-repartidor'),
-                  child: const Text('¿Repartidor de restaurante? Regístrate',
-                      style: TextStyle(color: Colors.white70, fontSize: 13)),
-                ),
-              ),
-              Center(
-                child: TextButton(
-                  onPressed: () => context.go('/registro-rider'),
-                  child: const Text('¿Repartidor independiente? Únete a GOGO Riders',
+                  onPressed: () => launchUrl(
+                    Uri.parse('https://gogo-registro.vercel.app/registro-rider'),
+                  ),
+                  child: const Text('¿Nuevo repartidor? Únete a GOGO Riders',
                       style: TextStyle(
                           color: Colors.white,
                           fontSize: 13,

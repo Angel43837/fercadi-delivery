@@ -84,6 +84,10 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>GOGO Food usa la red local para depuración con Flutter durante el desarrollo.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS orders (
   delivery_fee              NUMERIC(10,2) DEFAULT 0,
   status                    TEXT        NOT NULL DEFAULT 'pending',
   customer_name             TEXT,       -- JSON: { name, phone, address, payment, lat, lng }
+  customer_id               UUID        REFERENCES auth.users(id) ON DELETE SET NULL, -- para mostrarle su foto/nombre real al repartidor (como Uber)
   repartidor_id             UUID        REFERENCES auth.users(id) ON DELETE SET NULL,
   -- Solo se usan para pagos vía Stripe (OXXO/tarjeta) — null para efectivo.
   -- payment_status: 'pending' (OXXO, esperando que el cliente pague en tienda),

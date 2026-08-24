@@ -1,8 +1,18 @@
 import 'package:flutter/material.dart';
 
 class AppConstants {
-  static const String supabaseUrl = 'https://mmjzyqvjdwhzefbaiums.supabase.co';
-  static const String supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1tanp5cXZqZHdoemVmYmFpdW1zIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4NzMyMzAsImV4cCI6MjA5NDQ0OTIzMH0.5RC11kFCcKtPCeHFarByZDc9zzVBBvsZPYlI5Ed-PNM';
+  // Default: GOGO-Pruebas (cuenta eloy41543), ya no la cuenta original de Angel.
+  // Se puede sobreescribir al compilar con --dart-define=SUPABASE_URL=...
+  // --dart-define=SUPABASE_ANON_KEY=... (por ejemplo para apuntar a gogo-food-dev
+  // cuando esa quede lista con datos reales).
+  static const String supabaseUrl = String.fromEnvironment(
+    'SUPABASE_URL',
+    defaultValue: 'https://ymztoayxzewghbethahv.supabase.co',
+  );
+  static const String supabaseAnonKey = String.fromEnvironment(
+    'SUPABASE_ANON_KEY',
+    defaultValue: 'sb_publishable_eEimQboqykVjDWpnXG8VNQ_iVlNhgbo',
+  );
   // Service role key — Settings > API > service_role en tu dashboard de Supabase
   static const String supabaseServiceRoleKey = '';
 

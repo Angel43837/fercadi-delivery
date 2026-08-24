@@ -1,0 +1,1049 @@
+// checkout_screen.dart
+// Pantalla de confirmación del pedido.
+// El cliente revisa su dirección de entrega, elige método de pago y confirma.
+// Al confirmar:
+//   1. Crea el pedido en Supabase con estado "pending"
+//   2. Guarda el pedido en el historial local
+//   3. Limpia el carrito
+//   4. Redirige a la pantalla de tracking en tiempo real
+
+import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
+import 'package:flutter/material.dart';
+import 'package:flutter_stripe/flutter_stripe.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:go_router/go_router.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../core/constants.dart';
+import '../../core/guest_prompt.dart';
+import '../../models/cart_item.dart';
+import '../../models/restaurant.dart';
+import '../../providers/cart_provider.dart';
+import '../../services/location_service.dart';
+import '../../services/supabase_service.dart';
+import '../map_picker_screen.dart';
+import '../../services/auth_service.dart';
+import '../../services/fcm_service.dart';
+import '../../services/order_history_service.dart';
+
+enum _Pay { cash, card }
+
+class CheckoutScreen extends StatefulWidget {
+  const CheckoutScreen({super.key});
+
+  @override
+  State<CheckoutScreen> createState() => _CheckoutScreenState();
+}
+
+class _CheckoutScreenState extends State<CheckoutScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _scrollCtrl = ScrollController();
+  final _nameCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController();
+  final _addressCtrl = TextEditingController();
+  final _addressFocus = FocusNode();
+  final _refCtrl = TextEditingController();
+  _Pay _payment = _Pay.cash;
+  bool _loading = false;
+  LatLng? _selectedPos;
+  List<Map<String, dynamic>> _savedAddresses = [];
+  final Map<String, Restaurant> _restaurants = {}; // restaurantId → Restaurant
+
+  Restaurant? get _primaryRestaurant =>
+      _restaurants.values.firstOrNull;
+
+  double get _deliveryFee {
+    final r = _primaryRestaurant;
+    if (r?.lat == null || r?.lng == null || _selectedPos == null) {
+      return LocationService.calcularCostoEnvio(null);
+    }
+    final distanciaKm = Geolocator.distanceBetween(
+          r!.lat!,
+          r.lng!,
+          _selectedPos!.latitude,
+          _selectedPos!.longitude,
+        ) /
+        1000;
+    return LocationService.calcularCostoEnvio(distanciaKm);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedAddresses();
+    _loadRestaurants();
+  }
+
+  Future<void> _loadRestaurants() async {
+    final ids = context.read<CartProvider>().itemsByRestaurant.keys.toList();
+    for (final id in ids) {
+      final restaurant = await SupabaseService.getRestaurantById(id);
+      if (!mounted) return;
+      if (restaurant != null) {
+        setState(() => _restaurants[id] = restaurant);
+      }
+    }
+  }
+
+  Future<void> _loadSavedAddresses() async {
+    final addresses = await AuthService.getSavedAddresses();
+    if (!mounted) return;
+    setState(() => _savedAddresses = addresses);
+  }
+
+  @override
+  void dispose() {
+    _scrollCtrl.dispose();
+    _nameCtrl.dispose();
+    _phoneCtrl.dispose();
+    _addressCtrl.dispose();
+    _addressFocus.dispose();
+    _refCtrl.dispose();
+    super.dispose();
+  }
+
+  // Detecta GPS y luego abre el mapa con el pin en la posición detectada (móvil)
+  // En web solo guarda las coordenadas GPS
+  Future<void> _locateAndPick() async {
+    // Capturar antes de cualquier await para evitar uso cross-async de context
+    final nav = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _loading = true);
+    try {
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+        messenger.showSnackBar(const SnackBar(
+          content: Text('Permite el acceso a tu ubicación'),
+          backgroundColor: Colors.orange,
+        ));
+        return;
+      }
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.medium),
+      );
+      final gpsLatLng = LatLng(pos.latitude, pos.longitude);
+      setState(() => _loading = false);
+      final result = await nav.push<LatLng>(
+        MaterialPageRoute(builder: (_) => MapPickerScreen(initial: gpsLatLng)),
+      );
+      if (result != null && mounted) {
+        setState(() => _selectedPos = result);
+        final addr = await LocationService.reverseGeocode(result.latitude, result.longitude);
+        if (addr != null && mounted) {
+          setState(() => _addressCtrl.text = addr);
+          _addressCtrl.selection = TextSelection(baseOffset: 0, extentOffset: addr.length);
+          _addressFocus.requestFocus();
+        }
+      }
+      return;
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('No se pudo detectar la ubicación: $e'), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _showLoginRequired() {
+    // Respaldo por si se llega aquí sin pasar por el botón de cart_screen.dart
+    // (que ya filtra esto antes) — mismo aviso reutilizable en toda la app.
+    showLoginRequiredSheet(context,
+        message: 'Para continuar con tu pedido necesitas iniciar sesión.',
+        returnTo: '/checkout');
+  }
+
+  void _showPaymentError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(message),
+      backgroundColor: Colors.redAccent,
+      duration: const Duration(seconds: 5),
+    ));
+  }
+
+  // Llama a la Supabase Edge Function, obtiene el clientSecret y abre el PaymentSheet de Stripe.
+  // Cada etapa tiene su propio timeout: si Stripe se cuelga (bug conocido de
+  // flutter_stripe en ciertas versiones de iOS, donde el PaymentSheet se
+  // queda cargando para siempre sin lanzar error), esto evita que el botón
+  // "Confirmar pedido" se quede pegado indefinidamente.
+  Future<bool> _payWithStripe(double total) async {
+    try {
+      // 1. Pedir clientSecret al backend (Edge Function)
+      debugPrint('[Stripe] Solicitando payment intent al backend...');
+      final res = await Supabase.instance.client.functions.invoke(
+        'create-payment-intent',
+        body: {'amount': total, 'currency': 'mxn'},
+      ).timeout(const Duration(seconds: 20));
+      final clientSecret = res.data?['clientSecret'] as String?;
+      if (clientSecret == null) {
+        debugPrint('[Stripe] El backend no devolvió clientSecret: ${res.data}');
+        _showPaymentError('No se pudo iniciar el pago. Intenta de nuevo.');
+        return false;
+      }
+      debugPrint('[Stripe] Payment intent recibido, iniciando PaymentSheet...');
+
+      // 2. Inicializar el PaymentSheet
+      await Stripe.instance.initPaymentSheet(
+        paymentSheetParameters: SetupPaymentSheetParameters(
+          paymentIntentClientSecret: clientSecret,
+          merchantDisplayName: 'GOGO FOOD',
+          returnURL: 'gogofood://stripe-return',
+          style: ThemeMode.light,
+        ),
+      ).timeout(const Duration(seconds: 20));
+      debugPrint('[Stripe] PaymentSheet inicializado, presentando...');
+
+      // 3. Mostrar la hoja de pago — timeout amplio porque el usuario puede
+      // tardar en escribir su tarjeta, pero acotado para no quedarse
+      // cargando para siempre si el sheet nunca llega a mostrarse.
+      await Stripe.instance.presentPaymentSheet().timeout(const Duration(seconds: 90));
+      debugPrint('[Stripe] Pago confirmado.');
+      return true;
+    } on TimeoutException {
+      debugPrint('[Stripe] Timeout esperando respuesta de Stripe.');
+      _showPaymentError('El pago está tardando demasiado. Revisa tu conexión e intenta de nuevo.');
+      return false;
+    } on StripeException catch (e) {
+      debugPrint('[Stripe] StripeException: ${e.error.code} ${e.error.message}');
+      _showPaymentError(e.error.localizedMessage ?? 'Pago cancelado');
+      return false;
+    } catch (e) {
+      debugPrint('[Stripe] Error inesperado: $e');
+      _showPaymentError('No se pudo procesar el pago. Revisa tu conexión e intenta de nuevo.');
+      return false;
+    }
+  }
+
+  Future<void> _confirm() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) {
+      _showLoginRequired();
+      return;
+    }
+    if (!_formKey.currentState!.validate()) {
+      _scrollCtrl.animateTo(0, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+      return;
+    }
+    setState(() => _loading = true);
+    final cart = context.read<CartProvider>();
+    final deliveryFee = _deliveryFee;
+    final orderTotal = cart.total + deliveryFee;
+
+    // Si el pago es con tarjeta, procesar Stripe primero
+    if (_payment == _Pay.card) {
+      if (kIsWeb) {
+        if (mounted) {
+          setState(() => _loading = false);
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('El pago con tarjeta solo está disponible en la app móvil. Descarga la app para pagar con tarjeta.'),
+            backgroundColor: Color(0xFFBF360C),
+            duration: Duration(seconds: 5),
+            behavior: SnackBarBehavior.floating,
+          ));
+        }
+        return;
+      }
+      final paid = await _payWithStripe(orderTotal);
+      if (!paid) {
+        if (mounted) setState(() => _loading = false);
+        return;
+      }
+    }
+
+    final byRestaurant = cart.itemsByRestaurant;
+    if (byRestaurant.isEmpty) {
+      if (mounted) {
+        setState(() => _loading = false);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Error: carrito vacío. Vuelve e intenta de nuevo.'),
+          backgroundColor: Colors.redAccent,
+        ));
+      }
+      return;
+    }
+
+    // Create one order per restaurant; share the same delivery fee split equally
+    final perOrderFee = deliveryFee / byRestaurant.length;
+    String firstOrderId = 'local';
+    String firstRestaurantName = byRestaurant.values.first.first.restaurantName;
+    bool anyError = false;
+
+    for (final entry in byRestaurant.entries) {
+      final rid = entry.key;
+      final rItems = entry.value;
+      final rSubtotal = rItems.fold(0.0, (s, i) => s + i.total);
+      try {
+        final oid = await SupabaseService.createOrder(
+          restaurantId: rid,
+          total: rSubtotal + perOrderFee,
+          deliveryFee: perOrderFee,
+          customerName: _nameCtrl.text.trim(),
+          customerPhone: _phoneCtrl.text.trim(),
+          address: _addressCtrl.text.trim(),
+          paymentMethod: _payment.name,
+          lat: _selectedPos?.latitude,
+          lng: _selectedPos?.longitude,
+          clientFcmToken: FcmService.token,
+          paymentStatus: _payment == _Pay.card ? 'paid' : null,
+          items: rItems.map((i) => {
+            'product_id': i.product.id,
+            'quantity': i.quantity,
+            'price': i.product.price,
+            if (i.notes.isNotEmpty) 'notes': i.notes,
+          }).toList(),
+        );
+        if (firstOrderId == 'local') {
+          firstOrderId = oid;
+          firstRestaurantName = rItems.first.restaurantName;
+        }
+      } catch (e) {
+        anyError = true;
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Error en pedido de ${rItems.first.restaurantName}: $e'),
+            backgroundColor: Colors.redAccent,
+          ));
+        }
+      }
+    }
+
+    if (anyError && firstOrderId == 'local') {
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() => _loading = false);
+    final restaurantLabel = byRestaurant.length > 1
+        ? 'Varios restaurantes'
+        : firstRestaurantName;
+    final orderData = <String, dynamic>{
+      'restaurantName': restaurantLabel,
+      'address': _addressCtrl.text.trim(),
+      'total': orderTotal,
+      'orderId': firstOrderId,
+      if (_selectedPos != null) 'lat': _selectedPos!.latitude,
+      if (_selectedPos != null) 'lng': _selectedPos!.longitude,
+      // Solo con un restaurante hay un logo claro que mostrar — con
+      // "Varios restaurantes" no hay uno solo que tenga sentido elegir.
+      if (byRestaurant.length == 1 && _primaryRestaurant?.imageUrl != null)
+        'restaurantImageUrl': _primaryRestaurant!.imageUrl,
+    };
+    await OrderHistoryService.add(
+      orderId: firstOrderId,
+      restaurantName: restaurantLabel,
+      total: orderTotal,
+      address: _addressCtrl.text.trim(),
+    );
+    await AuthService.saveAddress(
+      label: 'Reciente',
+      address: _addressCtrl.text.trim(),
+      lat: _selectedPos?.latitude,
+      lng: _selectedPos?.longitude,
+    );
+    await OrderHistoryService.saveActiveOrder(
+      orderId: firstOrderId,
+      restaurantName: restaurantLabel,
+      total: orderTotal,
+      address: _addressCtrl.text.trim(),
+      lat: _selectedPos?.latitude,
+      lng: _selectedPos?.longitude,
+    );
+    cart.clear();
+    _showSuccess(orderData);
+  }
+
+  void _showSuccess(Map<String, dynamic> orderData) {
+    final nav = context;
+    showDialog(
+      context: nav,
+      barrierDismissible: false,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: AppConstants.surfaceColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        contentPadding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 86,
+              height: 86,
+              decoration: BoxDecoration(
+                color: Colors.green.withValues(alpha: 0.15),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.check_circle_rounded, color: Colors.green, size: 54),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              '¡Pedido confirmado!',
+              style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Tu pedido está siendo preparado.\nTiempo estimado: 30 – 45 min.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 14, height: 1.5),
+            ),
+            const SizedBox(height: 28),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.pop(dialogCtx);
+                  nav.go('/tracking', extra: orderData);
+                },
+                icon: const Icon(Icons.map_outlined, size: 20),
+                label: const Text('Rastrear mi pedido', style: TextStyle(fontWeight: FontWeight.bold)),
+                style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogCtx);
+                nav.go('/restaurants');
+              },
+              child: Text('Volver al inicio',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 13)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cart  = context.watch<CartProvider>();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final scaffoldBg = isDark ? AppConstants.bgColor : AppConstants.primaryColor;
+    final cardBg     = isDark ? AppConstants.surfaceColor : Colors.white;
+    final textMain   = isDark ? Colors.white : Colors.black87;
+    final textSub    = isDark ? Colors.white.withValues(alpha: 0.5) : Colors.black54;
+    final divColor   = isDark ? Colors.white.withValues(alpha: 0.06) : Colors.black12;
+    final chipUnsel  = isDark ? AppConstants.surfaceColor : Colors.white.withValues(alpha: 0.3);
+    final chipBorder = isDark ? Colors.white.withValues(alpha: 0.15) : Colors.white.withValues(alpha: 0.5);
+
+    return Scaffold(
+      backgroundColor: scaffoldBg,
+      appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => context.pop(),
+        ),
+        title: const Text('Confirmar pedido'),
+      ),
+      body: Form(
+        key: _formKey,
+        child: ListView(
+          controller: _scrollCtrl,
+          padding: const EdgeInsets.all(16),
+          children: [
+            // ── Resumen del pedido ───────────────────────────────────────────
+            _SectionHeader(icon: Icons.receipt_long_outlined, label: 'Resumen del pedido'),
+            const SizedBox(height: 10),
+            Container(
+              decoration: BoxDecoration(color: cardBg, borderRadius: BorderRadius.circular(16)),
+              child: Column(
+                children: [
+                  ...cart.items.asMap().entries.map((e) {
+                    final isLast = e.key == cart.items.length - 1;
+                    return _OrderItemRow(item: e.value, isLast: isLast, textMain: textMain, textSub: textSub, divColor: divColor);
+                  }),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                    child: Column(
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Subtotal (${cart.count} producto${cart.count != 1 ? 's' : ''})',
+                              style: TextStyle(color: textSub, fontSize: 14),
+                            ),
+                            Text(
+                              '\$${cart.total.toStringAsFixed(0)} MXN',
+                              style: TextStyle(color: textMain, fontSize: 14),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('Envío', style: TextStyle(color: textSub, fontSize: 14)),
+                            Text(
+                              '\$${_deliveryFee.toStringAsFixed(0)} MXN',
+                              style: TextStyle(color: textMain, fontSize: 14),
+                            ),
+                          ],
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          child: Divider(color: divColor, height: 1),
+                        ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('Total',
+                                style: TextStyle(fontWeight: FontWeight.bold, color: textMain, fontSize: 15)),
+                            Text(
+                              '\$${(cart.total + _deliveryFee).toStringAsFixed(0)} MXN',
+                              style: const TextStyle(fontWeight: FontWeight.bold, color: AppConstants.primaryColor, fontSize: 18),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 28),
+
+            // ── Datos de entrega ─────────────────────────────────────────────
+            _SectionHeader(icon: Icons.local_shipping_outlined, label: '¿A dónde te lo llevamos?'),
+            const SizedBox(height: 12),
+            _FormField(
+              controller: _nameCtrl,
+              label: 'Nombre del destinatario',
+              hint: 'Ej. Juan Pérez',
+              icon: Icons.person_outline,
+              isDark: isDark,
+              cardBg: cardBg,
+              textMain: textMain,
+              validator: (v) => (v == null || v.trim().isEmpty) ? 'Ingresa el nombre' : null,
+            ),
+            const SizedBox(height: 12),
+            _FormField(
+              controller: _phoneCtrl,
+              label: 'Teléfono de contacto',
+              hint: 'Ej. 443 123 4567',
+              icon: Icons.phone_outlined,
+              isDark: isDark,
+              cardBg: cardBg,
+              textMain: textMain,
+              keyboardType: TextInputType.phone,
+              validator: (v) {
+                final digits = (v ?? '').replaceAll(RegExp(r'\D'), '');
+                if (digits.isEmpty) return 'Ingresa el teléfono';
+                if (digits.length < 10) return 'Mínimo 10 dígitos';
+                return null;
+              },
+            ),
+            const SizedBox(height: 12),
+            _FormField(
+              controller: _addressCtrl,
+              focusNode: _addressFocus,
+              label: 'Dirección de entrega',
+              hint: 'Calle, número, colonia — Maravatío',
+              icon: Icons.location_on_outlined,
+              isDark: isDark,
+              cardBg: cardBg,
+              textMain: textMain,
+              validator: (v) => (v == null || v.trim().isEmpty) ? 'Ingresa la dirección' : null,
+            ),
+            if (_savedAddresses.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: _savedAddresses.map((a) {
+                    final label = a['label'] as String? ?? 'Dirección';
+                    final addr  = a['address'] as String? ?? '';
+                    // Las direcciones auto-guardadas al confirmar un pedido
+                    // comparten el label genérico 'Reciente' — mostrar la
+                    // dirección real evita que todos los chips digan lo mismo.
+                    final displayLabel = label == 'Reciente'
+                        ? (addr.length > 22 ? '${addr.substring(0, 22)}…' : addr)
+                        : label;
+                    final isSelected = _addressCtrl.text == addr;
+                    final chipColor = isSelected ? AppConstants.primaryColor : chipBorder;
+                    final labelColor = isSelected
+                        ? AppConstants.primaryColor
+                        : Colors.white.withValues(alpha: 0.85);
+                    return GestureDetector(
+                      onTap: () {
+                        final lat = a['lat'];
+                        final lng = a['lng'];
+                        setState(() {
+                          _addressCtrl.text = addr;
+                          _selectedPos = (lat != null && lng != null)
+                              ? LatLng((lat as num).toDouble(), (lng as num).toDouble())
+                              : null;
+                        });
+                      },
+                      child: Container(
+                        margin: const EdgeInsets.only(right: 8),
+                        padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
+                        decoration: BoxDecoration(
+                          color: isSelected ? AppConstants.primaryColor.withValues(alpha: 0.15) : chipUnsel,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: chipColor),
+                        ),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          Icon(
+                            label == 'Casa' ? Icons.home_outlined
+                                : label == 'Trabajo' ? Icons.work_outline
+                                : Icons.location_on_outlined,
+                            size: 14, color: labelColor,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(displayLabel, style: TextStyle(
+                            color: labelColor, fontSize: 12,
+                            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                          )),
+                          const SizedBox(width: 4),
+                          GestureDetector(
+                            onTap: () async {
+                              await AuthService.removeAddress(addr);
+                              if (!mounted) return;
+                              setState(() {
+                                _savedAddresses.removeWhere((x) => x['address'] == addr);
+                                if (_addressCtrl.text == addr) {
+                                  _addressCtrl.clear();
+                                  _selectedPos = null;
+                                }
+                              });
+                            },
+                            child: Icon(Icons.close, size: 14, color: labelColor),
+                          ),
+                        ]),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: _selectedPos != null
+                  ? OutlinedButton.icon(
+                      onPressed: () async {
+                        final nav = Navigator.of(context);
+                        final result = await nav.push<LatLng>(
+                          MaterialPageRoute(builder: (_) => MapPickerScreen(initial: _selectedPos)),
+                        );
+                        if (result != null && mounted) {
+                          setState(() => _selectedPos = result);
+                          final addr = await LocationService.reverseGeocode(result.latitude, result.longitude);
+                          if (addr != null && mounted) {
+                            setState(() => _addressCtrl.text = addr);
+                            _addressCtrl.selection = TextSelection(baseOffset: 0, extentOffset: addr.length);
+                            _addressFocus.requestFocus();
+                          }
+                        }
+                      },
+                      icon: const Icon(Icons.my_location, size: 16, color: Colors.green),
+                      label: const Text('GPS guardado · Cambiar pin',
+                          style: TextStyle(color: Colors.green, fontSize: 13)),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Colors.green, width: 1),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    )
+                  : Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppConstants.primaryColor.withValues(alpha: 0.55),
+                            blurRadius: 16,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      child: ElevatedButton.icon(
+                        onPressed: _loading ? null : _locateAndPick,
+                        icon: _loading
+                            ? const SizedBox(
+                                width: 18, height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                            : const Icon(Icons.pin_drop_rounded, size: 20),
+                        label: const Text('Detectar mi ubicación',
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppConstants.primaryColor,
+                          foregroundColor: Colors.white,
+                          disabledBackgroundColor: AppConstants.primaryColor.withValues(alpha: 0.5),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                          elevation: 4,
+                        ),
+                      ),
+                    ),
+            ),
+            const SizedBox(height: 12),
+            _FormField(
+              controller: _refCtrl,
+              label: 'Referencias (opcional)',
+              hint: 'Ej. Casa azul, frente al parque',
+              icon: Icons.info_outline,
+              isDark: isDark,
+              cardBg: cardBg,
+              textMain: textMain,
+            ),
+            const SizedBox(height: 28),
+
+            // ── Método de pago ───────────────────────────────────────────────
+            _SectionHeader(icon: Icons.payments_outlined, label: '¿Cómo pagas?'),
+            const SizedBox(height: 10),
+            Container(
+              decoration: BoxDecoration(color: cardBg, borderRadius: BorderRadius.circular(16)),
+              child: Column(children: [
+                _PayOption(
+                  value: _Pay.cash, group: _payment,
+                  label: 'Efectivo', subtitle: 'Paga al repartidor cuando llegue',
+                  iconWidget: const Icon(Icons.money, color: Colors.green, size: 28),
+                  onChanged: (v) => setState(() => _payment = v!),
+                  textMain: textMain, textSub: textSub, divColor: divColor,
+                ),
+                _PayOption(
+                  value: _Pay.card, group: _payment,
+                  label: 'Tarjeta', subtitle: 'Crédito o débito — procesado por Stripe',
+                  iconWidget: const _StripeIcon(),
+                  onChanged: (v) => setState(() => _payment = v!),
+                  isLast: true,
+                  textMain: textMain, textSub: textSub, divColor: divColor,
+                ),
+              ]),
+            ),
+            const SizedBox(height: 12),
+            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(Icons.lock_outline, size: 13, color: textSub),
+              const SizedBox(width: 4),
+              Text('Pagos seguros con', style: TextStyle(color: textSub, fontSize: 11)),
+              const SizedBox(width: 5),
+              const _StripeWordmark(),
+            ]),
+            const SizedBox(height: 100),
+          ],
+        ),
+      ),
+      bottomNavigationBar: _ConfirmBar(total: cart.total + _deliveryFee, onConfirm: _confirm, loading: _loading, isDark: isDark),
+    );
+  }
+}
+
+// ── Widgets privados ─────────────────────────────────────────────────────────
+
+class _SectionHeader extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  const _SectionHeader({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, color: AppConstants.primaryColor, size: 20),
+        const SizedBox(width: 8),
+        Text(
+          label,
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+        ),
+      ],
+    );
+  }
+}
+
+class _OrderItemRow extends StatelessWidget {
+  final CartItem item;
+  final bool isLast;
+  final Color textMain;
+  final Color textSub;
+  final Color divColor;
+  const _OrderItemRow({required this.item, this.isLast = false, required this.textMain, required this.textSub, required this.divColor});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(item.product.name, style: TextStyle(color: textMain, fontSize: 14)),
+                  ),
+                  Text(
+                    '${item.quantity}x  \$${item.total.toStringAsFixed(0)}',
+                    style: TextStyle(color: textSub, fontSize: 14),
+                  ),
+                ],
+              ),
+              if (item.notes.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Row(children: [
+                  Icon(Icons.notes, size: 12, color: textSub),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(item.notes,
+                        style: TextStyle(color: textSub, fontSize: 11, fontStyle: FontStyle.italic)),
+                  ),
+                ]),
+              ],
+            ],
+          ),
+        ),
+        if (!isLast) Divider(height: 1, color: divColor, indent: 16, endIndent: 16),
+      ],
+    );
+  }
+}
+
+class _FormField extends StatelessWidget {
+  final TextEditingController controller;
+  final FocusNode? focusNode;
+  final String label;
+  final String hint;
+  final IconData icon;
+  final bool isDark;
+  final Color cardBg;
+  final Color textMain;
+  final TextInputType? keyboardType;
+  final String? Function(String?)? validator;
+
+  const _FormField({
+    required this.controller,
+    this.focusNode,
+    required this.label,
+    required this.hint,
+    required this.icon,
+    required this.isDark,
+    required this.cardBg,
+    required this.textMain,
+    this.keyboardType,
+    this.validator,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hintColor = isDark ? Colors.white.withValues(alpha: 0.25) : Colors.black38;
+    final labelColor = isDark ? Colors.white.withValues(alpha: 0.8) : Colors.black87;
+    final borderColor = isDark ? Colors.white.withValues(alpha: 0.2) : Colors.grey.shade300;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Pastilla con el nombre del campo — redonda por completo, separada
+        // de la caja (a petición del dueño), en vez de la pestaña cuadrada.
+        Container(
+          margin: const EdgeInsets.only(left: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          decoration: BoxDecoration(
+            color: cardBg,
+            border: Border.all(color: borderColor),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(label,
+              style: TextStyle(color: labelColor, fontSize: 12, fontWeight: FontWeight.w600)),
+        ),
+        const SizedBox(height: 4),
+        TextFormField(
+          controller: controller,
+          focusNode: focusNode,
+          keyboardType: keyboardType,
+          validator: validator,
+          style: TextStyle(color: textMain),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: TextStyle(color: hintColor),
+            prefixIcon: Icon(icon, color: AppConstants.primaryColor, size: 20),
+            filled: true,
+            fillColor: cardBg,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: borderColor)),
+            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: borderColor)),
+            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: AppConstants.primaryColor, width: 1.5)),
+            errorStyle: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 12),
+            errorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Colors.redAccent, width: 2)),
+            focusedErrorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Colors.redAccent, width: 2)),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PayOption extends StatelessWidget {
+  final _Pay value;
+  final _Pay group;
+  final String label;
+  final String subtitle;
+  final Widget iconWidget;
+  final ValueChanged<_Pay?> onChanged;
+  final bool isLast;
+  final Color textMain;
+  final Color textSub;
+  final Color divColor;
+
+  const _PayOption({
+    required this.value,
+    required this.group,
+    required this.label,
+    required this.subtitle,
+    required this.iconWidget,
+    required this.onChanged,
+    required this.textMain,
+    required this.textSub,
+    required this.divColor,
+    this.isLast = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = value == group;
+    return Column(children: [
+      InkWell(
+        borderRadius: BorderRadius.vertical(
+          top: value == _Pay.cash ? const Radius.circular(16) : Radius.zero,
+          bottom: isLast ? const Radius.circular(16) : Radius.zero,
+        ),
+        onTap: () => onChanged(value),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(children: [
+            iconWidget,
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(label, style: TextStyle(
+                    color: selected ? AppConstants.primaryColor : textMain,
+                    fontWeight: FontWeight.w600, fontSize: 15)),
+                const SizedBox(height: 2),
+                Text(subtitle, style: TextStyle(color: textSub, fontSize: 12)),
+              ]),
+            ),
+            Container(
+              width: 22, height: 22,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: selected ? AppConstants.primaryColor : textSub,
+                  width: 2,
+                ),
+              ),
+              child: selected
+                  ? Center(child: Container(width: 11, height: 11,
+                      decoration: const BoxDecoration(shape: BoxShape.circle, color: AppConstants.primaryColor)))
+                  : null,
+            ),
+          ]),
+        ),
+      ),
+      if (!isLast) Divider(height: 1, color: divColor, indent: 16, endIndent: 16),
+    ]);
+  }
+}
+
+class _StripeIcon extends StatelessWidget {
+  const _StripeIcon();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 36,
+      height: 28,
+      decoration: BoxDecoration(
+        color: const Color(0xFF635BFF),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      alignment: Alignment.center,
+      child: const Text(
+        'S',
+        style: TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.bold,
+          fontSize: 18,
+          fontStyle: FontStyle.italic,
+          height: 1,
+        ),
+      ),
+    );
+  }
+}
+
+class _StripeWordmark extends StatelessWidget {
+  const _StripeWordmark();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: const Color(0xFF635BFF),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: const Text(
+        'stripe',
+        style: TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.bold,
+          fontSize: 10,
+          fontStyle: FontStyle.italic,
+          letterSpacing: 0.3,
+        ),
+      ),
+    );
+  }
+}
+
+class _ConfirmBar extends StatelessWidget {
+  final double total;
+  final VoidCallback onConfirm;
+  final bool loading;
+  final bool isDark;
+  const _ConfirmBar({required this.total, required this.onConfirm, this.loading = false, required this.isDark});
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = isDark ? AppConstants.surfaceColor : AppConstants.primaryColor;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
+      color: bg,
+      child: SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            Text('Total a pagar', style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 13)),
+            Text('\$${total.toStringAsFixed(0)} MXN',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20)),
+          ]),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: loading ? null : onConfirm,
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 15),
+                backgroundColor: Colors.white,
+                foregroundColor: AppConstants.primaryColor,
+                elevation: 0,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+              child: loading
+                  ? const SizedBox(height: 22, width: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2.5, color: AppConstants.primaryColor))
+                  : const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                      Icon(Icons.check_circle_outline, size: 20),
+                      SizedBox(width: 8),
+                      Text('CONFIRMAR PEDIDO', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                    ]),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+}

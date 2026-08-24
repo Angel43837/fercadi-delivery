@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <!--
+    Este index.html es exclusivo del deploy web de GOGO Flota
+    (gogo-flota.vercel.app) — NO es el que usa GOGO Food.
+
+    Flutter build siempre copia desde la carpeta web/ del proyecto sin
+    importar el --target usado, así que sin este archivo aparte, el deploy
+    de Flota terminaba sirviendo el index.html de GOGO Food (título,
+    color y script de Google Maps equivocados). Ver paso de deploy en
+    documentos/Documentaciones/manual_despliegue.md sección 1.1: después
+    de compilar, este archivo se copia sobre build/web-flota/index.html.
+
+    Los íconos (icons/Icon-*.png) siguen siendo los genéricos de web/ —
+    Flota todavía no tiene su propio set de íconos para web.
+  -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Panel de jefe de flota — GOGO Flota, Grupo Fercadi.">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="GOGO Flota">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <!-- Color de la barra de Chrome/Android acorde al tema oscuro de Flota -->
+  <meta name="theme-color" content="#0F1117">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>GOGO Flota</title>
+  <link rel="manifest" href="manifest.json">
+  <!-- Sin script de Google Maps: Flota usa flutter_map/OpenStreetMap, no google_maps_flutter -->
+</head>
+<body>
+  <script>
+    // Fuerza actualización del service worker en cada deploy
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function(registrations) {
+        for (let reg of registrations) { reg.update(); }
+      });
+    }
+  </script>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

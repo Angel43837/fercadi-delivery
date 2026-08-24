@@ -243,7 +243,10 @@ class AuthService {
     return null;
   }
 
-  static Future<void> saveProfilePhoto(String? path) async {
+  // Regresa false si la foto (siendo una URL real, ya subida) no se pudo
+  // guardar en la cuenta — antes se tragaba el error en silencio y el
+  // llamador nunca se enteraba de que solo quedó en la caché local.
+  static Future<bool> saveProfilePhoto(String? path) async {
     final prefs = await SharedPreferences.getInstance();
     final key   = await _userKey(_keyProfilePhoto);
     if (path == null) {
@@ -256,13 +259,15 @@ class AuthService {
     if (path != null && path.startsWith('http')) {
       try {
         final user = Supabase.instance.client.auth.currentUser;
-        if (user != null) {
-          await Supabase.instance.client.auth
-              .updateUser(UserAttributes(data: {'custom_avatar_url': path}))
-              .timeout(const Duration(seconds: 10));
-        }
-      } catch (_) {}
+        if (user == null) return false;
+        await Supabase.instance.client.auth
+            .updateUser(UserAttributes(data: {'custom_avatar_url': path}))
+            .timeout(const Duration(seconds: 10));
+      } catch (_) {
+        return false;
+      }
     }
+    return true;
   }
 
   // ── CLABE interbancaria (repartidor) ─────────────────────────────────────────

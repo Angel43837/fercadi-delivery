@@ -77,10 +77,16 @@ Desde julio 2026, GOGO Flota (panel del jefe de flota) es una app y un sitio web
 # Paso 1 — Compilar el entry point de flota a JavaScript (carpeta de salida distinta)
 flutter build web --release --target lib/main_flota.dart -o build/web-flota
 
-# Paso 2 — Copiar la configuración de rutas al build
+# Paso 2 — Copiar el index.html y manifest.json propios de Flota
+# (Flutter build siempre copia desde web/, que trae título/color/manifest de
+# GOGO Food — sin este paso el deploy de Flota queda con branding equivocado)
+Copy-Item web_flota/index.html build/web-flota/index.html -Force
+Copy-Item web_flota/manifest.json build/web-flota/manifest.json -Force
+
+# Paso 3 — Copiar la configuración de rutas al build
 Copy-Item vercel.json build/web-flota/vercel.json -Force
 
-# Paso 3 — Subir a producción (proyecto de Vercel separado, ej. "gogo-flota")
+# Paso 4 — Subir a producción (proyecto de Vercel separado, ej. "gogo-flota")
 cd build/web-flota
 npx vercel --prod --archive=tgz
 ```

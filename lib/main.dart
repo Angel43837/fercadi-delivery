@@ -19,6 +19,7 @@ import 'controllers/rider_withdrawal_controller.dart';
 import 'router.dart';
 import 'services/supabase_service.dart';
 import 'services/notification_service.dart';
+import 'services/fcm_service.dart';
 import 'services/location_service.dart';
 
 Future<void> _startApp() async {
@@ -32,6 +33,10 @@ Future<void> _startApp() async {
   // No se espera: el permiso nativo de iOS puede tardar o quedarse sin resolver
   // y no debe bloquear el arranque de la app.
   if (!kIsWeb) NotificationService.init();
+  // Notificaciones push reales (app cerrada/segundo plano) — no hace nada
+  // todavía si Firebase no está configurado (ver fcm_service.dart), tampoco
+  // se espera por la misma razón que NotificationService arriba.
+  if (!kIsWeb) FcmService.init();
 
   // Solo conecta Supabase si no estamos en modo demo (useMock = false)
   if (!SupabaseService.useMock) {
@@ -39,8 +44,6 @@ Future<void> _startApp() async {
       url: AppConstants.supabaseUrl,
       anonKey: AppConstants.supabaseAnonKey,
     );
-    // Crea los buckets de Storage si no existen (fotos de perfil, productos)
-    SupabaseService.ensureStorageBuckets();
     // Carga tarifas de envío desde Supabase (con fallback a valores por defecto)
     LocationService.loadTarifas();
   }
