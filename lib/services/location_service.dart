@@ -13,9 +13,12 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants.dart';
 
 class LocationService {
-  // Centro del municipio de Maravatío, Michoacán
-  static const double _lat = 19.8969;
-  static const double _lng = -100.4447;
+  // Centro y radio de cobertura — valores por defecto (Maravatío, Michoacán).
+  // Se pueden sobreescribir desde Supabase > platform_config (claves
+  // "centro_lat", "centro_lng", "radio_metros") SIN necesitar una nueva
+  // version de la app — util para ampliar la zona de servicio al momento.
+  static double _lat = 19.8969;
+  static double _lng = -100.4447;
 
   // Centro del municipio de Acámbaro, Guanajuato
   static const double _latAcambaro = 20.0386;
@@ -33,7 +36,9 @@ class LocationService {
   // (~33-34 km entre centros), a petición del dueño para que alguien en
   // Acámbaro pueda pedirle a un restaurante de Maravatío. Morelia usa este
   // mismo radio pero contado desde su propio centro (ver verificarUbicacion).
-  static const double _radioMetros = 50000;
+  // Configurable desde Supabase > platform_config (clave "radio_metros")
+  // sin necesitar una nueva versión de la app.
+  static double _radioMetros = 50000;
 
   // Nombre para mostrar de cada zona — centralizado aquí para no repetir el
   // mismo ternario/switch en cada pantalla que muestra la zona.
@@ -55,7 +60,8 @@ class LocationService {
   static double comisionRepartidorPct = 10.0;
   static double comisionRestaurantePct = 10.0;
 
-  // Carga las tarifas desde Supabase (platform_config). Se llama en main.dart al iniciar.
+  // Carga las tarifas, la comisión y la zona de cobertura desde Supabase
+  // (platform_config). Se llama en main.dart al iniciar.
   static Future<void> loadTarifas() async {
     try {
       final rows = await Supabase.instance.client
@@ -64,10 +70,15 @@ class LocationService {
       for (final row in rows as List) {
         final v = double.tryParse(row['value'] as String? ?? '');
         if (v == null) continue;
-        if (row['key'] == 'tarifa_base')   tarifaBase   = v;
-        if (row['key'] == 'tarifa_por_km') tarifaPorKm  = v;
-        if (row['key'] == 'comision_repartidor_pct')  comisionRepartidorPct  = v;
-        if (row['key'] == 'comision_restaurante_pct') comisionRestaurantePct = v;
+        switch (row['key']) {
+          case 'tarifa_base':    tarifaBase   = v;
+          case 'tarifa_por_km':  tarifaPorKm  = v;
+          case 'radio_metros':   _radioMetros = v;
+          case 'centro_lat':     _lat         = v;
+          case 'centro_lng':     _lng         = v;
+          case 'comision_repartidor_pct':  comisionRepartidorPct  = v;
+          case 'comision_restaurante_pct': comisionRestaurantePct = v;
+        }
       }
     } catch (_) {
       // Si falla, se usan los valores por defecto definidos arriba
