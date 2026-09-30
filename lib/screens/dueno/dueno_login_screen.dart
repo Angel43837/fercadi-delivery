@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../../services/auth_service.dart';
 
 const _orange = Color(0xFFFF5722);
@@ -47,6 +46,15 @@ class _DuenoLoginScreenState extends State<DuenoLoginScreen> {
       }
       await AuthService.saveDuenoSession(email);
       if (mounted) context.go('/dueno');
+    } on AuthException catch (e) {
+      // Distinguir el motivo real en vez de un "credenciales incorrectas"
+      // genérico para todo — una cuenta nueva ya no debería quedar sin
+      // confirmar (ver auto_confirm_email_signup.sql), pero si llegara a
+      // pasar (p. ej. una cuenta creada antes de esa migración) el usuario
+      // necesita saber que no es un problema de contraseña.
+      setState(() => _error = e.code == 'email_not_confirmed'
+          ? 'Tu cuenta aún no está confirmada. Contacta a soporte.'
+          : 'Correo o contraseña incorrectos');
     } catch (e) {
       setState(() => _error = 'Correo o contraseña incorrectos');
     } finally {
@@ -161,12 +169,12 @@ class _DuenoLoginScreenState extends State<DuenoLoginScreen> {
               const SizedBox(height: 20),
               Center(
                 child: TextButton(
-                  // El registro de restaurantes vive en un sitio aparte
-                  // (fuera de esta app, a petición del negocio) — ver
-                  // https://gogo-registro.vercel.app
-                  onPressed: () => launchUrl(
-                    Uri.parse('https://gogo-registro.vercel.app/registro-restaurante'),
-                  ),
+                  // El registro vive DENTRO de la app (restaurado sept 2026
+                  // — el sitio externo gogo-registro.vercel.app creaba
+                  // cuentas en otro proyecto de Supabase distinto al que
+                  // usa esta app, y esas cuentas nunca podían iniciar
+                  // sesión aquí).
+                  onPressed: () => context.push('/registro-restaurante'),
                   child: const Text('¿Nuevo restaurante? Regístrate aquí',
                       style: TextStyle(color: Colors.white70, fontSize: 13)),
                 ),

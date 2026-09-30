@@ -49,6 +49,8 @@ La sesión persiste: el splash espera el evento `initialSession` de Supabase ant
 
 El restaurante de una cuenta dueño se guarda en `user_metadata.restaurant_id` (`AuthService.getRestaurantId()`), **no** en `restaurants.owner_id` — esa columna solo se escribe al auto-registrarse y no se lee para enrutar el panel.
 
+**RLS lee `app_metadata`, no `user_metadata`** (`is_dueno()`/`is_admin()` en Supabase, vía `auth.jwt() -> 'app_metadata'`) — a propósito: `user_metadata` lo puede editar el propio usuario (`auth.updateUser`), así que si las políticas confiaran en él cualquiera podría auto-otorgarse el rol que quisiera. El trigger `trg_sync_role_to_app_metadata` (`BEFORE INSERT OR UPDATE ON auth.users`) copia `role` y `restaurant_id` de `user_metadata` a `app_metadata` automáticamente en cuanto se crean/actualizan (p. ej. al llamar `AuthService.saveRestaurantId`) — la app y el código Dart siguen leyendo/escribiendo `user_metadata` sin enterarse de este paso intermedio.
+
 ---
 
 ## Temas
@@ -85,6 +87,115 @@ Bundle ID: `com.fercadi.app` (admin: `com.fercadi.admin`)
 
 ---
 
+## Login de Riders y Restaurantes (investigado y corregido, sept 2026)
+
+Riders y Restaurantes no podían iniciar sesión con correo+contraseña aunque
+las credenciales fueran correctas. No era un bug de las pantallas de login
+(`dueno_login_screen.dart`/`repartidor_login_screen.dart` ya hacían bien el
+`signInWithPassword` + chequeo de rol) — eran **cuatro problemas reales**,
+todos fuera de esas pantallas:
+
+1. **El registro creaba la cuenta en el proyecto de Supabase equivocado.**
+   El registro se había movido a un sitio externo (`gogo-registro.vercel.app`)
+   que apunta a `mmjzyqvjdwhzefbaiums.supabase.co` (el proyecto original), pero
+   la app instalada (tanto GOGO Food como GOGO Pruebas — ningún build pasa
+   `--dart-define`) siempre autentica contra `ymztoayxzewghbethahv.supabase.co`
+   ("GOGO-Pruebas", la base que se decidió dejar como definitiva). Cualquier
+   cuenta creada en el sitio externo era invisible para la app. **Corrección:**
+   se restauró el registro DENTRO de la app —
+   `lib/screens/dueno/registro_restaurante_screen.dart` y
+   `lib/screens/repartidor_plus/registro_rider_plus_screen.dart` (rutas
+   `/registro-restaurante` y `/registro-rider`, enlazadas desde los botones
+   "¿Nuevo restaurante?"/"¿Nuevo repartidor?" de los login) — así el registro
+   usa siempre el mismo `Supabase.instance.client` que el login.
+2. **Confirmación de correo obligatoria sin ningún flujo que la completara.**
+   GOGO-Pruebas tiene "Confirm email" activo, pero la app no maneja el enlace
+   de confirmación en ningún lado — toda cuenta nueva quedaba con
+   `email_confirmed_at = NULL` para siempre, y `signInWithPassword` la
+   rechazaba con `email_not_confirmed` (que las pantallas de login mostraban,
+   engañosamente, como "Correo o contraseña incorrectos"). **Corrección:**
+   `supabase/migrations/20260907170000_auto_confirm_email_signup.sql` —
+   trigger `trg_gogo_auto_confirm_email` que confirma el correo solo en el
+   instante del registro, más backfill de las cuentas ya atascadas.
+3. **Hueco de RLS en `restaurants`:** una política vieja (`write_restaurants`,
+   heredada del baseline de agosto) dejaba escribir la tabla a *cualquier*
+   usuario autenticado, sin importar su rol — un Rider podía crear/editar
+   restaurantes ajenos por API directa. **Corrección:**
+   `20260907170500_fix_restaurants_write_policy_hole.sql` — se eliminó esa
+   política (las políticas `insert_restaurants`/`update_restaurants`/
+   `delete_restaurants`, gateadas por `is_dueno()`/`is_admin()`, ya existían y
+   quedan como las únicas). El mismo patrón `write_<tabla> ...
+   auth.role()='authenticated'` sigue existiendo, **sin revisar todavía**, en
+   `categories`, `flota_members`, `order_items`, `platform_config`,
+   `product_likes`, `products`, `restaurant_banners`, `restaurant_likes`.
+4. **Un dueño no podía ver el restaurante que acababa de registrar:** Postgres
+   exige que la fila insertada también pase la política de SELECT para poder
+   hacer `.insert({...}).select()` — y `read_restaurants` solo dejaba ver un
+   restaurante propio si `restaurant_id` ya estaba sincronizado en el JWT, cosa
+   que solo pasa DESPUÉS de este mismo insert. **Corrección:**
+   `20260907171000_fix_restaurants_read_policy_owner_gap.sql` — se agregó
+   `owner_id = auth.uid()` a `read_restaurants`.
+
+Las tres migraciones ya están aplicadas a GOGO-Pruebas. Ver
+`supabase/migrations/2026090717*.sql` para el detalle completo de cada causa.
+Verificado de punta a punta (API + build real en dispositivo): registro →
+login → redirección al panel correcto, para Rider y para Dueño, con
+contraseña incorrecta siguiendo rechazada y sin tocar cuentas/datos previos.
+
+---
+
+## Aislamiento GOGO Food (producción) vs GOGO Pruebas — auditoría sept 2026
+
+**Hallazgo central: hoy NO existe separación real entre GOGO Food y GOGO
+Pruebas.** Los dos "flavors" de iOS (`pruebas` y el default) y los tres APKs
+de Android (`build_apks.ps1`) solo difieren en bundle id/nombre/ícono —
+ninguno pasa `--dart-define` ni lee `FLUTTER_APP_FLAVOR`, así que
+`lib/core/constants.dart` sirve el mismo valor por default sin importar qué
+build sea: **`ymztoayxzewghbethahv.supabase.co`** ("GOGO-Pruebas"). El
+proyecto original (`mmjzyqvjdwhzefbaiums.supabase.co`, aquí llamado
+"producción") no lo usa ningún build actual — pero sigue vivo, con datos
+reales (15 restaurantes, esquema más viejo — le falta por ejemplo la columna
+`approval_status`) y con el webhook de Stripe real (`stripe-webhook`,
+configurado el 29 de julio) apuntando ahí, mientras que ese mismo secreto
+(`STRIPE_WEBHOOK_SECRET`) **no** está configurado en el proyecto Pruebas que
+la app sí usa — cualquier pago real que pase por la app hoy no puede
+confirmarse correctamente por webhook, porque el pedido vive en un proyecto
+y el webhook llega a otro.
+
+Otros hallazgos de la misma auditoría:
+- Los 15 restaurantes de Pruebas son un **duplicado exacto** de los de
+  producción (mismos `id`, ej. Starbucks = `"2"` en ambos) — se sembraron
+  juntos al crear Pruebas; no es una fuga accidental de esta sesión, pero
+  tampoco son datasets independientes como se asumía.
+- El widget nativo (`GOGOTrackingWidget.swift`) tenía hardcodeada la URL de
+  producción mientras la app (que llena sus datos vía App Group) usa
+  Pruebas — el widget nunca podía autenticar (JWT de un proyecto rechazado
+  por el otro). **Corregido**: ahora apunta al mismo proyecto que la app.
+- Ambos flavors (Food y Pruebas) comparten el **mismo App Group de iOS**
+  (`group.com.fercadi.app`, en `Runner.entitlements` y
+  `GOGOTrackingWidget.entitlements`, igual en las 4 configuraciones de
+  build) — si algún día sí usan proyectos de Supabase distintos, sus
+  sesiones/tokens compartirían el mismo contenedor de `UserDefaults` en el
+  mismo teléfono. **No corregido todavía** (requiere separar entitlements +
+  editar `project.pbxproj`, y hoy no cambia nada en la práctica porque ambos
+  flavors ya comparten el mismo backend) — pendiente si se separan los
+  proyectos de verdad.
+- Edge Functions: SÍ están desplegadas en ambos proyectos (`create-payment-intent`,
+  `stripe-webhook`, `order-user-lookup`, `admin-user-lookup`,
+  `send-order-notification` responden en los dos) — leen sus credenciales de
+  `Deno.env.get(...)`, nunca hardcodeadas, así que no hay riesgo de mezcla
+  ahí en el código — solo falta configurar bien los secretos por proyecto.
+
+**Pendiente de decisión (no es algo que se deba resolver solo):** si
+producción de verdad va a ser `mmjzyqvjdwhzefbaiums` (requeriría ponerle al
+día el esquema — le faltan migraciones que Pruebas ya tiene) o si se
+abandona y Pruebas pasa a ser la única base real de aquí en adelante. Hasta
+que se decida, **GOGO Food sigue usando exactamente los mismos datos que
+GOGO Pruebas** — cualquier cuenta/pedido/restaurante que se cree en un
+"flavor" es visible en el otro porque literalmente es la misma base.
+
+---
+
 ## Supabase — Tablas principales
 
 `restaurants`, `categories`, `products`, `product_images`, `orders`, `order_items`, `product_likes`
@@ -118,15 +229,18 @@ Para eliminar restaurante desde admin: `SupabaseService.deleteRestaurant(id)` �
 ## Geolocalización
 
 - Centro Maravatío: `19.8969° N, 100.4447° W`, radio 50 km (cubre también Acámbaro)
+- Centro Morelia: `19.7059° N, 101.1949° W` (Catedral), su propio radio de 50 km — está a ~80 km de Maravatío, fuera de su radio, así que se revisa aparte (agregado septiembre 2026, a petición del dueño)
 - Mock siempre simula estar dentro del radio
+- El geocoding de direcciones (`LocationService.geocodeAddress`) ya no fuerza "Maravatío" en la búsqueda — usa "Michoacán, México" como pista, para que funcione igual de bien en Morelia (antes solo funcionaba bien en Maravatío/Acámbaro)
 
 ---
 
-## Zonas (Maravatío / Acámbaro)
+## Zonas (Maravatío / Acámbaro / Morelia)
 
-- `restaurants.zona` (`'maravatio'` | `'acambaro'`) — el cliente solo ve restaurantes de su misma zona en `/restaurants`
-- Se detecta **sola**, no hay botón manual: `LocationService.zonaFromCoords(lat, lng)` (Haversine contra los centros de ambas ciudades) o `detectZona(address)` si no hay coordenadas
+- `restaurants.zona` (`'maravatio'` | `'acambaro'` | `'morelia'`) — el cliente solo ve restaurantes de su misma zona en `/restaurants`
+- Se detecta **sola**, no hay botón manual: `LocationService.zonaFromCoords(lat, lng)` (Haversine contra los centros de las tres ciudades) o `detectZona(address)` si no hay coordenadas
 - El cliente elige su zona desde el picker de dirección en `/profile` (`AuthService.getZona()`/`saveZona()`); el dueño la ve de solo lectura en `/dueno`, calculada desde la dirección del local
+- `LocationService.zonaLabel(zona)` centraliza el nombre para mostrar de cada zona — usarlo en vez de un ternario nuevo cada vez
 
 ---
 
@@ -186,6 +300,110 @@ Bug corregido: `DarwinInitializationSettings` (iOS) tenía las 3 banderas de per
 Para push real con la app cerrada: proyecto Firebase (gratis) + cuenta Apple Developer ($99/año, ya pendiente en este archivo) para la key APNs (.p8) + reescribir la Edge Function con la API v1 + descomentar `fcm_service.dart` + guardar el token en `orders`.
 
 ---
+
+## Flujo de aceptación en 2 pasos (restaurante confirma antes que el repartidor) — sept 2026
+
+Antes, un pedido nuevo (`pending`) era visible y tomable por cualquier
+repartidor al instante, sin que el restaurante interviniera — el botón
+"Aceptar" del panel del dueño existía en la UI pero no estaba conectado a
+nada (`onAccept`/`onCancel` se recibían como parámetros y nunca se usaban en
+el `build()` de `_RealOrderCard`).
+
+Ahora el flujo real es: `pending` → **`restaurant_accepted`** (el dueño
+confirma) → `accepted` (un repartidor lo toma, se llena `repartidor_id`) →
+`delivering` → `delivered`/`cancelled`. Un pedido en `pending` YA NO aparece
+en "pedidos disponibles" de ningún repartidor —
+`SupabaseService.getOrdersForRepartidor()` solo trae `restaurant_accepted`
+(sin repartidor) + los que ya son de ese repartidor. Del lado del cliente,
+`restaurant_accepted` se ve igual que `accepted` (mismo paso "Preparando" en
+`tracking_screen.dart`), porque desde su perspectiva ambos significan
+"todavía se está preparando".
+
+Enforzado del lado servidor con un trigger (no solo RLS, porque ya existían
+políticas viejas demasiado permisivas en `orders` que hubieran neutralizado
+un candado hecho solo con RLS):
+`enforce_restaurant_accepted_before_rider_claim()` (`BEFORE UPDATE ON
+orders`) — bloquea con excepción cualquier intento de poner `repartidor_id`
+si el pedido no venía ya en `restaurant_accepted`. Migración:
+`supabase/migrations/20260928010000_two_step_order_acceptance.sql`.
+
+## Comisión de la plataforma — sept 2026
+
+GOGO se queda con un **10% fijo**, tanto del envío del repartidor como de la
+venta del restaurante — guardado en `platform_config`
+(`comision_repartidor_pct`, `comision_restaurante_pct`), leído en runtime por
+`LocationService.loadTarifas()`.
+
+- **Repartidor**: el 10% se descuenta del `delivery_fee` real dentro de
+  `get_rider_balance()` (RPC,
+  `supabase/migrations/20260928020000_platform_commission.sql`) — afecta el
+  saldo retirable de verdad, no es solo un número cosmético. Además, en
+  "Pedidos disponibles" (`repartidor_screen.dart` y
+  `repartidor_plus_screen.dart`) ya no se muestra el total del pedido, se
+  muestra una ESTIMACIÓN de cuánto va a ganar el repartidor — calculada con
+  su posición GPS en vivo → restaurante → cliente
+  (`LocationService.estimarGananciaRepartidor`), ya con el 10% restado. Es
+  solo una estimación para la lista; el pago real sigue anclado al
+  `delivery_fee` fijo del pedido.
+- **Restaurante**: el dashboard del dueño (`ventasHoy` en
+  `dueno_screen.dart`) aplica el mismo 10% sobre el bruto del día.
+
+### Bug conocido, sin corregir — repartidor no queda "inactivo" al cerrar sesión
+
+`SupabaseService.setRiderInactive()` existe (pone `rider_locations.is_active
+= false`) pero nada la llama — el logout real de repartidor_plus usa
+`AuthService.clearSession()`, que no la invoca. Varias consultas sí filtran
+por `is_active = true` para mostrar riders disponibles, así que un
+repartidor que cierra sesión se sigue mostrando como activo/disponible.
+Detectado en una limpieza de código muerto (sept 2026), no corregido
+todavía.
+
+## Registro y login por correo (cliente) — corregido sept 2026
+
+`signUp()` con correo+contraseña solo pedía esos dos campos y nunca mandaba
+al usuario a poner su nombre — a diferencia del alta por teléfono, que sí
+pasa por `complete_profile_screen.dart`. Cuentas creadas por correo se
+quedaban con nombre vacío para siempre. Corregido: ahora el alta por correo
+también navega a `/complete-profile` (con la bandera
+`_emailSignUpInProgress` para que el listener genérico de
+`onAuthStateChange` no se adelante y mande al usuario a `/restaurants`
+antes de pedirle el nombre — mismo patrón que ya usaba
+`_phoneAuthInProgress`).
+
+También se quitó el mensaje "revisa tu correo para confirmar" — ya no
+aplica, el correo se auto-confirma solo (trigger
+`trg_gogo_auto_confirm_email`, ver más abajo), así que ese aviso era
+mentira y confundía.
+
+Se agregó un campo de "Confirmar contraseña" en el formulario de registro —
+sin este campo, un typo silencioso al escribir la contraseña dejaba la
+cuenta con una contraseña distinta a la que el usuario creía haber puesto,
+y luego el login fallaba con "contraseña incorrecta" sin que se notara por
+qué.
+
+## Selector de país (login/registro por teléfono) — corregido sept 2026
+
+El paquete `phone_form_field` usa por default un `BottomSheetNavigator` que
+NO es modal (`showBottomSheet` normal, sin fondo/foco propios) — el teclado
+numérico del campo de teléfono se quedaba abierto detrás del buscador de
+país, la búsqueda no recibía lo que se escribía, y no se podía cerrar
+tocando afuera (solo se destrababa tocando un número). Corregido con un
+`CountrySelectorNavigator` propio (`_GogoCountrySelectorNavigator` en
+`phone_number_field.dart`) que abre una hoja modal de verdad
+(`showModalBottomSheet`) con fondo blanco sólido explícito y tema claro
+forzado — así no hereda el tema oscuro/naranja de la pantalla de atrás ni
+se ve transparentado.
+
+## Carrusel de promos (pantalla de restaurantes) — corregido sept 2026
+
+El banner de "Promos" en `restaurants_screen.dart` (`_PromoCarousel`)
+avanzaba solo cada 4s con un `Timer.periodic` que no sabía si el usuario
+estaba arrastrando el carrusel con el dedo — le competía el swipe manual y
+lo hacía regresar de golpe al principio. Corregido con un
+`NotificationListener<ScrollNotification>` que distingue un drag real del
+usuario (`dragDetails != null`) de nuestro propio `animateToPage`: pausa el
+timer al detectar `ScrollStartNotification` con drag real, y lo reinicia
+(desde 0s) en `ScrollEndNotification`.
 
 ## Seguimiento del pedido — ya existía, solo se corrigieron bugs de UI/GPS
 

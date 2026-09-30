@@ -23,6 +23,7 @@ import '../../services/notification_service.dart';
 import '../../services/order_history_service.dart';
 import '../../services/supabase_service.dart';
 import '../../models/restaurant_banner.dart';
+import '../../models/app_promo.dart';
 
 // Trunca por caracteres (no solo por ancho/maxLines) para que el título de
 // un platillo nunca empuje el precio ni cambie la altura de la tarjeta,
@@ -85,6 +86,12 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
   // Precio del platillo más barato de cada restaurante — para los filtros
   // "Menos de $100"/"Menos de $200" (kPriceFilters, no son categorías reales).
   Map<String, double> _minPrices = {};
+  // Cupones/promos propios de la app GOGO (no de un restaurante), para la
+  // pestaña "Promos" en la lista.
+  List<AppPromo> _allPromos = [];
+  bool _promosExpanded = false;
+  final _promosScrollCtrl = ScrollController();
+  Timer? _promosAutoScrollTimer;
 
   // Active order banner
   Map<String, dynamic>? _activeOrder;
@@ -98,6 +105,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
     _initLocation().then((_) {
       _loadFavoriteCategories();
       _loadMinPrices();
+      _loadAppPromos();
     });
     AuthService.getDisplayName().then((n) {
       if (mounted) setState(() => _displayName = n);
@@ -130,6 +138,8 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
     _searchFocusNode.dispose();
     _activeOrderTimer?.cancel();
     _promoRefreshTimer?.cancel();
+    _promosAutoScrollTimer?.cancel();
+    _promosScrollCtrl.dispose();
     super.dispose();
   }
 
@@ -234,7 +244,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
           duration: const Duration(seconds: 4),
           behavior: SnackBarBehavior.floating,
         ));
-      } else if (status == 'accepted') {
+      } else if (status == 'restaurant_accepted') {
         NotificationService.pedidoAceptado();
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: const Row(children: [
@@ -335,6 +345,184 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
     if (ids.isEmpty) return;
     final prices = await SupabaseService.getMinPricesForRestaurants(ids);
     if (mounted && prices.isNotEmpty) setState(() => _minPrices = prices);
+  }
+
+  // Trae los cupones/promos propios de la app GOGO (no de un restaurante),
+  // para la pestaña "Promos".
+  Future<void> _loadAppPromos() async {
+    final promos = await SupabaseService.getActivePromos();
+    if (mounted) setState(() => _allPromos = promos);
+  }
+
+  // ── Tab de "Promos" en la lista, con el mismo estilo de acordeón que un
+  // restaurante (banda naranja + se expande hacia abajo) ──────────────────
+  // Avanza sola la fila de cupones, una tarjeta a la vez, mientras la
+  // pestaña "Promos" siga abierta — vuelve al principio al llegar al final.
+  static const _promosCardStride = 232.0; // ancho de la tarjeta (220) + separación (12)
+
+  void _startPromosAutoScroll() {
+    _promosAutoScrollTimer?.cancel();
+    if (_allPromos.length < 2) return;
+    // Timer.periodic solo dispara su primer "tick" después de esperar el
+    // intervalo completo (1.4s) — antes eso hacía que el carrusel se abriera
+    // y se quedara quieto un rato antes de arrancar. Ahora se mueve desde el
+    // primer cuadro en el que ya existe (justo cuando termina de
+    // construirse, tras abrirse), y de ahí en adelante sigue el mismo ritmo.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _advancePromosCarousel());
+    _promosAutoScrollTimer = Timer.periodic(
+      const Duration(milliseconds: 1400),
+      (_) => _advancePromosCarousel(),
+    );
+  }
+
+  void _advancePromosCarousel() {
+    if (!_promosScrollCtrl.hasClients) return;
+    final max = _promosScrollCtrl.position.maxScrollExtent;
+    final next = _promosScrollCtrl.offset + _promosCardStride;
+    _promosScrollCtrl.animateTo(
+      next >= max ? 0 : next,
+      duration: const Duration(milliseconds: 500),
+      curve: Curves.easeInOut,
+    );
+  }
+
+  Widget _buildPromosTile() {
+    // Ovalada (radio grande) mientras está cerrada — al abrirse, la parte de
+    // arriba se suaviza un poco menos para que se sienta pegada al carrusel
+    // de abajo en vez de flotar como una píldora separada.
+    const collapsedRadius = 28.0;
+    const expandedTopRadius = 20.0;
+    final borderRadius = BorderRadius.only(
+      topLeft: Radius.circular(_promosExpanded ? expandedTopRadius : collapsedRadius),
+      topRight: Radius.circular(_promosExpanded ? expandedTopRadius : collapsedRadius),
+      bottomLeft: Radius.circular(_promosExpanded ? 0 : collapsedRadius),
+      bottomRight: Radius.circular(_promosExpanded ? 0 : collapsedRadius),
+    );
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 250),
+      clipBehavior: Clip.antiAlias,
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(_promosExpanded ? expandedTopRadius : collapsedRadius),
+          topRight: Radius.circular(_promosExpanded ? expandedTopRadius : collapsedRadius),
+          // Antes esto se quedaba fijo en 20 aunque estuviera cerrada — con
+          // las de arriba en 28 (ovaladas) y estas en 20, las cuatro
+          // esquinas no coincidían y se veía disparejo, no un óvalo
+          // limpio. Ahora sigue la misma lógica que las de arriba.
+          bottomLeft: Radius.circular(_promosExpanded ? 20 : collapsedRadius),
+          bottomRight: Radius.circular(_promosExpanded ? 20 : collapsedRadius),
+        ),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withValues(alpha: 0.18), offset: const Offset(0, 6), blurRadius: 16),
+        ],
+      ),
+      child: Column(children: [
+        GestureDetector(
+          onTap: () => setState(() {
+            _promosExpanded = !_promosExpanded;
+            if (_promosExpanded) {
+              _startPromosAutoScroll();
+            } else {
+              _promosAutoScrollTimer?.cancel();
+            }
+          }),
+          child: Container(
+            decoration: BoxDecoration(color: Colors.white, borderRadius: borderRadius),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Row(children: [
+              const Expanded(
+                child: Text('Promos',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppConstants.primaryColor)),
+              ),
+            ]),
+          ),
+        ),
+        if (_promosExpanded)
+          Padding(
+            padding: const EdgeInsets.only(top: 12, bottom: 12),
+            child: _allPromos.isEmpty
+                ? const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                    child: Text('No hay promociones activas por ahora', style: TextStyle(color: Colors.black45)),
+                  )
+                : SizedBox(
+                    height: 190,
+                    child: ListView.builder(
+                      controller: _promosScrollCtrl,
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      itemCount: _allPromos.length,
+                      itemBuilder: (_, i) => _buildPromoCard(_allPromos[i]),
+                    ),
+                  ),
+          ),
+      ]),
+    );
+  }
+
+  Widget _buildPromoCard(AppPromo p) {
+    return GestureDetector(
+      // Si el banner tiene una promoción real enlazada, lleva a su detalle
+      // (con botón de "Reclamar" de verdad) — si no, se queda igual que
+      // siempre: solo abre la imagen en grande. Un banner nunca aplica un
+      // descuento por sí mismo.
+      onTap: p.linkedPromotionId != null
+          ? () => context.push('/promotion-detail', extra: {'promotionId': p.linkedPromotionId})
+          : () => showDialog(
+                context: context,
+                builder: (_) => Dialog(
+                  backgroundColor: Colors.transparent,
+                  insetPadding: const EdgeInsets.all(20),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Image.network(p.imageUrl, fit: BoxFit.contain),
+                  ),
+                ),
+              ),
+      child: Container(
+        width: 220,
+        margin: const EdgeInsets.only(right: 12),
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(color: const Color(0xFFF7F7F7), borderRadius: BorderRadius.circular(24)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Stack(children: [
+            Image.network(p.imageUrl,
+                width: double.infinity, height: 120, fit: BoxFit.cover,
+                errorBuilder: (_, _, _) =>
+                    Container(height: 120, color: AppConstants.primaryColor.withValues(alpha: 0.12))),
+            if (p.badge.isNotEmpty)
+              Positioned(
+                top: 10, left: 10,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(color: p.badgeColor, borderRadius: BorderRadius.circular(8)),
+                  child: Text(p.badge,
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11)),
+                ),
+              ),
+          ]),
+          if (p.title.isNotEmpty || p.subtitle.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                if (p.title.isNotEmpty)
+                  Text(p.title,
+                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Color(0xFF1A1A1A))),
+                if (p.subtitle.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(p.subtitle,
+                      maxLines: 2, overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: Colors.black.withValues(alpha: 0.55), fontSize: 12)),
+                ],
+              ]),
+            ),
+        ]),
+      ),
+    );
   }
 
   // Adelanta (sin ocultar) los restaurantes cuyas categorías coinciden con
@@ -718,6 +906,19 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
           },
         ),
         ListTile(
+          leading: Icon(Icons.local_offer_outlined, color: isDark ? AppConstants.primaryColor : Colors.white),
+          title: Text('Mis promociones', style: TextStyle(color: textColor)),
+          onTap: () {
+            Navigator.pop(context);
+            if (Supabase.instance.client.auth.currentUser == null) {
+              showLoginRequiredSheet(context,
+                  message: 'Inicia sesión para ver tus promociones.', returnTo: '/my-promotions');
+              return;
+            }
+            context.push('/my-promotions');
+          },
+        ),
+        ListTile(
           leading: Icon(Icons.privacy_tip_outlined, color: isDark ? AppConstants.primaryColor : Colors.white),
           title: Text('Política de Privacidad', style: TextStyle(color: textColor)),
           onTap: () { Navigator.pop(context); context.push('/privacy-policy'); },
@@ -860,8 +1061,9 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
           padding: const EdgeInsets.all(16),
           // Con la lista vacía, sin el +1 extra el índice 1 (donde vive el
           // mensaje de "no hay restaurantes") nunca se llegaba a construir.
-          itemCount: restaurants.isEmpty ? 2 : restaurants.length + 1,
+          itemCount: restaurants.isEmpty ? 3 : restaurants.length + 2,
           itemBuilder: (context, i) {
+            if (i == 1) return _buildPromosTile();
             if (i == 0) {
               return Padding(
                 padding: const EdgeInsets.only(bottom: 20),
@@ -913,7 +1115,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
               );
             }
             if (restaurants.isEmpty) {
-              final zonaLabel = _zona == 'acambaro' ? 'Acámbaro' : 'Maravatío';
+              final zonaLabel = LocationService.zonaLabel(_zona);
               return Center(
                 child: Padding(
                   padding: const EdgeInsets.only(top: 40),
@@ -927,7 +1129,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                 ),
               );
             }
-            return _buildRestaurantTile(restaurants[i - 1], appData);
+            return _buildRestaurantTile(restaurants[i - 2], appData);
           },
         );
       },
@@ -1837,7 +2039,8 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                   ]),
                 ]),
                 const SizedBox(height: 14),
-                Center(
+                SizedBox(
+                  width: double.infinity,
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: accent,
@@ -1875,15 +2078,13 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                         );
                         if (cambiar != true || !mounted) return;
                       }
-                      final effectiveProduct = (bannerDiscount != null && !isPromo)
-                          ? Product(
-                              id: p.id, categoryId: p.categoryId, name: p.name,
-                              description: p.description,
-                              price: p.price * (1 - bannerDiscount / 100),
-                              imageUrl: p.imageUrl, isAvailable: p.isAvailable)
-                          : p;
+                      // El % de un banner (bannerDiscount) es solo texto
+                      // publicitario ahora — ya no se resta del precio real
+                      // al agregar al carrito. Para que un descuento aplique
+                      // de verdad hace falta una promoción real, reclamada y
+                      // validada por el servidor (ver checkout_screen.dart).
                       for (int i = 0; i < qty; i++) {
-                        context.read<CartProvider>().addProduct(effectiveProduct, restaurantId, restaurantName);
+                        context.read<CartProvider>().addProduct(p, restaurantId, restaurantName);
                       }
                       setState(() {
                         _expandedProductId = null;
@@ -1946,7 +2147,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
       LocationStatus.fueraDeMaravatio => (
           Icons.location_off_outlined,
           'Fuera de zona de servicio',
-          'Solo operamos en el municipio de\nMaravatío, Mich.\n\nEstás a ${_locationResult?.distanciaKm?.toStringAsFixed(1)} km del centro.',
+          'Solo operamos en Maravatío, Acámbaro\ny Morelia, Mich.\n\nEstás a ${_locationResult?.distanciaKm?.toStringAsFixed(1)} km del centro más cercano.',
           false,
         ),
       LocationStatus.permisoDenegado ||
@@ -2181,6 +2382,11 @@ class _PromoCarouselState extends State<_PromoCarousel> {
   @override
   void initState() {
     super.initState();
+    _startAutoScroll();
+  }
+
+  void _startAutoScroll() {
+    _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 4), (_) {
       if (!mounted) return;
       final next = (_current + 1) % widget.slides.length;
@@ -2204,11 +2410,28 @@ class _PromoCarouselState extends State<_PromoCarousel> {
         borderRadius: BorderRadius.zero,
         child: SizedBox(
           height: 140,
-          child: PageView.builder(
-            controller: _ctrl,
-            itemCount: widget.slides.length,
-            onPageChanged: (i) => setState(() => _current = i),
-            itemBuilder: (_, i) {
+          child: NotificationListener<ScrollNotification>(
+            // El usuario tocando y arrastrando el carrusel manda un
+            // ScrollStartNotification con dragDetails != null (a diferencia
+            // de nuestro propio animateToPage, que también dispara
+            // notificaciones de scroll pero sin dragDetails) — se usa eso
+            // para pausar el avance automático mientras el dedo está encima
+            // y no le compita al swipe manual. Al soltar, se reinicia el
+            // timer desde cero (mismos 4s) en vez de dejarlo corriendo con
+            // el conteo viejo.
+            onNotification: (n) {
+              if (n is ScrollStartNotification && n.dragDetails != null) {
+                _timer?.cancel();
+              } else if (n is ScrollEndNotification) {
+                _startAutoScroll();
+              }
+              return false;
+            },
+            child: PageView.builder(
+              controller: _ctrl,
+              itemCount: widget.slides.length,
+              onPageChanged: (i) => setState(() => _current = i),
+              itemBuilder: (_, i) {
               final slide = widget.slides[i];
               return GestureDetector(
                 onTap: slide.onTap,
@@ -2303,6 +2526,7 @@ class _PromoCarouselState extends State<_PromoCarousel> {
               ]),
               );
             },
+            ),
           ),
         ),
       ),

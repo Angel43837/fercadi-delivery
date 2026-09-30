@@ -24,32 +24,6 @@ enum AppOrderStatus { pendiente, enCamino, entregado, cancelado }
   AppOrderStatus.cancelado => (color: Colors.red,              label: 'Cancelado'),
 };
 
-class AppOrder {
-  final String id;
-  final String restaurantId;
-  final String restaurantName;
-  final String restaurantIcon;
-  final String customer;
-  final double total;
-  AppOrderStatus status;
-  final String time;
-  final List<String> items;
-  final int itemsCount;
-
-  AppOrder({
-    required this.id,
-    required this.restaurantId,
-    required this.restaurantName,
-    required this.restaurantIcon,
-    required this.customer,
-    required this.total,
-    required this.status,
-    required this.time,
-    required this.items,
-    required this.itemsCount,
-  });
-}
-
 class SharedProduct {
   final String id;
   String name;
@@ -84,7 +58,7 @@ class AppDataProvider extends ChangeNotifier {
   Future<void> initRestaurantLikes() async {
     try {
       final counts = await SupabaseService.getRestaurantLikeCounts();
-      final liked  = await SupabaseService.getUserLikedRestaurants(_userEmail);
+      final liked  = await SupabaseService.getUserLikedRestaurants(_userId);
       _likes
         ..clear()
         ..addAll(counts);
@@ -100,7 +74,7 @@ class AppDataProvider extends ChangeNotifier {
   Future<void> _refreshRestaurantLikes() async {
     try {
       final counts = await SupabaseService.getRestaurantLikeCounts();
-      final liked  = await SupabaseService.getUserLikedRestaurants(_userEmail);
+      final liked  = await SupabaseService.getUserLikedRestaurants(_userId);
       _likes
         ..clear()
         ..addAll(counts);
@@ -121,14 +95,15 @@ class AppDataProvider extends ChangeNotifier {
       _likes[restaurantId] = (_likes[restaurantId] ?? 0) + 1;
     }
     notifyListeners();
-    await SupabaseService.toggleRestaurantLike(restaurantId, _userEmail);
+    await SupabaseService.toggleRestaurantLike(restaurantId, _userId);
   }
 
   // ── Likes de platillos (realtime Supabase) ───────────────────────────────────
   final Map<String, int> _productLikes      = {};
   final Set<String>      _productLikedByUser = {};
   RealtimeChannel?       _likesChannel;
-  String                 _userEmail = '';
+  // UID de Supabase (no email — una cuenta de solo-teléfono no tiene).
+  String                 _userId = '';
 
   int  getProductLikes(String productId)    => _productLikes[productId] ?? 0;
   bool isProductLikedByUser(String productId) => _productLikedByUser.contains(productId);
@@ -136,14 +111,14 @@ class AppDataProvider extends ChangeNotifier {
   Future<void> initProductLikes() async {
     try {
       final session = await AuthService.getSession();
-      _userEmail = session?.email ?? '';
+      _userId = session?.uid ?? '';
 
       // Todas las queries en paralelo
       final results = await Future.wait([
         SupabaseService.getProductLikeCounts(),
-        SupabaseService.getUserLikedProducts(_userEmail),
+        SupabaseService.getUserLikedProducts(_userId),
         SupabaseService.getRestaurantLikeCounts(),
-        SupabaseService.getUserLikedRestaurants(_userEmail),
+        SupabaseService.getUserLikedRestaurants(_userId),
       ]);
 
       _productLikes..clear()..addAll(results[0] as Map<String, int>);
@@ -162,7 +137,7 @@ class AppDataProvider extends ChangeNotifier {
   Future<void> _refreshLikes() async {
     try {
       final counts = await SupabaseService.getProductLikeCounts();
-      final liked  = await SupabaseService.getUserLikedProducts(_userEmail);
+      final liked  = await SupabaseService.getUserLikedProducts(_userId);
       _productLikes
         ..clear()
         ..addAll(counts);
@@ -186,7 +161,7 @@ class AppDataProvider extends ChangeNotifier {
     notifyListeners();
 
     // Persistir en Supabase (el realtime actualizará todos los dispositivos)
-    await SupabaseService.toggleProductLike(productId, _userEmail);
+    await SupabaseService.toggleProductLike(productId, _userId);
   }
 
   @override
@@ -248,27 +223,4 @@ class AppDataProvider extends ChangeNotifier {
     }
   }
 
-  // ── Pedidos compartidos ──────────────────────────────────────────────────────
-  final List<AppOrder> _orders = [
-    AppOrder(id: '001', restaurantId: '1', restaurantName: 'McDonalds',  restaurantIcon: '🍔', customer: 'Carlos Pérez',   total: 258, status: AppOrderStatus.pendiente,  time: 'hace 2 min',  items: ['Big Mac x2', 'Papas Grandes', 'Coca-Cola'],  itemsCount: 3),
-    AppOrder(id: '002', restaurantId: '2', restaurantName: 'Starbucks',  restaurantIcon: '☕', customer: 'María López',    total: 170, status: AppOrderStatus.entregado, time: 'hace 12 min', items: ['Café Latte', 'Croissant'],                    itemsCount: 2),
-    AppOrder(id: '003', restaurantId: '3', restaurantName: 'Sushi Roll', restaurantIcon: '🍣', customer: 'Ana García',     total: 320, status: AppOrderStatus.pendiente, time: 'hace 1 min',  items: ['California Roll x2', 'Sopa Miso x2'],       itemsCount: 4),
-    AppOrder(id: '004', restaurantId: '1', restaurantName: 'McDonalds',  restaurantIcon: '🍔', customer: 'Luis Martínez', total: 95,  status: AppOrderStatus.enCamino,  time: 'hace 10 min', items: ['Quarter Pounder'],                           itemsCount: 1),
-    AppOrder(id: '005', restaurantId: '2', restaurantName: 'Starbucks',  restaurantIcon: '☕', customer: 'Rosa Flores',    total: 140, status: AppOrderStatus.cancelado, time: 'hace 35 min', items: ['Frappuccino x2'],                            itemsCount: 2),
-    AppOrder(id: '006', restaurantId: '3', restaurantName: 'Sushi Roll', restaurantIcon: '🍣', customer: 'Jorge Ramírez', total: 265, status: AppOrderStatus.entregado, time: 'hace 41 min', items: ['Sashimi Mix', 'Edamame', 'Sopa Miso'],      itemsCount: 3),
-    AppOrder(id: '007', restaurantId: '1', restaurantName: 'McDonalds',  restaurantIcon: '🍔', customer: 'Sofía Torres',  total: 189, status: AppOrderStatus.entregado, time: 'hace 55 min', items: ['Big Mac', 'McFlurry Oreo', 'Coca-Cola'],    itemsCount: 2),
-  ];
-
-  List<AppOrder> get allOrders => _orders;
-
-  List<AppOrder> ordersForRestaurant(String restaurantId) =>
-      _orders.where((o) => o.restaurantId == restaurantId).toList();
-
-  void updateOrderStatus(String orderId, AppOrderStatus status) {
-    final idx = _orders.indexWhere((o) => o.id == orderId);
-    if (idx != -1) {
-      _orders[idx].status = status;
-      notifyListeners();
-    }
-  }
 }

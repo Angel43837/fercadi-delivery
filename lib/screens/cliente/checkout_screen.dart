@@ -11,6 +11,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:flutter/material.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
@@ -20,6 +21,7 @@ import '../../core/constants.dart';
 import '../../core/guest_prompt.dart';
 import '../../models/cart_item.dart';
 import '../../models/restaurant.dart';
+import '../../models/promotion_claim.dart';
 import '../../providers/cart_provider.dart';
 import '../../services/location_service.dart';
 import '../../services/supabase_service.dart';
@@ -41,18 +43,26 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   final _formKey = GlobalKey<FormState>();
   final _scrollCtrl = ScrollController();
   final _nameCtrl = TextEditingController();
-  final _phoneCtrl = TextEditingController();
   final _addressCtrl = TextEditingController();
   final _addressFocus = FocusNode();
   final _refCtrl = TextEditingController();
   _Pay _payment = _Pay.cash;
   bool _loading = false;
+  bool _promoValidating = false;
   LatLng? _selectedPos;
   List<Map<String, dynamic>> _savedAddresses = [];
   final Map<String, Restaurant> _restaurants = {}; // restaurantId → Restaurant
 
   Restaurant? get _primaryRestaurant =>
       _restaurants.values.firstOrNull;
+
+  // Una promoción solo se puede aplicar cuando el carrito es de un solo
+  // restaurante — con varios a la vez no hay una forma clara de a cuál de
+  // los pedidos resultantes aplicarle el descuento, así que se desactiva.
+  String? get _singleRestaurantId {
+    final byRestaurant = context.read<CartProvider>().itemsByRestaurant;
+    return byRestaurant.length == 1 ? byRestaurant.keys.first : null;
+  }
 
   double get _deliveryFee {
     final r = _primaryRestaurant;
@@ -93,11 +103,171 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     setState(() => _savedAddresses = addresses);
   }
 
+  // ── Promoción ────────────────────────────────────────────────────────────
+
+  Future<void> _pickPromotion() async {
+    final rid = _singleRestaurantId;
+    final nav = GoRouter.of(context);
+    final claim = await nav.push<PromotionClaim>('/my-promotions', extra: {
+      'selectionMode': true,
+      if (rid != null) 'restaurantId': rid,
+    });
+    if (claim == null || !mounted) return;
+    context.read<CartProvider>().selectPromo(claim);
+    await _revalidatePromo();
+  }
+
+  // Le pide al servidor el descuento real para la promoción ya elegida — se
+  // llama al elegirla y de nuevo cada vez que el carrito cambia (ver
+  // CartProvider, que limpia _promoValidation en cada cambio). El número
+  // que se muestra siempre es el que regresa esta llamada, nunca uno
+  // calculado aquí.
+  Future<void> _revalidatePromo() async {
+    final cart = context.read<CartProvider>();
+    final claim = cart.selectedPromoClaim;
+    final rid = _singleRestaurantId;
+    if (claim == null || rid == null) return;
+    setState(() => _promoValidating = true);
+    try {
+      final items = cart.itemsByRestaurant[rid] ?? [];
+      final result = await SupabaseService.validatePromotionForOrder(
+        claimId: claim.id,
+        restaurantId: rid,
+        cartItems: items.map((i) => {
+          'product_id': i.product.id,
+          'category_id': i.product.categoryId,
+          'quantity': i.quantity,
+          'unit_price': i.product.price,
+        }).toList(),
+        subtotal: items.fold(0.0, (s, i) => s + i.total),
+        deliveryFee: _deliveryFee,
+      );
+      if (!mounted) return;
+      cart.setPromoValidation(result);
+      if (result['valid'] != true && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(_mapPromoError(result['reason'] as String?)),
+          backgroundColor: Colors.redAccent,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        cart.setPromoValidation({'valid': false, 'reason': 'error'});
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('No se pudo validar la promoción. Intenta de nuevo.'),
+          backgroundColor: Colors.redAccent,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _promoValidating = false);
+    }
+  }
+
+  String _mapPromoError(String? reason) {
+    switch (reason) {
+      case 'promocion_expirada': return 'Esta promoción ya venció.';
+      case 'promocion_no_iniciada': return 'Esta promoción todavía no empieza.';
+      case 'restaurante_no_coincide': return 'Esta promoción no aplica en este restaurante.';
+      case 'fuera_de_horario': return 'Esta promoción no está disponible en este horario.';
+      case 'dia_no_valido': return 'Esta promoción no aplica hoy.';
+      case 'compra_minima_no_alcanzada': return 'Te falta para llegar a la compra mínima de esta promoción.';
+      case 'productos_no_elegibles': return 'Ningún producto en tu carrito califica para esta promoción.';
+      case 'usos_agotados': return 'Esta promoción ya se agotó.';
+      case 'ya_utilizada': return 'Ya usaste esta promoción antes.';
+      case 'requiere_producto_gratis_en_carrito': return 'Agrega el producto gratis de esta promoción a tu carrito para usarla.';
+      default: return 'Esta promoción no se puede usar en este pedido.';
+    }
+  }
+
+  void _removePromo() {
+    context.read<CartProvider>().clearPromo();
+    setState(() {});
+  }
+
+  double _orderTotalDisplay(CartProvider cart) =>
+      cart.total + _deliveryFee - (cart.hasValidPromo ? cart.promoDiscount : 0);
+
+  Widget _buildPromoSection(CartProvider cart, Color textMain, Color textSub, Color cardBg) {
+    final canApply = _singleRestaurantId != null;
+    final claim = cart.selectedPromoClaim;
+
+    if (!canApply) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(color: cardBg, borderRadius: BorderRadius.circular(14)),
+        child: Row(children: [
+          Icon(Icons.local_offer_outlined, color: textSub, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Las promociones no aplican a pedidos de varios restaurantes a la vez.',
+              style: TextStyle(color: textSub, fontSize: 12.5),
+            ),
+          ),
+        ]),
+      );
+    }
+
+    if (claim == null) {
+      return SizedBox(
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          onPressed: _pickPromotion,
+          icon: const Icon(Icons.local_offer_outlined, color: AppConstants.primaryColor, size: 18),
+          label: const Text('Gastar cupón', style: TextStyle(color: AppConstants.primaryColor, fontWeight: FontWeight.w600)),
+          style: OutlinedButton.styleFrom(
+            backgroundColor: cardBg,
+            side: const BorderSide(color: AppConstants.primaryColor),
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
+        ),
+      );
+    }
+
+    final valid = cart.hasValidPromo;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: cardBg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: valid ? Colors.green : Colors.redAccent, width: 1),
+      ),
+      child: Row(children: [
+        Icon(valid ? Icons.check_circle : Icons.error_outline, color: valid ? Colors.green : Colors.redAccent, size: 22),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(claim.promotion?.title ?? 'Promoción',
+                  style: TextStyle(color: textMain, fontWeight: FontWeight.w600, fontSize: 13.5)),
+              if (_promoValidating)
+                Text('Validando…', style: TextStyle(color: textSub, fontSize: 12))
+              else
+                Text(
+                  valid ? '-\$${cart.promoDiscount.toStringAsFixed(0)} MXN de descuento' : 'No se pudo aplicar',
+                  style: TextStyle(color: valid ? Colors.green : Colors.redAccent, fontSize: 12, fontWeight: FontWeight.w600),
+                ),
+            ],
+          ),
+        ),
+        if (_promoValidating)
+          const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: AppConstants.primaryColor))
+        else
+          IconButton(
+            onPressed: _removePromo,
+            icon: Icon(Icons.close, color: textSub, size: 18),
+            tooltip: 'Quitar promoción',
+          ),
+      ]),
+    );
+  }
+
   @override
   void dispose() {
     _scrollCtrl.dispose();
     _nameCtrl.dispose();
-    _phoneCtrl.dispose();
     _addressCtrl.dispose();
     _addressFocus.dispose();
     _refCtrl.dispose();
@@ -172,19 +342,36 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   // flutter_stripe en ciertas versiones de iOS, donde el PaymentSheet se
   // queda cargando para siempre sin lanzar error), esto evita que el botón
   // "Confirmar pedido" se quede pegado indefinidamente.
-  Future<bool> _payWithStripe(double total) async {
+  // Regresa el id del PaymentIntent si el pago se confirmó (para enlazar el
+  // pedido con el webhook de Stripe vía orders.stripe_payment_intent_id —
+  // antes se descartaba aquí mismo y esa columna nunca se llenaba), o null
+  // si el pago falló/se canceló.
+  Future<String?> _payWithStripe(
+    double total, {
+    Map<String, dynamic>? promoBody,
+  }) async {
     try {
       // 1. Pedir clientSecret al backend (Edge Function)
       debugPrint('[Stripe] Solicitando payment intent al backend...');
       final res = await Supabase.instance.client.functions.invoke(
         'create-payment-intent',
-        body: {'amount': total, 'currency': 'mxn'},
+        body: {
+          'amount': total,
+          'currency': 'mxn',
+          ...?promoBody,
+        },
       ).timeout(const Duration(seconds: 20));
       final clientSecret = res.data?['clientSecret'] as String?;
+      final paymentIntentId = res.data?['id'] as String?;
       if (clientSecret == null) {
         debugPrint('[Stripe] El backend no devolvió clientSecret: ${res.data}');
-        _showPaymentError('No se pudo iniciar el pago. Intenta de nuevo.');
-        return false;
+        // Si el backend rechazó por un descuento que no coincide (alguien
+        // manipulando la app, o la promoción cambió justo en ese momento),
+        // el mensaje real llega aquí — se muestra tal cual en vez del
+        // genérico, para que quede claro que no fue un problema de tarjeta.
+        final backendError = res.data?['error'] as String?;
+        _showPaymentError(backendError ?? 'No se pudo iniciar el pago. Intenta de nuevo.');
+        return null;
       }
       debugPrint('[Stripe] Payment intent recibido, iniciando PaymentSheet...');
 
@@ -204,19 +391,19 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       // cargando para siempre si el sheet nunca llega a mostrarse.
       await Stripe.instance.presentPaymentSheet().timeout(const Duration(seconds: 90));
       debugPrint('[Stripe] Pago confirmado.');
-      return true;
+      return paymentIntentId ?? '';
     } on TimeoutException {
       debugPrint('[Stripe] Timeout esperando respuesta de Stripe.');
       _showPaymentError('El pago está tardando demasiado. Revisa tu conexión e intenta de nuevo.');
-      return false;
+      return null;
     } on StripeException catch (e) {
       debugPrint('[Stripe] StripeException: ${e.error.code} ${e.error.message}');
       _showPaymentError(e.error.localizedMessage ?? 'Pago cancelado');
-      return false;
+      return null;
     } catch (e) {
       debugPrint('[Stripe] Error inesperado: $e');
       _showPaymentError('No se pudo procesar el pago. Revisa tu conexión e intenta de nuevo.');
-      return false;
+      return null;
     }
   }
 
@@ -233,9 +420,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     setState(() => _loading = true);
     final cart = context.read<CartProvider>();
     final deliveryFee = _deliveryFee;
-    final orderTotal = cart.total + deliveryFee;
+    // El descuento SIEMPRE es el que ya validó el servidor (ver
+    // _revalidatePromo) — nunca se calcula aquí. Si por algún motivo no hay
+    // una validación vigente y "válida" en este momento, no se aplica nada.
+    final promoClaim = cart.selectedPromoClaim;
+    final promoValid = cart.hasValidPromo;
+    final promoDiscount = promoValid ? cart.promoDiscount : 0.0;
+    final promoAppliesToShipping = promoValid && cart.promoAppliesToShipping;
+    final orderTotal = cart.total + deliveryFee - promoDiscount;
 
     // Si el pago es con tarjeta, procesar Stripe primero
+    String? stripePaymentIntentId;
     if (_payment == _Pay.card) {
       if (kIsWeb) {
         if (mounted) {
@@ -249,8 +444,30 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         }
         return;
       }
-      final paid = await _payWithStripe(orderTotal);
-      if (!paid) {
+      // Si hay una promoción aplicada, el backend la vuelve a validar por su
+      // cuenta antes de crear el cobro — así aunque alguien manipulara la
+      // app, no podría pagar de menos usando un descuento inventado.
+      Map<String, dynamic>? promoBody;
+      if (promoValid && promoClaim != null) {
+        final rid = cart.itemsByRestaurant.keys.first;
+        final rItems = cart.itemsByRestaurant[rid] ?? [];
+        promoBody = {
+          'promotionClaimId': promoClaim.id,
+          'cartSummary': {
+            'restaurantId': rid,
+            'items': rItems.map((i) => {
+              'product_id': i.product.id,
+              'category_id': i.product.categoryId,
+              'quantity': i.quantity,
+              'unit_price': i.product.price,
+            }).toList(),
+            'subtotal': rItems.fold(0.0, (s, i) => s + i.total),
+            'deliveryFee': deliveryFee,
+          },
+        };
+      }
+      stripePaymentIntentId = await _payWithStripe(orderTotal, promoBody: promoBody);
+      if (stripePaymentIntentId == null) {
         if (mounted) setState(() => _loading = false);
         return;
       }
@@ -278,19 +495,33 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       final rid = entry.key;
       final rItems = entry.value;
       final rSubtotal = rItems.fold(0.0, (s, i) => s + i.total);
+      // El descuento solo se aplica al restaurante de la promoción — como
+      // solo se puede elegir una promoción cuando el carrito es de un solo
+      // restaurante (ver _singleRestaurantId), aquí siempre es esta misma
+      // entrada la que corresponde, sin necesidad de comparar ids.
+      final rDiscount = promoValid ? promoDiscount : 0.0;
+      final rSubtotalAfterDiscount = promoAppliesToShipping ? rSubtotal : rSubtotal - rDiscount;
+      final rFeeAfterDiscount = promoAppliesToShipping ? perOrderFee - rDiscount : perOrderFee;
       try {
         final oid = await SupabaseService.createOrder(
           restaurantId: rid,
-          total: rSubtotal + perOrderFee,
-          deliveryFee: perOrderFee,
+          total: rSubtotalAfterDiscount + rFeeAfterDiscount,
+          deliveryFee: rFeeAfterDiscount,
           customerName: _nameCtrl.text.trim(),
-          customerPhone: _phoneCtrl.text.trim(),
+          // Ya no se pide de nuevo en el checkout — se usa el que la cuenta
+          // ya tiene asociado (login por teléfono, o vinculado después desde
+          // el perfil). Si la cuenta no tiene uno todavía (correo/Google sin
+          // vincular), simplemente no hay — el repartidor tiene el chat en
+          // vivo del pedido para contactar al cliente de todos modos.
+          customerPhone: Supabase.instance.client.auth.currentUser?.phone ?? '',
           address: _addressCtrl.text.trim(),
           paymentMethod: _payment.name,
           lat: _selectedPos?.latitude,
           lng: _selectedPos?.longitude,
           clientFcmToken: FcmService.token,
           paymentStatus: _payment == _Pay.card ? 'paid' : null,
+          stripePaymentIntentId: (stripePaymentIntentId == null || stripePaymentIntentId.isEmpty)
+              ? null : stripePaymentIntentId,
           items: rItems.map((i) => {
             'product_id': i.product.id,
             'quantity': i.quantity,
@@ -301,6 +532,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         if (firstOrderId == 'local') {
           firstOrderId = oid;
           firstRestaurantName = rItems.first.restaurantName;
+        }
+        // El pedido ya se creó de verdad — recién ahora se marca la
+        // promoción como usada (nunca antes; si el pago hubiera fallado no
+        // se habría llegado a este punto).
+        if (promoValid && promoClaim != null) {
+          await SupabaseService.applyPromotionToOrder(
+            claimId: promoClaim.id,
+            orderId: oid,
+            discountAmount: promoDiscount,
+          );
         }
       } catch (e) {
         anyError = true;
@@ -323,11 +564,19 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final restaurantLabel = byRestaurant.length > 1
         ? 'Varios restaurantes'
         : firstRestaurantName;
+    // Un logo por restaurante del pedido — con un solo restaurante es una
+    // lista de un elemento (el widget nativo espera siempre una lista, así
+    // no necesita dos caminos distintos para "uno" vs "varios").
+    final restaurantsList = byRestaurant.keys.map((rid) {
+      final r = _restaurants[rid];
+      return {'name': r?.name ?? '', 'imageUrl': r?.imageUrl ?? ''};
+    }).toList();
     final orderData = <String, dynamic>{
       'restaurantName': restaurantLabel,
       'address': _addressCtrl.text.trim(),
       'total': orderTotal,
       'orderId': firstOrderId,
+      'restaurants': restaurantsList,
       if (_selectedPos != null) 'lat': _selectedPos!.latitude,
       if (_selectedPos != null) 'lng': _selectedPos!.longitude,
       // Solo con un restaurante hay un logo claro que mostrar — con
@@ -364,56 +613,104 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     showDialog(
       context: nav,
       barrierDismissible: false,
-      builder: (dialogCtx) => AlertDialog(
-        backgroundColor: AppConstants.surfaceColor,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        contentPadding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 86,
-              height: 86,
-              decoration: BoxDecoration(
-                color: Colors.green.withValues(alpha: 0.15),
-                shape: BoxShape.circle,
+      builder: (dialogCtx) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+        child: Container(
+          width: 312,
+          height: 392,
+          padding: const EdgeInsets.fromLTRB(24, 36, 24, 24),
+          decoration: BoxDecoration(
+            color: AppConstants.primaryColor,
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 70,
+                height: 70,
+                decoration: const BoxDecoration(color: Color(0xFF0CB6F4), shape: BoxShape.circle),
+                child: const Icon(Icons.check_rounded, color: AppConstants.primaryColor, size: 40),
               ),
-              child: const Icon(Icons.check_circle_rounded, color: Colors.green, size: 54),
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              '¡Pedido confirmado!',
-              style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              'Tu pedido está siendo preparado.\nTiempo estimado: 30 – 45 min.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 14, height: 1.5),
-            ),
-            const SizedBox(height: 28),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.pop(dialogCtx);
-                  nav.go('/tracking', extra: orderData);
-                },
-                icon: const Icon(Icons.map_outlined, size: 20),
-                label: const Text('Rastrear mi pedido', style: TextStyle(fontWeight: FontWeight.bold)),
-                style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+              const SizedBox(height: 10),
+              Center(
+                child: SvgPicture.asset(
+                  'assets/images/pedido_confirmado_title.svg',
+                  width: 196,
+                  height: 100,
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            TextButton(
-              onPressed: () {
-                Navigator.pop(dialogCtx);
-                nav.go('/restaurants');
-              },
-              child: Text('Volver al inicio',
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 13)),
-            ),
-          ],
+              const SizedBox(height: 10),
+              const Text(
+                'Rastrea Tu Pedido en Tiempo Real',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontFamily: 'Baloo2',
+                  color: Color(0xFF0CB6F4),
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Container(
+                width: 277,
+                height: 55,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: const [
+                    BoxShadow(color: Color(0x6E000000), offset: Offset(0, 1), blurRadius: 3.8, spreadRadius: 1),
+                  ],
+                ),
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(dialogCtx);
+                    nav.go('/tracking', extra: orderData);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF0CB6F4),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                  ),
+                  child: const Text(
+                    'RASTREAR PEDIDO',
+                    style: TextStyle(fontFamily: 'Baloo2', fontWeight: FontWeight.w700, letterSpacing: 0.3),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                width: 277,
+                height: 32,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: const [
+                    BoxShadow(color: Color(0x6E000000), offset: Offset(0, 1), blurRadius: 3.8, spreadRadius: 1),
+                  ],
+                ),
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(dialogCtx);
+                    nav.go('/restaurants');
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: AppConstants.primaryColor,
+                    elevation: 0,
+                    padding: EdgeInsets.zero,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                  ),
+                  child: const Text(
+                    'INICIO',
+                    style: TextStyle(fontFamily: 'Baloo2', fontWeight: FontWeight.w700, letterSpacing: 0.3),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Image.asset('assets/images/gogofood_wordmark.png', width: 93, height: 11),
+            ],
+          ),
         ),
       ),
     );
@@ -485,6 +782,19 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                             ),
                           ],
                         ),
+                        if (cart.hasValidPromo) ...[
+                          const SizedBox(height: 6),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text('Descuento', style: TextStyle(color: Colors.green, fontSize: 14, fontWeight: FontWeight.w600)),
+                              Text(
+                                '-\$${cart.promoDiscount.toStringAsFixed(0)} MXN',
+                                style: const TextStyle(color: Colors.green, fontSize: 14, fontWeight: FontWeight.w600),
+                              ),
+                            ],
+                          ),
+                        ],
                         Padding(
                           padding: const EdgeInsets.symmetric(vertical: 10),
                           child: Divider(color: divColor, height: 1),
@@ -495,7 +805,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                             Text('Total',
                                 style: TextStyle(fontWeight: FontWeight.bold, color: textMain, fontSize: 15)),
                             Text(
-                              '\$${(cart.total + _deliveryFee).toStringAsFixed(0)} MXN',
+                              '\$${_orderTotalDisplay(cart).toStringAsFixed(0)} MXN',
                               style: const TextStyle(fontWeight: FontWeight.bold, color: AppConstants.primaryColor, fontSize: 18),
                             ),
                           ],
@@ -506,6 +816,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 ],
               ),
             ),
+            const SizedBox(height: 20),
+
+            // ── Promoción ────────────────────────────────────────────────────
+            _buildPromoSection(cart, textMain, textSub, cardBg),
             const SizedBox(height: 28),
 
             // ── Datos de entrega ─────────────────────────────────────────────
@@ -520,23 +834,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               cardBg: cardBg,
               textMain: textMain,
               validator: (v) => (v == null || v.trim().isEmpty) ? 'Ingresa el nombre' : null,
-            ),
-            const SizedBox(height: 12),
-            _FormField(
-              controller: _phoneCtrl,
-              label: 'Teléfono de contacto',
-              hint: 'Ej. 443 123 4567',
-              icon: Icons.phone_outlined,
-              isDark: isDark,
-              cardBg: cardBg,
-              textMain: textMain,
-              keyboardType: TextInputType.phone,
-              validator: (v) {
-                final digits = (v ?? '').replaceAll(RegExp(r'\D'), '');
-                if (digits.isEmpty) return 'Ingresa el teléfono';
-                if (digits.length < 10) return 'Mínimo 10 dígitos';
-                return null;
-              },
             ),
             const SizedBox(height: 12),
             _FormField(
@@ -729,7 +1026,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           ],
         ),
       ),
-      bottomNavigationBar: _ConfirmBar(total: cart.total + _deliveryFee, onConfirm: _confirm, loading: _loading, isDark: isDark),
+      bottomNavigationBar: _ConfirmBar(total: _orderTotalDisplay(cart), onConfirm: _confirm, loading: _loading, isDark: isDark),
     );
   }
 }

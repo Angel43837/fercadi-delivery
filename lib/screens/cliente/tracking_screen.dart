@@ -8,6 +8,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 import 'package:home_widget/home_widget.dart';
 import 'package:http/http.dart' as http;
@@ -19,6 +20,7 @@ import '../../services/location_service.dart';
 import '../../services/notification_service.dart';
 import '../../services/order_history_service.dart';
 import '../../services/supabase_service.dart';
+import '../chat_screen.dart';
 import '../rating_dialog.dart';
 
 const _kRestaurantPos = ll.LatLng(19.9020, -100.4510);
@@ -33,6 +35,11 @@ class TrackingScreen extends StatefulWidget {
   final double? lat;
   final double? lng;
   final String? restaurantImageUrl;
+  // Todos los restaurantes del pedido (si el carrito tenía varios a la vez)
+  // — se manda al widget nativo para que muestre el logo de cada uno, no
+  // solo el de "restaurantName"/"restaurantImageUrl" (que se queda como
+  // "Varios restaurantes" sin logo cuando hay más de uno).
+  final List<Map<String, String>>? restaurants;
 
   const TrackingScreen({
     super.key,
@@ -43,6 +50,7 @@ class TrackingScreen extends StatefulWidget {
     this.lat,
     this.lng,
     this.restaurantImageUrl,
+    this.restaurants,
   });
 
   @override
@@ -51,7 +59,16 @@ class TrackingScreen extends StatefulWidget {
 
 class _TrackingScreenState extends State<TrackingScreen> {
   final _mapCtrl = MapController();
+  // Panel inferior: el cliente arrastra la manija para achicar o agrandar
+  // SOLO la tarjeta naranja (el panel se queda pegado abajo, no se mueve
+  // como bloque) — antes la tarjeta ya "parecía" un sheet (traía su propia
+  // manija dibujada) pero estaba fija, sin gesto real de arrastre.
+  double _panelHeightFraction = 0.32;
   Timer? _pollTimer;
+  // No hay ETA real del backend todavía — se muestra el tiempo transcurrido
+  // desde que se abrió esta pantalla (se refresca solo con cada sondeo de
+  // 4s, sin Timer aparte).
+  final DateTime _startedAt = DateTime.now();
 
   ll.LatLng _motoPos     = _kRestaurantPos;
   ll.LatLng _customerPos = _kCustomerPos;
@@ -68,6 +85,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
 
   int get _step {
     switch (_orderStatus) {
+      case 'restaurant_accepted': return 1;
       case 'accepted':   return 1;
       case 'delivering': return 2;
       case 'delivered':  return 3;
@@ -79,10 +97,10 @@ class _TrackingScreenState extends State<TrackingScreen> {
   bool get _isCancelled => _orderStatus == 'cancelled';
 
   static final _statusData = [
-    (icon: Icons.hourglass_top_rounded, label: 'Pedido recibido',              color: const Color(0xFFFFB300)),
-    (icon: Icons.restaurant_outlined,   label: 'Repartidor va al restaurante', color: AppConstants.primaryColor),
-    (icon: Icons.delivery_dining,       label: 'Repartidor en camino',         color: const Color(0xFF2196F3)),
-    (icon: Icons.check_circle_rounded,  label: '¡Pedido entregado!',           color: Colors.green),
+    (iconAsset: 'assets/images/step_recibido.svg' as String?,   icon: null as IconData?, label: 'Pedido recibido',              color: const Color(0xFFFFB300)),
+    (iconAsset: 'assets/images/step_preparando.svg' as String?, icon: null as IconData?, label: 'Repartidor va al restaurante', color: AppConstants.primaryColor),
+    (iconAsset: 'assets/images/step_en_camino.svg' as String?,  icon: null as IconData?, label: 'Repartidor en camino',         color: const Color(0xFF2196F3)),
+    (iconAsset: 'assets/images/step_entregado.svg' as String?,  icon: null as IconData?, label: '¡Pedido entregado!',           color: Colors.green),
   ];
 
   @override
@@ -160,8 +178,12 @@ class _TrackingScreenState extends State<TrackingScreen> {
       final s = await SupabaseService.getOrderStatus(widget.orderId) ?? 'pending';
       if (!mounted) return;
       if (s != _orderStatus) {
-        if (s == 'accepted') {
+        if (s == 'restaurant_accepted') {
+          // El restaurante ya confirmó el pedido — todavía no hay repartidor
+          // asignado, así que no hay posición de moto para trazar ruta.
           NotificationService.pedidoAceptado();
+        }
+        if (s == 'accepted') {
           setState(() => _routePoints = []);
           _fetchRoute(_motoPos, _kRestaurantPos);
         }
@@ -187,9 +209,11 @@ class _TrackingScreenState extends State<TrackingScreen> {
           await OrderHistoryService.clearActiveOrder();
         }
       }
-      // Una vez aceptado el pedido ya hay repartidor asignado — se busca su
-      // nombre/foto solo una vez (no en cada sondeo) para mostrarlos arriba.
-      if (_repartidorId == null && s != 'pending' && s != 'cancelled') {
+      // Ya hay repartidor asignado (después de 'restaurant_accepted', cuando
+      // alguien reclama el pedido) — se busca su nombre/foto solo una vez
+      // (no en cada sondeo) para mostrarlos arriba. 'restaurant_accepted' NO
+      // cuenta todavía: el restaurante ya confirmó pero aún no hay repartidor.
+      if (_repartidorId == null && s != 'pending' && s != 'restaurant_accepted' && s != 'cancelled') {
         _loadRepartidorProfile();
       }
       // Se manda en cada sondeo (no solo cuando cambia) para que el widget de
@@ -201,11 +225,10 @@ class _TrackingScreenState extends State<TrackingScreen> {
 
   void _reportAvatarLoadError(Object err) {
     if (!mounted || _repartidorAvatarFailed) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text('DEBUG avatar error: $_repartidorAvatarUrl -> $err'),
-      duration: const Duration(seconds: 20),
-      backgroundColor: Colors.black,
-    ));
+    // Diagnóstico de por qué la foto del repartidor no cargó — solo en la
+    // consola de desarrollo, nunca en pantalla (antes se mostraba en un
+    // SnackBar visible para el cliente).
+    debugPrint('tracking_screen: avatar del repartidor no cargó ($_repartidorAvatarUrl) -> $err');
     setState(() => _repartidorAvatarFailed = true);
   }
 
@@ -214,13 +237,8 @@ class _TrackingScreenState extends State<TrackingScreen> {
     if (!mounted || riderId == null) return;
     setState(() => _repartidorId = riderId);
     final profile = await SupabaseService.getOrderCounterpartProfile(widget.orderId, riderId);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('DEBUG avatar: ${profile == null ? "profile es null (falló la llamada)" : profile.toString()}'),
-        duration: const Duration(seconds: 20),
-        backgroundColor: Colors.black,
-      ));
-    }
+    // Mismo motivo que arriba: esto se queda solo en la consola.
+    debugPrint('tracking_screen: perfil del repartidor -> ${profile ?? "null (falló la llamada)"}');
     if (!mounted || profile == null) return;
     setState(() {
       _repartidorName = profile['name'] as String?;
@@ -314,6 +332,13 @@ class _TrackingScreenState extends State<TrackingScreen> {
       await HomeWidget.saveWidgetData<String>('restaurantName', widget.restaurantName);
       await HomeWidget.saveWidgetData<String>(
           'restaurantImageUrl', widget.restaurantImageUrl ?? '');
+      // Lista de todos los restaurantes del pedido (uno o varios) — el
+      // widget nativo la usa para mostrar un logo por cada restaurante en
+      // vez de solo el nombre genérico "Varios restaurantes" sin logo.
+      final restaurantsForWidget = (widget.restaurants != null && widget.restaurants!.isNotEmpty)
+          ? widget.restaurants!
+          : [{'name': widget.restaurantName, 'imageUrl': widget.restaurantImageUrl ?? ''}];
+      await HomeWidget.saveWidgetData<String>('restaurantsJson', jsonEncode(restaurantsForWidget));
       await HomeWidget.saveWidgetData<String>('address', widget.address);
       await HomeWidget.saveWidgetData<double>('total', widget.total);
       await HomeWidget.saveWidgetData<double>('restaurantLat', _kRestaurantPos.latitude);
@@ -325,6 +350,12 @@ class _TrackingScreenState extends State<TrackingScreen> {
       await HomeWidget.saveWidgetData<bool>('hasActiveOrder', active);
       await HomeWidget.saveWidgetData<String>('statusText', label);
       await HomeWidget.saveWidgetData<int>('stepIndex', _step);
+      // Nombre/foto del repartidor — vacíos hasta que _loadRepartidorProfile
+      // los resuelve (una vez aceptado el pedido); el widget nativo solo
+      // muestra la tarjeta blanca de "repartidor confirmado" cuando
+      // riderName no está vacío.
+      await HomeWidget.saveWidgetData<String>('riderName', _repartidorName ?? '');
+      await HomeWidget.saveWidgetData<String>('riderAvatarUrl', _repartidorAvatarUrl ?? '');
       await HomeWidget.updateWidget(iOSName: 'GOGOTrackingWidget');
       await HomeWidget.updateWidget(iOSName: 'GOGOTrackingStepsWidget');
     } catch (_) {}
@@ -370,20 +401,17 @@ class _TrackingScreenState extends State<TrackingScreen> {
     );
   }
 
-  String get _eta {
-    if (_isCancelled) return 'El pedido fue cancelado';
-    switch (_step) {
-      case 0: return 'Esperando confirmación';
-      case 1: return 'El repartidor va al restaurante';
-      case 2: return 'En camino a tu domicilio';
-      default: return 'Entregado';
-    }
+  String get _elapsedLabel {
+    final d = DateTime.now().difference(_startedAt);
+    final mm = d.inMinutes;
+    final ss = d.inSeconds % 60;
+    return '$mm:${ss.toString().padLeft(2, '0')} MIN';
   }
 
   @override
   Widget build(BuildContext context) {
     final sd = _isCancelled
-        ? (icon: Icons.cancel_outlined, label: 'Pedido cancelado', color: Colors.redAccent)
+        ? (iconAsset: null as String?, icon: Icons.cancel_outlined as IconData?, label: 'Pedido cancelado', color: Colors.redAccent)
         : _statusData[_step];
 
     return Scaffold(
@@ -428,6 +456,8 @@ class _TrackingScreenState extends State<TrackingScreen> {
               if (_step >= 1 && _step < 3)
                 Marker(
                   point: _motoPos,
+                  width: 72,
+                  height: 72,
                   child: _PulsingPin(color: const Color(0xFFFF6D00)),
                 ),
             ]),
@@ -466,73 +496,120 @@ class _TrackingScreenState extends State<TrackingScreen> {
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
             child: Column(children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Salir del mapa sin cancelar el pedido — vuelve a
-                  // restaurantes, donde el banner "Seguimiento" deja regresar.
-                  GestureDetector(
-                    onTap: () => context.go('/restaurants'),
-                    child: Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: AppConstants.surfaceColor.withValues(alpha: 0.96),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(color: Colors.black.withValues(alpha: 0.5), blurRadius: 14),
-                        ],
-                      ),
-                      child: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
+              SizedBox(
+                height: 68,
+                child: Stack(children: [
+                  // Rectángulo de fondo, detrás del botón de regresar y de
+                  // la píldora azul.
+                  Container(
+                    width: 460,
+                    height: 68,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF4510C),
+                      borderRadius: BorderRadius.circular(47),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0x6E / 255),
+                          offset: const Offset(0, 1),
+                          blurRadius: 3.8,
+                          spreadRadius: 1,
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                      decoration: BoxDecoration(
-                        color: AppConstants.surfaceColor.withValues(alpha: 0.96),
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: [
-                          BoxShadow(color: Colors.black.withValues(alpha: 0.5), blurRadius: 14),
-                        ],
-                      ),
-                      child: Row(children: [
-                        Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: sd.color.withValues(alpha: 0.15),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(sd.icon, color: sd.color, size: 24),
+                  Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Salir del mapa sin cancelar el pedido — vuelve a
+                    // restaurantes, donde el banner "Seguimiento" deja
+                    // regresar.
+                    SizedBox(
+                      width: 88,
+                      child: Center(
+                        child: GestureDetector(
+                          onTap: () => context.go('/restaurants'),
+                          child: Image.asset('assets/images/back_arrow.png', width: 54, height: 54, fit: BoxFit.contain),
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(sd.label,
+                      ),
+                    ),
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0EA3D8),
+                          borderRadius: const BorderRadius.horizontal(right: Radius.circular(34)),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0x6E / 255),
+                              offset: const Offset(0, 1),
+                              blurRadius: 3.8,
+                              spreadRadius: 1,
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Row(children: [
+                              Container(
+                                width: 32, height: 32,
+                                decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                                child: sd.iconAsset != null
+                                    ? Padding(
+                                        padding: const EdgeInsets.all(7),
+                                        child: SvgPicture.asset(
+                                          sd.iconAsset!,
+                                          colorFilter: const ColorFilter.mode(Color(0xFF0EA3D8), BlendMode.srcIn),
+                                        ),
+                                      )
+                                    : Icon(sd.icon, color: const Color(0xFF0EA3D8), size: 18),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: LinearProgressIndicator(
+                                    value: (_step + 1) / 4,
+                                    backgroundColor: const Color(0xFFC9B79C),
+                                    valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                                    minHeight: 6,
+                                  ),
+                                ),
+                              ),
+                            ]),
+                            const SizedBox(height: 4),
+                            Row(children: [
+                              Text(sd.label.toUpperCase(),
                                   style: const TextStyle(
-                                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
-                              const SizedBox(height: 2),
-                              Text(_eta,
+                                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11)),
+                              const Spacer(),
+                              // Tiempo transcurrido desde que se abrió el
+                              // seguimiento (no hay ETA real del backend
+                              // todavía) — se actualiza solo cada 4s con el
+                              // sondeo normal de la pantalla.
+                              Text(_elapsedLabel,
                                   style: TextStyle(
-                                      color: Colors.white.withValues(alpha: 0.5), fontSize: 12)),
-                            ],
-                          ),
+                                      color: Colors.white.withValues(alpha: 0.85),
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 11)),
+                            ]),
+                          ],
                         ),
-                        if (_step >= 1 && _step < 3)
-                          _PulsingDot(color: sd.color),
-                      ]),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
+                ]),
               ),
             ]),
           ),
         ),
 
         // ── Panel inferior ────────────────────────────────────────────────────
+        // El cliente arrastra la manija para achicar o agrandar SOLO la
+        // tarjeta naranja (su alto cambia con _panelHeightFraction) — el
+        // panel en sí no se mueve, sigue pegado abajo con Align.
         Align(
           alignment: Alignment.bottomCenter,
           child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -542,23 +619,17 @@ class _TrackingScreenState extends State<TrackingScreen> {
               Padding(
                 padding: const EdgeInsets.only(left: 16, right: 16, bottom: 10),
                 child: Material(
-                  color: Colors.transparent,
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(24),
                   child: InkWell(
-                    borderRadius: BorderRadius.circular(18),
+                    borderRadius: BorderRadius.circular(24),
                     onTap: _showRepartidorDetail,
-                    child: Container(
+                    child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                      decoration: BoxDecoration(
-                        color: AppConstants.surfaceColor,
-                        borderRadius: BorderRadius.circular(18),
-                        boxShadow: [
-                          BoxShadow(color: Colors.black.withValues(alpha: 0.5), blurRadius: 16),
-                        ],
-                      ),
                       child: Row(children: [
                         CircleAvatar(
-                          radius: 18,
-                          backgroundColor: AppConstants.primaryColor.withValues(alpha: 0.12),
+                          radius: 22,
+                          backgroundColor: Colors.grey.shade300,
                           backgroundImage: (_repartidorAvatarUrl != null && _repartidorAvatarUrl!.isNotEmpty && !_repartidorAvatarFailed)
                               ? NetworkImage(_repartidorAvatarUrl!)
                               : null,
@@ -566,50 +637,103 @@ class _TrackingScreenState extends State<TrackingScreen> {
                               ? (err, __) => _reportAvatarLoadError(err)
                               : null,
                           child: (_repartidorAvatarUrl == null || _repartidorAvatarUrl!.isEmpty || _repartidorAvatarFailed)
-                              ? const Icon(Icons.delivery_dining_rounded, color: AppConstants.primaryColor, size: 18)
+                              ? const Icon(Icons.delivery_dining_rounded, color: AppConstants.primaryColor, size: 20)
                               : null,
                         ),
-                        const SizedBox(width: 10),
+                        const SizedBox(width: 12),
                         Expanded(
                           child: Text(
-                            _repartidorName ?? 'Tu repartidor',
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
+                            (_repartidorName ?? 'Tu repartidor').toUpperCase(),
+                            style: const TextStyle(
+                                color: AppConstants.primaryColor, fontWeight: FontWeight.w800, fontSize: 14),
                             overflow: TextOverflow.ellipsis,
+                            maxLines: 2,
                           ),
                         ),
-                        Icon(Icons.chevron_right_rounded, color: Colors.white.withValues(alpha: 0.4), size: 20),
+                        IconButton(
+                          icon: const Icon(Icons.chat_bubble_rounded, color: AppConstants.primaryColor, size: 30),
+                          tooltip: 'Mensajes',
+                          onPressed: () => Navigator.push(context, MaterialPageRoute(
+                            builder: (_) => ChatScreen(
+                              orderId: widget.orderId,
+                              counterpartName: _repartidorName ?? 'Tu repartidor',
+                              counterpartPhoto: _repartidorAvatarUrl,
+                              locked: _orderStatus == 'delivered' || _orderStatus == 'cancelled',
+                            ),
+                          )),
+                        ),
                       ]),
                     ),
                   ),
                 ),
               ),
             Container(
+            height: MediaQuery.of(context).size.height * _panelHeightFraction,
             margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+            // El recorte por tamaño se hace aquí, a la forma redondeada de la
+            // tarjeta (no con un ClipRect adentro) — así el contenido que no
+            // cabe se corta contra las esquinas curvas y no contra un
+            // rectángulo recto, que además cortaba en seco la sombra del
+            // botón "Cancelar pedido" (se veía cuadrada). La sombra de la
+            // tarjeta en sí (más abajo) se pinta afuera de este recorte, sin
+            // que Container la corte.
+            clipBehavior: Clip.antiAlias,
             decoration: BoxDecoration(
               // Mismo naranja que el widget de pantalla de inicio
-              // (GOGOTrackingWidget.swift) — a propósito el mismo look.
+              // (GOGOTrackingWidget.swift) — a propósito el mismo look, ahora
+              // calcado también aquí (header GOGOFOOD, precio grande, riel
+              // conectando los 4 pasos, texto "Rastrea tu pedido").
               color: AppConstants.primaryColor,
               borderRadius: BorderRadius.circular(24),
               boxShadow: [
                 BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 20),
               ],
             ),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Container(
-                width: 36, height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.25),
-                  borderRadius: BorderRadius.circular(2),
+            child: Column(children: [
+              // La manija tiene su propio gesto de arrastre (en vez de
+              // depender de que el drag "burbujee" desde el contenido de
+              // adentro) — mismo arreglo ya aplicado en
+              // entrega_activa_screen.dart: sin esto, arrastrar para ABRIR
+              // el panel no siempre respondía.
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onVerticalDragUpdate: (details) {
+                  final screenHeight = MediaQuery.of(context).size.height;
+                  final delta = details.delta.dy / screenHeight;
+                  setState(() {
+                    // Tope arriba = su tamaño de reposo (0.42): el card se
+                    // puede achicar para ver más mapa, pero nunca crecer más
+                    // alto de como se ve normalmente ni "subir" tapando la
+                    // pantalla.
+                    _panelHeightFraction = (_panelHeightFraction - delta).clamp(0.16, 0.32);
+                  });
+                },
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  color: Colors.transparent,
+                  child: Center(
+                    child: Container(
+                      width: 60, height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.9),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
                 ),
               ),
-              const SizedBox(height: 14),
-              Row(children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
+              Expanded(
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const SizedBox(height: 4),
+              Image.asset('assets/images/gogofood_wordmark.png', width: 93, height: 11),
+              const SizedBox(height: 10),
+              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                ClipOval(
                   child: Container(
-                    width: 40, height: 40,
-                    color: Colors.white.withValues(alpha: 0.18),
+                    width: 44, height: 44,
+                    color: Colors.white.withValues(alpha: 0.75),
                     child: (widget.restaurantImageUrl != null &&
                             widget.restaurantImageUrl!.isNotEmpty &&
                             !_restaurantLogoFailed)
@@ -620,10 +744,10 @@ class _TrackingScreenState extends State<TrackingScreen> {
                               WidgetsBinding.instance.addPostFrameCallback((_) {
                                 if (mounted) setState(() => _restaurantLogoFailed = true);
                               });
-                              return const Icon(Icons.storefront_rounded, color: Colors.white, size: 22);
+                              return Icon(Icons.storefront_rounded, color: AppConstants.primaryColor, size: 22);
                             },
                           )
-                        : const Icon(Icons.storefront_rounded, color: Colors.white, size: 22),
+                        : Icon(Icons.storefront_rounded, color: AppConstants.primaryColor, size: 22),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -635,73 +759,124 @@ class _TrackingScreenState extends State<TrackingScreen> {
                           style: const TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.bold,
-                              fontSize: 15)),
-                      const SizedBox(height: 2),
-                      Text(widget.address,
-                          style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.7), fontSize: 12),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis),
+                              fontSize: 16)),
+                      const SizedBox(height: 3),
+                      Row(children: [
+                        Icon(Icons.location_on, size: 13, color: Colors.white.withValues(alpha: 0.75)),
+                        const SizedBox(width: 3),
+                        Expanded(
+                          child: Text(widget.address,
+                              style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.75), fontSize: 12),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis),
+                        ),
+                      ]),
                     ],
                   ),
                 ),
-                Text('\$${widget.total.toStringAsFixed(0)} MXN',
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16)),
+                const SizedBox(width: 8),
+                Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                  Text('\$${widget.total.toStringAsFixed(0)}',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 36,
+                          height: 1)),
+                  Text('MXN',
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.85),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12)),
+                ]),
               ]),
-              const SizedBox(height: 14),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: _step / 3,
-                  backgroundColor: Colors.white.withValues(alpha: 0.2),
-                  valueColor: const AlwaysStoppedAnimation<Color>(Colors.black),
-                  minHeight: 6,
-                ),
-              ),
-              const SizedBox(height: 14),
-              Row(
-                children: List.generate(_statusData.length, (i) {
-                  final done   = i < _step;
-                  final active = i == _step;
-                  final sd     = _statusData[i];
-                  final color  = done ? Colors.blue : active ? sd.color : Colors.white.withValues(alpha: 0.4);
-                  return Expanded(
-                    child: Column(children: [
-                      Container(
-                        width: 30, height: 30,
-                        decoration: BoxDecoration(
-                          color: (done || active)
-                              ? color.withValues(alpha: 0.85)
-                              : Colors.white.withValues(alpha: 0.15),
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                              color: (done || active) ? Colors.white.withValues(alpha: 0.6) : Colors.transparent,
-                              width: 1.5),
-                        ),
-                        child: Icon(done ? Icons.check : sd.icon,
-                            color: (done || active) ? Colors.white : color, size: 14),
+              const SizedBox(height: 10),
+              // Riel conectando los 4 pasos a la altura del centro de las
+              // bolitas — mismo look que GOGOTrackingWidget.swift. El inset
+              // izq/der se calcula del ancho real (ancho/8 = centro del
+              // primer/último círculo dentro de su celda de Expanded) para
+              // que la línea nunca sobresalga de los círculos de las puntas
+              // sin importar el ancho de la tarjeta. El tramo ya recorrido
+              // se pinta azul y más grueso; el que falta, blanco y delgado.
+              SizedBox(
+                height: 58,
+                child: LayoutBuilder(builder: (context, constraints) {
+                  final inset = constraints.maxWidth / 8;
+                  return Stack(alignment: Alignment.topCenter, children: [
+                    Positioned(
+                      top: 13,
+                      left: inset, right: inset,
+                      child: SizedBox(
+                        height: 8,
+                        child: Row(children: List.generate(3, (i) {
+                          final filled = i < _step;
+                          return Expanded(
+                            child: Center(
+                              child: Container(
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  color: filled ? Colors.blue : Colors.white,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                              ),
+                            ),
+                          );
+                        })),
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        i == 0 ? 'Recibido' : i == 1 ? 'Preparando' : i == 2 ? 'En camino' : 'Entregado',
-                        style: TextStyle(
-                            fontSize: 9,
-                            color: (done || active)
-                                ? Colors.white
-                                : Colors.white.withValues(alpha: 0.5)),
-                        textAlign: TextAlign.center,
-                      ),
-                    ]),
-                  );
+                    ),
+                  Row(
+                    children: List.generate(4, (i) {
+                      final done   = i < _step;
+                      final active = i == _step;
+                      final on     = done || active;
+                      const iconAssets = [
+                        'assets/images/step_recibido.svg',
+                        'assets/images/step_preparando.svg',
+                        'assets/images/step_en_camino.svg',
+                        'assets/images/step_entregado.svg',
+                      ];
+                      return Expanded(
+                        child: Column(children: [
+                          Container(
+                            width: 34, height: 34,
+                            decoration: BoxDecoration(
+                              color: on ? Colors.blue : Colors.white,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(8),
+                              child: SvgPicture.asset(
+                                iconAssets[i],
+                                colorFilter: ColorFilter.mode(
+                                  on ? Colors.white : AppConstants.primaryColor,
+                                  BlendMode.srcIn,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            i == 0 ? 'RECIBIDO' : i == 1 ? 'PREPARANDO' : i == 2 ? 'EN CAMINO' : 'ENTREGADO',
+                            style: const TextStyle(
+                                fontSize: 8.5, fontWeight: FontWeight.bold, color: Colors.white),
+                            textAlign: TextAlign.center,
+                          ),
+                        ]),
+                      );
+                    }),
+                  ),
+                  ]);
                 }),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 4),
+              const Text('Rastrea Tu Pedido en Tiempo Real',
+                  style: TextStyle(
+                      color: Color(0xFF0CB6F4), fontWeight: FontWeight.bold, fontSize: 12)),
+              const SizedBox(height: 6),
               if (_isCancelled) ...[
                 SizedBox(
                   width: double.infinity,
+                  height: 48,
                   child: ElevatedButton.icon(
                     onPressed: () => context.go('/restaurants'),
                     icon: const Icon(Icons.storefront),
@@ -710,31 +885,50 @@ class _TrackingScreenState extends State<TrackingScreen> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.white,
                       foregroundColor: AppConstants.primaryColor,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
                     ),
                   ),
                 ),
-                const SizedBox(height: 4),
               ] else if (_step == 0) ...[
                 SizedBox(
                   width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: _confirmarCancelacion,
-                    icon: const Icon(Icons.cancel_outlined, size: 18, color: Colors.redAccent),
-                    label: const Text('Cancelar pedido',
-                        style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600)),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Colors.redAccent, width: 1.2),
-                      padding: const EdgeInsets.symmetric(vertical: 13),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  height: 50,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Color(0xFFF4510C), Color(0xFFB53F0E)],
+                        stops: [0.4327, 1.0],
+                      ),
+                      borderRadius: BorderRadius.circular(24),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0x70 / 255),
+                          offset: const Offset(0, 3),
+                          blurRadius: 6.4,
+                          spreadRadius: 3,
+                        ),
+                      ],
+                    ),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(24),
+                        onTap: _confirmarCancelacion,
+                        child: const Center(
+                          child: Text('Cancelar pedido',
+                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        ),
+                      ),
                     ),
                   ),
                 ),
-                const SizedBox(height: 4),
               ],
               if (!_isCancelled && _step == 3) ...[
                 SizedBox(
                   width: double.infinity,
+                  height: 48,
                   child: ElevatedButton.icon(
                     onPressed: () => context.go('/restaurants'),
                     icon: const Icon(Icons.storefront),
@@ -743,15 +937,16 @@ class _TrackingScreenState extends State<TrackingScreen> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.green,
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
                     ),
                   ),
                 ),
-                const SizedBox(height: 4),
               ],
             ]),
           ),
           ]),
+          ),
+        ]),
         ),
       ]),
     );
@@ -811,16 +1006,7 @@ class _PulsingPinState extends State<_PulsingPin> with SingleTickerProviderState
   Widget build(BuildContext context) {
     return ScaleTransition(
       scale: _scale,
-      child: Container(
-        width: 44, height: 44,
-        decoration: BoxDecoration(
-          color: widget.color,
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 3),
-          boxShadow: [BoxShadow(color: widget.color.withValues(alpha: 0.5), blurRadius: 10, spreadRadius: 2)],
-        ),
-        child: const Icon(Icons.delivery_dining, color: Colors.white, size: 22),
-      ),
+      child: Image.asset('assets/images/moto_repartidor.png', width: 72, height: 72),
     );
   }
 }

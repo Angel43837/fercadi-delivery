@@ -90,15 +90,17 @@ class AdminSectionCard extends StatelessWidget {
   }
 }
 
-/// Único mapeo estado→(label,color) para Admin. Cubre los 5 estados reales
-/// de `orders.status` (pending/accepted/delivering/delivered/cancelled) —
-/// a diferencia de AppOrderStatus (app_data_provider.dart) que solo tiene 4.
+/// Único mapeo estado→(label,color) para Admin. Cubre los 6 estados reales
+/// de `orders.status` (pending/restaurant_accepted/accepted/delivering/
+/// delivered/cancelled) — a diferencia de AppOrderStatus
+/// (app_data_provider.dart) que solo tiene 4.
 class AdminStatusBadge extends StatelessWidget {
   final String status;
   const AdminStatusBadge({super.key, required this.status});
 
   static (String, Color) styleFor(String status) => switch (status) {
         'pending' => ('Pendiente', AdminColors.statusPending),
+        'restaurant_accepted' => ('Confirmado', const Color(0xFF00BFA5)),
         'accepted' => ('Preparando', AdminColors.statusAccepted),
         'delivering' => ('En camino', AdminColors.statusDelivering),
         'delivered' => ('Entregado', AdminColors.statusDelivered),

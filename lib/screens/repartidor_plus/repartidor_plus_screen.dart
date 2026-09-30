@@ -10,6 +10,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../controllers/rider_withdrawal_controller.dart';
 import '../../core/rider_achievements.dart';
 import '../../models/withdrawal_status.dart';
@@ -18,6 +19,10 @@ import '../../services/auth_service.dart';
 import '../../services/location_service.dart';
 import '../../services/supabase_service.dart';
 import 'entrega_activa_screen.dart';
+
+// La tienda de coins ya no vive dentro de la app — el repartidor la usa
+// desde la página web (login propio ahí, mismo backend).
+const _tiendaRiderWebUrl = 'https://gogo-web-pruebas.vercel.app/login';
 
 class RepartidorPlusScreen extends StatefulWidget {
   const RepartidorPlusScreen({super.key});
@@ -150,7 +155,7 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
       if (!mounted) return;
       final pendientes = data
           .where((o) =>
-              o['status'] == 'pending' && !_rechazadosIds.contains(o['id'] as String))
+              o['status'] == 'restaurant_accepted' && !_rechazadosIds.contains(o['id'] as String))
           .toList();
       setState(() => _pedidosPendientes = pendientes);
     } catch (_) {}
@@ -205,7 +210,7 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
             restaurantName: restaurantName,
             customerName: delivery['name'] as String? ?? 'Cliente',
             customerId: pedido['customer_id'] as String?,
-            customerPhone: delivery['phone'] as String? ?? '—',
+            customerPhone: delivery['phone'] as String? ?? '',
             address: delivery['address'] as String? ?? 'Dirección no especificada',
             customerPos: customerPos,
             total: total,
@@ -806,16 +811,18 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
             const Spacer(),
             GestureDetector(
               onTap: () async {
-                final result = await context.push<int>('/tienda-rider', extra: _coins);
-                if (!mounted) return;
-                if (result != null) {
-                  // Botón de regreso de la tienda: trae el saldo exacto, sin viaje al servidor.
-                  setState(() => _coins = result);
-                } else {
-                  // Se salió por swipe/back del sistema (sin resultado) — se
-                  // recarga del servidor para no quedar desincronizado.
-                  final uid = Supabase.instance.client.auth.currentUser?.id;
-                  if (uid != null) _loadStats(uid);
+                // La tienda de coins ahora vive en la página web (login
+                // propio ahí, mismo saldo de rider_stats) — se abre en el
+                // navegador en vez de una pantalla dentro de la app.
+                final ok = await launchUrl(
+                  Uri.parse(_tiendaRiderWebUrl),
+                  mode: LaunchMode.externalApplication,
+                );
+                if (!ok && mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content: Text('No se pudo abrir la tienda. Intenta de nuevo.'),
+                    backgroundColor: Colors.redAccent,
+                  ));
                 }
               },
               child: Container(
@@ -1765,12 +1772,41 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
 
   Widget _buildOrderCard(Map<String, dynamic> pedido) {
     final orderId     = pedido['id'] as String;
-    final restaurante = (pedido['restaurants'] as Map?)?['name'] as String? ?? 'Restaurante';
-    final logoUrl     = (pedido['restaurants'] as Map?)?['image_url'] as String?;
-    final total       = (pedido['total'] as num?)?.toDouble() ?? 0.0;
+    final restData    = pedido['restaurants'] as Map?;
+    final restaurante = restData?['name'] as String? ?? 'Restaurante';
+    final logoUrl     = restData?['image_url'] as String?;
     final cliente     = _safeField(pedido['customer_name'], 'name');
     final direccion   = _safeField(pedido['address'], 'address');
     final items       = (pedido['order_items'] as List?)?.length ?? 1;
+
+    // Lo que va a ganar el repartidor por ENTREGAR este pedido (no el total
+    // del pedido, que incluye la comida) — cuenta la distancia desde donde
+    // está parado ahorita hasta el restaurante y de ahí a la casa del
+    // cliente, ya con la comisión de la plataforma descontada. Si falta
+    // algún dato (GPS/coordenadas) cae al delivery_fee ya guardado en el
+    // pedido, también con la comisión aplicada.
+    double? gananciaEstimada;
+    final rLat = (restData?['lat'] as num?)?.toDouble();
+    final rLng = (restData?['lng'] as num?)?.toDouble();
+    double? cLat, cLng;
+    try {
+      final custJson = jsonDecode(pedido['customer_name'] as String? ?? '{}') as Map<String, dynamic>;
+      cLat = (custJson['lat'] as num?)?.toDouble();
+      cLng = (custJson['lng'] as num?)?.toDouble();
+    } catch (_) {}
+    if (_lastPos != null && rLat != null && rLng != null && cLat != null && cLng != null) {
+      gananciaEstimada = LocationService.estimarGananciaRepartidor(
+        riderLat: _lastPos!.latitude,
+        riderLng: _lastPos!.longitude,
+        restaurantLat: rLat,
+        restaurantLng: rLng,
+        customerLat: cLat,
+        customerLng: cLng,
+      );
+    }
+    final deliveryFee = (pedido['delivery_fee'] as num?)?.toDouble() ?? 0.0;
+    final montoAMostrar = gananciaEstimada ??
+        (deliveryFee * (1 - LocationService.comisionRepartidorPct / 100));
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -1811,7 +1847,7 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
                             overflow: TextOverflow.ellipsis),
                       ),
                       const SizedBox(width: 8),
-                      Text('\$${total.toStringAsFixed(0)} MXN',
+                      Text('\$${montoAMostrar.toStringAsFixed(0)} MXN',
                           style: const TextStyle(color: Colors.white,
                               fontWeight: FontWeight.bold, fontSize: 13)),
                     ]),

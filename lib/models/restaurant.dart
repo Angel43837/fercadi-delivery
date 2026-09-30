@@ -13,7 +13,7 @@ class Restaurant {
   final double? lng;       // Longitud GPS del restaurante
   final double rating;     // Calificación promedio (0.0 - 5.0)
   final bool isOpen;       // Si está abierto para recibir pedidos
-  final String zona;       // 'maravatio' o 'acambaro' — a qué zona pertenece
+  final String zona;       // 'maravatio', 'acambaro' o 'morelia' — a qué zona pertenece
   final List<String> categorias; // Tipo de restaurante (lista fija, ver kRestaurantCategories) — para el filtro del cliente
 
   const Restaurant({

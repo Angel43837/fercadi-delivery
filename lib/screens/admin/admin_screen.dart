@@ -355,7 +355,7 @@ class _AdminScreenState extends State<AdminScreen> {
     }
   }
 
-  Future<void> _deleteStoreItem(String id) async {
+  Future<void> _deleteStoreItem(String id, String? imageUrl) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -389,6 +389,9 @@ class _AdminScreenState extends State<AdminScreen> {
     );
     if (confirm == true) {
       await SupabaseService.deleteRiderStoreItem(id);
+      // Sin esto la foto del premio se quedaba huérfana en el bucket para
+      // siempre — solo se borraba la fila de la tabla.
+      unawaited(SupabaseService.deleteImageByUrl(imageUrl));
       await _loadStoreItems();
     }
   }
@@ -436,6 +439,7 @@ class _AdminScreenState extends State<AdminScreen> {
               imageQuality: 80,
             );
             if (xfile == null) return;
+            final previousUrl = imageCtrl.text.trim();
             setS(() => uploading = true);
             final bytes = await xfile.readAsBytes();
             final url = await SupabaseService.uploadProductImageBytes(bytes);
@@ -443,10 +447,15 @@ class _AdminScreenState extends State<AdminScreen> {
             if (url != null) {
               imageCtrl.text = url;
               setS(() {});
+              // Cada foto se sube con nombre nuevo (timestamp) — sin este
+              // borrado, la que se reemplaza se queda huérfana en el bucket.
+              if (previousUrl.startsWith('http') && previousUrl != url) {
+                unawaited(SupabaseService.deleteImageByUrl(previousUrl));
+              }
             } else {
               messenger.showSnackBar(
-                const SnackBar(
-                  content: Text('No se pudo subir la foto. Verifica conexión.'),
+                SnackBar(
+                  content: Text('No se pudo subir la foto (${SupabaseService.lastUploadError ?? "sin conexión"}).'),
                   backgroundColor: Colors.orange,
                 ),
               );
@@ -761,7 +770,7 @@ class _AdminScreenState extends State<AdminScreen> {
                     color: AdminColors.statusCancelled,
                     size: 20,
                   ),
-                  onPressed: () => _deleteStoreItem(id),
+                  onPressed: () => _deleteStoreItem(id, item['image_url'] as String?),
                 ),
               ],
             ),
@@ -1076,6 +1085,13 @@ class _AdminScreenState extends State<AdminScreen> {
         () => context.push('/admin/retiros'),
       ),
       (
+        Icons.local_offer_outlined,
+        'Promociones',
+        'Cupones y descuentos reales',
+        0,
+        () => context.push('/admin/promociones'),
+      ),
+      (
         Icons.tune_outlined,
         'Configuración',
         'Tarifas y comisiones',
@@ -1282,7 +1298,7 @@ class _AdminScreenState extends State<AdminScreen> {
         .where((o) => o['status'] == 'pending')
         .length;
     final enCamino = _realOrders
-        .where((o) => o['status'] == 'delivering' || o['status'] == 'accepted')
+        .where((o) => o['status'] == 'delivering' || o['status'] == 'accepted' || o['status'] == 'restaurant_accepted')
         .length;
     final cancelados = _realOrders
         .where((o) => o['status'] == 'cancelled')
@@ -1480,7 +1496,7 @@ class _AdminScreenState extends State<AdminScreen> {
               case AppOrderStatus.pendiente:
                 return s == 'pending';
               case AppOrderStatus.enCamino:
-                return s == 'delivering' || s == 'accepted';
+                return s == 'delivering' || s == 'accepted' || s == 'restaurant_accepted';
               case AppOrderStatus.entregado:
                 return s == 'delivered';
               case AppOrderStatus.cancelado:
@@ -1835,6 +1851,7 @@ class _AdminScreenState extends State<AdminScreen> {
   Widget _buildEventos() {
     final statuses = [
       'pending',
+      'restaurant_accepted',
       'accepted',
       'delivering',
       'delivered',
@@ -1842,6 +1859,7 @@ class _AdminScreenState extends State<AdminScreen> {
     ];
     final statusLabels = {
       'pending': 'Pendiente',
+      'restaurant_accepted': 'Confirmado',
       'accepted': 'Aceptado',
       'delivering': 'En camino',
       'delivered': 'Entregado',
@@ -1849,6 +1867,7 @@ class _AdminScreenState extends State<AdminScreen> {
     };
     final statusColors = {
       'pending': const Color(0xFFFFB300),
+      'restaurant_accepted': const Color(0xFF00BFA5),
       'accepted': AppConstants.primaryColor,
       'delivering': const Color(0xFF2196F3),
       'delivered': Colors.green,
@@ -1997,6 +2016,8 @@ class _AdminScreenState extends State<AdminScreen> {
                             child: Icon(
                               status == 'pending'
                                   ? Icons.hourglass_top
+                                  : status == 'restaurant_accepted'
+                                  ? Icons.storefront_outlined
                                   : status == 'accepted'
                                   ? Icons.check_circle_outline
                                   : status == 'delivering'
@@ -2505,6 +2526,7 @@ class _RealOrderCard extends StatelessWidget {
 
     final (statusLabel, statusColor) = switch (status) {
       'pending' => ('Pendiente', const Color(0xFFFFB300)),
+      'restaurant_accepted' => ('Confirmado', const Color(0xFF00BFA5)),
       'accepted' => ('Aceptado', AppConstants.primaryColor),
       'delivering' => ('En camino', const Color(0xFF2196F3)),
       'delivered' => ('Entregado', Colors.green),
@@ -2518,19 +2540,21 @@ class _RealOrderCard extends StatelessWidget {
 
     // Botones de acción según el estado actual
     final nextStatus = switch (status) {
-      'pending' => 'accepted',
+      'pending' => 'restaurant_accepted',
+      'restaurant_accepted' => 'accepted',
       'accepted' => 'delivering',
       'delivering' => 'delivered',
       _ => null,
     };
     final nextLabel = switch (status) {
-      'pending' => 'Aceptar',
+      'pending' => 'Confirmar',
+      'restaurant_accepted' => 'Aceptar',
       'accepted' => 'En camino',
       'delivering' => 'Entregado',
       _ => null,
     };
     final canCancel =
-        status == 'pending' || status == 'accepted' || status == 'delivering';
+        status == 'pending' || status == 'restaurant_accepted' || status == 'accepted' || status == 'delivering';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),

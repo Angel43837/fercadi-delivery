@@ -30,6 +30,7 @@ import '../../services/location_service.dart';
 import '../../services/notification_service.dart';
 import '../../services/supabase_service.dart';
 import '../../services/auth_service.dart';
+import '../chat_screen.dart';
 import '../rating_dialog.dart';
 
 const _defaultClientPos     = LatLng(19.8900, -100.4370);
@@ -40,6 +41,7 @@ class _Order {
   final String restaurantName;
   final String restaurantIcon;
   final LatLng restaurantPos;
+  final bool hasExactRestaurantCoords;
   final String customerName;
   final String? customerId;
   final String customerPhone;
@@ -48,12 +50,14 @@ class _Order {
   final bool hasExactCoords;
   final List<String> items;
   final double total;
+  final double deliveryFee;
 
   _Order({
     required this.id,
     required this.restaurantName,
     required this.restaurantIcon,
     required this.restaurantPos,
+    required this.hasExactRestaurantCoords,
     required this.customerName,
     this.customerId,
     required this.customerPhone,
@@ -62,6 +66,7 @@ class _Order {
     required this.hasExactCoords,
     required this.items,
     required this.total,
+    required this.deliveryFee,
   });
 
   factory _Order.fromMap(Map<String, dynamic> m) {
@@ -86,19 +91,28 @@ class _Order {
         ? LatLng((rawLat as num).toDouble(), (rawLng as num).toDouble())
         : _defaultClientPos;
 
+    final rawRLat = restaurantData?['lat'];
+    final rawRLng = restaurantData?['lng'];
+    final hasRestaurantCoords = rawRLat != null && rawRLng != null;
+    final restaurantPos = hasRestaurantCoords
+        ? LatLng((rawRLat as num).toDouble(), (rawRLng as num).toDouble())
+        : _defaultRestaurantPos;
+
     return _Order(
       id: m['id'] as String,
       restaurantName: restaurantName,
       restaurantIcon: '🍽️',
-      restaurantPos: _defaultRestaurantPos,
+      restaurantPos: restaurantPos,
+      hasExactRestaurantCoords: hasRestaurantCoords,
       customerName: delivery['name'] as String? ?? 'Cliente',
       customerId: m['customer_id'] as String?,
-      customerPhone: delivery['phone'] as String? ?? '—',
+      customerPhone: delivery['phone'] as String? ?? '',
       address: delivery['address'] as String? ?? 'Dirección no especificada',
       customerPos: customerPos,
       hasExactCoords: hasCoords,
       items: itemStrings.isEmpty ? ['Pedido #${m['id'].toString().substring(0, 6)}'] : itemStrings,
       total: (m['total'] as num).toDouble(),
+      deliveryFee: (m['delivery_fee'] as num?)?.toDouble() ?? 0.0,
     );
   }
 }
@@ -563,6 +577,22 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     final textSub  = isDark ? Colors.white.withValues(alpha: 0.45) : Colors.black54;
     final divider  = isDark ? Colors.white.withValues(alpha: 0.06) : Colors.black.withValues(alpha: 0.06);
 
+    // Lo que va a ganar el repartidor por ENTREGAR este pedido (no el total
+    // del pedido, que incluye la comida) — cuenta la distancia desde donde
+    // está parado ahorita hasta el restaurante y de ahí a la casa del
+    // cliente, ya con la comisión de la plataforma descontada.
+    double montoAMostrar = order.deliveryFee * (1 - LocationService.comisionRepartidorPct / 100);
+    if (_myPos != null && order.hasExactRestaurantCoords && order.hasExactCoords) {
+      montoAMostrar = LocationService.estimarGananciaRepartidor(
+        riderLat: _myPos!.latitude,
+        riderLng: _myPos!.longitude,
+        restaurantLat: order.restaurantPos.latitude,
+        restaurantLng: order.restaurantPos.longitude,
+        customerLat: order.customerPos.latitude,
+        customerLng: order.customerPos.longitude,
+      );
+    }
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
@@ -585,7 +615,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                       style: TextStyle(color: textSub, fontSize: 12)),
                 ]),
               ),
-              Text('\$${order.total.toStringAsFixed(0)} MXN',
+              Text('\$${montoAMostrar.toStringAsFixed(0)} MXN',
                   style: const TextStyle(
                       color: AppConstants.primaryColor,
                       fontWeight: FontWeight.bold,
@@ -745,8 +775,8 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                 if (myLatLng != null)
                   Marker(
                     point: myLatLng,
-                    width: 44, height: 44,
-                    child: _Pin(icon: Icons.delivery_dining, color: const Color(0xFFFF6D00)),
+                    width: 72, height: 72,
+                    child: Image.asset('assets/images/moto_repartidor.png', width: 72, height: 72),
                   ),
               ]),
             ],
@@ -882,10 +912,26 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                         style: TextStyle(color: textMain, fontWeight: FontWeight.w600, fontSize: 14),
                       ),
                     ),
+                    IconButton(
+                      icon: const Icon(Icons.chat_bubble_outline_rounded, color: AppConstants.primaryColor, size: 20),
+                      tooltip: 'Mensajes',
+                      onPressed: () => Navigator.push(context, MaterialPageRoute(
+                        builder: (_) => ChatScreen(
+                          orderId: order.id,
+                          counterpartName: _customerProfileName ?? order.customerName,
+                          counterpartPhoto: _customerAvatarUrl,
+                        ),
+                      )),
+                    ),
                   ]),
                   const SizedBox(height: 10),
-                  _InfoRow(Icons.phone_outlined,    order.customerPhone, textColor: textMain),
-                  const SizedBox(height: 8),
+                  // El cliente ya no captura teléfono en el checkout — solo
+                  // se muestra si su cuenta ya tiene uno asociado. Para
+                  // contactarlo siempre está el botón de mensajes de arriba.
+                  if (order.customerPhone.isNotEmpty) ...[
+                    _InfoRow(Icons.phone_outlined, order.customerPhone, textColor: textMain),
+                    const SizedBox(height: 8),
+                  ],
                   _InfoRow(Icons.location_on_outlined, order.address,   textColor: textMain),
                 ]),
               ),

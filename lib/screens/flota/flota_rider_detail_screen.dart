@@ -282,6 +282,7 @@ class _RiderDetailScreenState extends State<RiderDetailScreen> {
       'cancelled'  => ('Cancelado', const Color(0xFFEF4444)),
       'delivering' => ('En camino', _accent),
       'accepted'   => ('Aceptado', const Color(0xFFF59E0B)),
+      'restaurant_accepted' => ('Confirmado', const Color(0xFF00BFA5)),
       _            => (status, _muted),
     };
     return Container(

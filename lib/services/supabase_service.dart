@@ -10,6 +10,10 @@ import '../models/restaurant.dart';
 import '../models/category.dart';
 import '../models/product.dart';
 import '../models/restaurant_banner.dart';
+import '../models/app_promo.dart';
+import '../models/order_message.dart';
+import '../models/promotion.dart';
+import '../models/promotion_claim.dart';
 
 // supabase_service.dart
 // Capa de acceso a datos — conecta la app con la base de datos de Supabase.
@@ -551,6 +555,161 @@ class SupabaseService {
     return (data as List).map((e) => Product.fromJson(e)).toList();
   }
 
+  // Promos propias de la app GOGO Food (no de un restaurante) — cupones que
+  // se muestran en la pestaña "Promos" de restaurants_screen.dart.
+  static Future<List<AppPromo>> getActivePromos() async {
+    if (useMock) return [];
+    final data = await _client
+        .from('app_promos')
+        .select()
+        .eq('is_active', true)
+        .order('sort_order');
+    final now = DateTime.now();
+    return (data as List)
+        .map((e) => AppPromo.fromJson(e))
+        .where((p) => p.expiresAt == null || p.expiresAt!.isAfter(now))
+        .toList();
+  }
+
+  // ── Promociones/cupones reales ───────────────────────────────────────────
+  // No confundir con getActivePromos() de arriba (AppPromo — banners
+  // puramente visuales). Esto es el sistema real: reclamar, "Mis
+  // promociones", validar y aplicar en el checkout. El descuento SIEMPRE
+  // lo calcula el servidor (validate_promotion_for_order) — estas
+  // funciones nunca calculan un monto en Dart, solo piden/mandan lo que la
+  // base de datos ya decidió. Ver supabase/migrations/20260901010000_promotions.sql.
+
+  // Detalle de una sola promoción (para promotion_detail_screen.dart, a
+  // donde llega un banner con linked_promotion_id). RLS ya filtra que un
+  // cliente normal solo pueda ver esta fila si is_active = true.
+  static Future<Promotion?> getPromotionById(String id) async {
+    if (useMock) return null;
+    try {
+      final data = await _client.from('promotions').select().eq('id', id).maybeSingle();
+      if (data == null) return null;
+      return Promotion.fromMap(data);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Único lugar donde se crea un reclamo — pasa por la función
+  // claim_promotion (security definer), nunca un insert directo.
+  static Future<PromotionClaim> claimPromotion(String promotionId) async {
+    final data = await _client.rpc('claim_promotion', params: {
+      'p_promotion_id': promotionId,
+    });
+    return PromotionClaim.fromMap((data as Map).cast<String, dynamic>());
+  }
+
+  // "Mis promociones" — ya agrupadas en los 4 buckets que muestra la
+  // pantalla (Disponible/Próximamente/Expirada/Utilizada), calculados al
+  // leer, nunca guardados.
+  static Future<Map<ClaimBucket, List<PromotionClaim>>> getMyPromotions() async {
+    if (useMock) return {};
+    final uid = _client.auth.currentUser?.id;
+    if (uid == null) return {};
+    try {
+      final data = await _client
+          .from('promotion_claims')
+          .select('*, promotion:promotions(*)')
+          .eq('user_id', uid)
+          .order('claimed_at', ascending: false);
+      final claims = (data as List)
+          .map((e) => PromotionClaim.fromMap(e as Map<String, dynamic>))
+          .toList();
+      final grouped = <ClaimBucket, List<PromotionClaim>>{
+        for (final b in ClaimBucket.values) b: [],
+      };
+      for (final c in claims) {
+        grouped[c.bucket]!.add(c);
+      }
+      return grouped;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  // Le pide al servidor el descuento real para un reclamo + carrito dados —
+  // esto es lo que se muestra en el checkout, nunca un cálculo hecho en Dart.
+  // cartItems: [{'product_id':..., 'category_id':..., 'quantity':n, 'unit_price':x}, ...]
+  static Future<Map<String, dynamic>> validatePromotionForOrder({
+    required String claimId,
+    required String restaurantId,
+    required List<Map<String, dynamic>> cartItems,
+    required double subtotal,
+    required double deliveryFee,
+  }) async {
+    final data = await _client.rpc('validate_promotion_for_order', params: {
+      'p_claim_id': claimId,
+      'p_restaurant_id': restaurantId,
+      'p_cart_items': cartItems,
+      'p_subtotal': subtotal,
+      'p_delivery_fee': deliveryFee,
+    });
+    return (data as Map).cast<String, dynamic>();
+  }
+
+  // Se llama justo después de que el pedido ya se creó de verdad. Si esto
+  // falla, el pedido en sí ya se completó igual — no fatal (mismo criterio
+  // que el resto de los "side effects" de esta app).
+  static Future<void> applyPromotionToOrder({
+    required String claimId,
+    required String orderId,
+    required double discountAmount,
+  }) async {
+    try {
+      await _client.rpc('apply_promotion_to_order', params: {
+        'p_claim_id': claimId,
+        'p_order_id': orderId,
+        'p_discount_amount': discountAmount,
+      });
+    } catch (e) {
+      debugPrint('applyPromotionToOrder falló (el pedido ya se creó igual): $e');
+    }
+  }
+
+  // ── Promociones — administración ─────────────────────────────────────────
+
+  static Future<List<Map<String, dynamic>>> adminGetPromotions() async {
+    if (useMock) return [];
+    final data = await _client
+        .from('promotions')
+        .select()
+        .order('created_at', ascending: false);
+    return (data as List).cast<Map<String, dynamic>>();
+  }
+
+  static Future<void> adminCreatePromotion(Map<String, dynamic> payload) async {
+    await _client.from('promotions').insert(payload);
+  }
+
+  static Future<void> adminUpdatePromotion(String id, Map<String, dynamic> payload) async {
+    await _client.from('promotions').update(payload).eq('id', id);
+  }
+
+  static Future<void> adminSetPromotionActive(String id, bool active) async {
+    await _client.from('promotions').update({'is_active': active}).eq('id', id);
+  }
+
+  // Contadores para la vista de estadísticas del admin — lectura directa
+  // sobre promotion_claims, sin RPC ni tabla aparte (RLS ya lo protege).
+  static Future<Map<String, dynamic>> getPromotionStats(String promotionId) async {
+    final claims = await _client
+        .from('promotion_claims')
+        .select('status, discount_amount')
+        .eq('promotion_id', promotionId);
+    final list = (claims as List).cast<Map<String, dynamic>>();
+    final used = list.where((c) => c['status'] == 'used').toList();
+    final totalDiscount = used.fold<double>(
+        0, (s, c) => s + ((c['discount_amount'] as num?)?.toDouble() ?? 0));
+    return {
+      'claims': list.length,
+      'used': used.length,
+      'totalDiscountGiven': totalDiscount,
+    };
+  }
+
   // Precio más barato disponible de cada restaurante — usado por el filtro
   // "Menos de $100"/"Menos de $200" en restaurants_screen.dart. Una sola
   // consulta para todos los restaurantes de la zona, no una por restaurante.
@@ -921,16 +1080,6 @@ class SupabaseService {
     );
   }
 
-  static Future<String?> uploadProductImage(String localPath) async {
-    if (useMock) return null;
-    try {
-      final bytes = await File(localPath).readAsBytes();
-      return uploadProductImageBytes(bytes);
-    } catch (_) {
-      return null;
-    }
-  }
-
   // Detecta el formato real de una imagen por sus bytes mágicos — en web no
   // se recomprime (_compressToWebP la deja intacta), así que hay que revisar
   // el contenido real en vez de asumir un formato fijo.
@@ -995,24 +1144,68 @@ class SupabaseService {
     return compressed;
   }
 
-  static Future<String?> uploadProductImageBytes(Uint8List bytes) async {
+  // ownerId (normalmente el restaurant_id del dueño que sube la foto) se
+  // antepone al nombre del archivo — antes el nombre era solo un timestamp,
+  // sin ninguna relación con el dueño/restaurante. El bucket es público y
+  // sin políticas de dueño reales (igual que profile-photos/rider-avatars),
+  // así que el nombre del archivo es la única protección real contra que
+  // alguien pise la foto de OTRO restaurante subiendo con el mismo nombre
+  // — y ese nombre es visible para cualquiera en la URL pública de la
+  // foto, así que sin el restaurant_id ahí, cualquiera podía reemplazar la
+  // foto de cualquier platillo de cualquier restaurante.
+  static Future<String?> uploadProductImageBytes(Uint8List bytes, {String? ownerId}) async {
     if (useMock) return null;
     try {
       final compressed = await _compressToWebP(bytes);
       final ext = kIsWeb ? _detectImageExt(bytes) : 'webp';
       final mimeType = kIsWeb ? _mimeForExt(ext) : 'image/webp';
-      final fileName = '${DateTime.now().millisecondsSinceEpoch}.$ext';
+      final prefix = ownerId == null
+          ? ''
+          : '${ownerId.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_')}_';
+      final fileName = '$prefix${DateTime.now().millisecondsSinceEpoch}.$ext';
+      // Antes sin timeout ni lastUploadError — a diferencia de las otras
+      // subidas (perfil, rider), una conexión colgada aquí se quedaba
+      // esperando para siempre y el error real nunca quedaba disponible
+      // para mostrarse en pantalla (el dueño solo veía "no se pudo subir").
       await _client.storage
           .from('product-images')
           .uploadBinary(
             fileName,
             compressed,
             fileOptions: FileOptions(contentType: mimeType, upsert: true),
-          );
+          )
+          .timeout(const Duration(seconds: 20));
+      lastUploadError = null;
       return _client.storage.from('product-images').getPublicUrl(fileName);
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[Upload] uploadProductImageBytes error: $e');
+      lastUploadError = e.toString();
       return null;
     }
+  }
+
+  // Borra un archivo de Storage a partir de su URL pública — se usa al
+  // reemplazar una foto (producto/banner) para no dejar el archivo anterior
+  // como basura huérfana en el bucket. A diferencia de la foto de
+  // perfil/logo/avatar (que siempre reusa el mismo nombre de archivo por
+  // usuario/restaurante, así que un upsert ya sobreescribe sin dejar
+  // basura), las fotos de producto y de banner usan un nombre con
+  // timestamp — cada foto nueva es un archivo nuevo, así que sin este
+  // borrado explícito el anterior se queda huérfano para siempre.
+  // Solo usa el bucket + la ruta que trae la URL, contra el proyecto de
+  // Supabase con el que esta app está conectada ahora mismo — si la URL
+  // guardada quedó apuntando a otro proyecto (ej. de antes de una
+  // migración) y aquí no hay ningún archivo con esa ruta, Storage
+  // simplemente no borra nada. Best-effort: nunca lanza error si falla.
+  static Future<void> deleteImageByUrl(String? url) async {
+    if (url == null || !url.startsWith('http')) return;
+    final match = RegExp(r'/object/public/([^/]+)/(.+)$').firstMatch(url);
+    if (match == null) return;
+    final bucket = match.group(1)!;
+    final path = Uri.decodeComponent(match.group(2)!);
+    try {
+      await _client.storage.from(bucket).remove([path]);
+    } catch (_) {}
   }
 
   static Future<String?> uploadProfilePhotoBytes(
@@ -1033,6 +1226,13 @@ class SupabaseService {
             fileOptions: FileOptions(contentType: mimeType, upsert: true),
           )
           .timeout(const Duration(seconds: 20));
+      // Limpieza best-effort del .jpg viejo que dejaba la versión anterior
+      // de este flujo (antes de la conversión a WebP, siempre subía como
+      // .jpg) — mismo fix ya aplicado en uploadRiderAvatarBytes. Si no
+      // existe, Storage simplemente no encuentra nada que borrar.
+      if (ext != 'jpg') {
+        unawaited(_client.storage.from('profile-photos').remove(['profile_$userId.jpg']).catchError((_) => <FileObject>[]));
+      }
       lastUploadError = null;
       return _client.storage.from('profile-photos').getPublicUrl(fileName);
     } catch (e) {
@@ -1066,6 +1266,12 @@ class SupabaseService {
             fileOptions: FileOptions(contentType: mimeType, upsert: true),
           )
           .timeout(const Duration(seconds: 20));
+      // Mismo fix que uploadProfilePhotoBytes/uploadRiderAvatarBytes: borra
+      // el .jpg viejo que dejó la versión anterior de este flujo (antes de
+      // convertir a WebP) para no dejarlo huérfano en el bucket.
+      if (ext != 'jpg') {
+        unawaited(_client.storage.from('profile-photos').remove(['profile_$userId.jpg']).catchError((_) => <FileObject>[]));
+      }
       lastUploadError = null;
       return _client.storage.from('profile-photos').getPublicUrl(fileName);
     } catch (e) {
@@ -1204,39 +1410,58 @@ class SupabaseService {
     }
   }
 
-  static Future<Set<String>> getUserLikedProducts(String email) async {
-    if (useMock || email.isEmpty) return {};
+  // user_email sigue existiendo por compatibilidad (era parte de la llave
+  // primaria original y sigue NOT NULL) pero ya no es la identidad real —
+  // eso es user_id ahora (ver migración 20260901000000_likes_user_id_and_rls_fix.sql,
+  // que también quitó la política "Allow all" que dejaba a cualquiera con la
+  // anon key insertar/borrar likes de otra persona). Una cuenta de solo-
+  // teléfono no tiene email, así que se rellena con un valor sintético único
+  // que ya no se lee para nada.
+  static String _likeIdentityEmail() {
+    final user = _client.auth.currentUser;
+    final email = user?.email;
+    if (email != null && email.isNotEmpty) return email;
+    final phone = user?.phone;
+    if (phone != null && phone.isNotEmpty) {
+      return 'phone:${phone.startsWith('+') ? phone : '+$phone'}';
+    }
+    return 'uid:${user?.id ?? 'desconocido'}';
+  }
+
+  static Future<Set<String>> getUserLikedProducts(String userId) async {
+    if (useMock || userId.isEmpty) return {};
     try {
       final data = await _client
           .from('product_likes')
           .select('product_id')
-          .eq('user_email', email);
+          .eq('user_id', userId);
       return {for (final r in data as List) r['product_id'] as String};
     } catch (_) {
       return {};
     }
   }
 
-  static Future<void> toggleProductLike(String productId, String email) async {
-    if (useMock || email.isEmpty) return;
+  static Future<void> toggleProductLike(String productId, String userId) async {
+    if (useMock || userId.isEmpty) return;
     try {
       final existing = await _client
           .from('product_likes')
           .select()
           .eq('product_id', productId)
-          .eq('user_email', email)
+          .eq('user_id', userId)
           .maybeSingle();
       if (existing == null) {
         await _client.from('product_likes').insert({
           'product_id': productId,
-          'user_email': email,
+          'user_id': userId,
+          'user_email': _likeIdentityEmail(),
         });
       } else {
         await _client
             .from('product_likes')
             .delete()
             .eq('product_id', productId)
-            .eq('user_email', email);
+            .eq('user_id', userId);
       }
     } catch (_) {}
   }
@@ -1290,13 +1515,13 @@ class SupabaseService {
     }
   }
 
-  static Future<Set<String>> getUserLikedRestaurants(String email) async {
-    if (useMock || email.isEmpty) return {};
+  static Future<Set<String>> getUserLikedRestaurants(String userId) async {
+    if (useMock || userId.isEmpty) return {};
     try {
       final data = await _client
           .from('restaurant_likes')
           .select('restaurant_id')
-          .eq('user_email', email);
+          .eq('user_id', userId);
       return {for (final r in data as List) r['restaurant_id'] as String};
     } catch (_) {
       return {};
@@ -1305,27 +1530,28 @@ class SupabaseService {
 
   static Future<void> toggleRestaurantLike(
     String restaurantId,
-    String email,
+    String userId,
   ) async {
-    if (useMock || email.isEmpty) return;
+    if (useMock || userId.isEmpty) return;
     try {
       final existing = await _client
           .from('restaurant_likes')
           .select()
           .eq('restaurant_id', restaurantId)
-          .eq('user_email', email)
+          .eq('user_id', userId)
           .maybeSingle();
       if (existing == null) {
         await _client.from('restaurant_likes').insert({
           'restaurant_id': restaurantId,
-          'user_email': email,
+          'user_id': userId,
+          'user_email': _likeIdentityEmail(),
         });
       } else {
         await _client
             .from('restaurant_likes')
             .delete()
             .eq('restaurant_id', restaurantId)
-            .eq('user_email', email);
+            .eq('user_id', userId);
       }
     } catch (_) {}
   }
@@ -1424,14 +1650,6 @@ class SupabaseService {
     }
   }
 
-  // Mantener compatibilidad — ya no usamos Realtime, el cliente hace polling
-  static RealtimeChannel? subscribeToLocation(
-    String orderId,
-    void Function(double lat, double lng) onUpdate,
-  ) {
-    return null;
-  }
-
   // ── Pedidos ───────────────────────────────────────────────────────────────
 
   // Crea un nuevo pedido en la BD y sus ítems asociados
@@ -1516,6 +1734,7 @@ class SupabaseService {
         .select('*, order_items(quantity, price, notes, products(id, name))')
         .inFilter('status', [
           'pending',
+          'restaurant_accepted',
           'accepted',
           'delivering',
           'delivered',
@@ -1613,8 +1832,10 @@ class SupabaseService {
   }
 
   // ── Tienda de coins del repartidor ───────────────────────────────────────
-  // Productos administrables desde el panel de Admin (antes vivían
-  // hardcodeados en tienda_rider_screen.dart).
+  // Productos administrables desde el panel de Admin. La pantalla de canje
+  // ya no vive en esta app — se movió a Pagina_web_GoGo (login propio ahí);
+  // estas funciones se quedan porque el admin las sigue usando para
+  // mantener el catálogo (mismas tablas, mismos permisos de siempre).
 
   static Future<List<Map<String, dynamic>>> getRiderStoreItems({
     bool onlyActive = true,
@@ -1847,14 +2068,17 @@ class SupabaseService {
 
   static Future<List<Map<String, dynamic>>> getOrdersForRepartidor() async {
     final userId = _client.auth.currentUser?.id;
-    // Muestra pedidos sin repartidor asignado (pending) + pedidos asignados a este repartidor
+    // Solo pedidos ya confirmados por el restaurante y sin repartidor
+    // asignado (restaurant_accepted) + los ya asignados a este repartidor —
+    // antes mostraba 'pending' directo, sin esperar a que el restaurante
+    // confirmara nada.
     final data = await _client
         .from('orders')
         .select(
-          '*, restaurants(name, address, image_url), order_items(quantity, price, notes, products(id, name))',
+          '*, restaurants(name, address, image_url, lat, lng), order_items(quantity, price, notes, products(id, name))',
         )
         .or(
-          'status.eq.pending,and(status.eq.accepted,repartidor_id.eq.$userId)',
+          'status.eq.restaurant_accepted,and(status.eq.accepted,repartidor_id.eq.$userId)',
         )
         .order('created_at', ascending: false);
     return (data as List).cast<Map<String, dynamic>>();
@@ -2192,15 +2416,51 @@ class SupabaseService {
     return channel;
   }
 
-  // ── Configuración de la plataforma ────────────────────────────────────────
+  // ── Chat interno del pedido (cliente ↔ repartidor) ──────────────────────
 
-  static Future<Map<String, String>> getPlatformConfig() async {
-    if (useMock) return {'tarifa_base': '15.0', 'tarifa_por_km': '5.0'};
-    final rows = await _client.from('platform_config').select('key, value');
-    return {
-      for (final r in rows as List) r['key'] as String: r['value'] as String,
-    };
+  static Future<List<OrderMessage>> getOrderMessages(String orderId) async {
+    if (useMock) return [];
+    final data = await _client
+        .from('order_messages')
+        .select()
+        .eq('order_id', orderId)
+        .order('created_at');
+    return (data as List).map((e) => OrderMessage.fromJson(e)).toList();
   }
+
+  static Future<void> sendOrderMessage(String orderId, String content) async {
+    if (useMock) return;
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) throw Exception('No hay sesión activa');
+    await _client.from('order_messages').insert({
+      'order_id': orderId,
+      'sender_id': userId,
+      'content': content,
+    });
+  }
+
+  static RealtimeChannel subscribeToOrderMessages(
+    String orderId,
+    void Function(OrderMessage) onNewMessage,
+  ) {
+    final channel = _client.channel('order_messages_$orderId');
+    channel
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'order_messages',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'order_id',
+            value: orderId,
+          ),
+          callback: (payload) => onNewMessage(OrderMessage.fromJson(payload.newRecord)),
+        )
+        .subscribe();
+    return channel;
+  }
+
+  // ── Configuración de la plataforma ────────────────────────────────────────
 
   static Future<void> setPlatformConfig(String key, String value) async {
     if (useMock) return;

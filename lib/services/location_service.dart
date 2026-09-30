@@ -21,15 +21,39 @@ class LocationService {
   static const double _latAcambaro = 20.0386;
   static const double _lngAcambaro = -100.7284;
 
+  // Centro de Morelia, Michoacán (Catedral) — zona nueva agregada a
+  // petición del dueño (septiembre 2026). A diferencia de Acámbaro, Morelia
+  // está a ~80 km de Maravatío (fuera del radio de servicio), así que
+  // necesita su propio centro y su propia verificación de radio — no basta
+  // con el radio de Maravatío como pasa con Acámbaro.
+  static const double _latMorelia = 19.7059;
+  static const double _lngMorelia = -101.1949;
+
   // Radio de servicio en metros — cubre Maravatío y también Acámbaro
   // (~33-34 km entre centros), a petición del dueño para que alguien en
-  // Acámbaro pueda pedirle a un restaurante de Maravatío.
+  // Acámbaro pueda pedirle a un restaurante de Maravatío. Morelia usa este
+  // mismo radio pero contado desde su propio centro (ver verificarUbicacion).
   static const double _radioMetros = 50000;
+
+  // Nombre para mostrar de cada zona — centralizado aquí para no repetir el
+  // mismo ternario/switch en cada pantalla que muestra la zona.
+  static String zonaLabel(String zona) => switch (zona) {
+        'acambaro' => 'Acámbaro',
+        'morelia'  => 'Morelia',
+        _          => 'Maravatío',
+      };
 
   // Tarifa de envío: cuota base + costo por kilómetro recorrido
   // Valores por defecto usados si Supabase no está disponible
   static double tarifaBase = 15.0;   // MXN, se cobra siempre
   static double tarifaPorKm = 5.0;   // MXN por cada km entre restaurante y cliente
+
+  // % que se queda la plataforma (GOGO) — de cada envío que gana un
+  // repartidor, y de cada venta de un restaurante. Configurable en
+  // platform_config (comision_repartidor_pct/comision_restaurante_pct);
+  // 10% por default si no hay nada configurado.
+  static double comisionRepartidorPct = 10.0;
+  static double comisionRestaurantePct = 10.0;
 
   // Carga las tarifas desde Supabase (platform_config). Se llama en main.dart al iniciar.
   static Future<void> loadTarifas() async {
@@ -42,6 +66,8 @@ class LocationService {
         if (v == null) continue;
         if (row['key'] == 'tarifa_base')   tarifaBase   = v;
         if (row['key'] == 'tarifa_por_km') tarifaPorKm  = v;
+        if (row['key'] == 'comision_repartidor_pct')  comisionRepartidorPct  = v;
+        if (row['key'] == 'comision_restaurante_pct') comisionRestaurantePct = v;
       }
     } catch (_) {
       // Si falla, se usan los valores por defecto definidos arriba
@@ -53,6 +79,33 @@ class LocationService {
   static double calcularCostoEnvio(double? distanciaKm) {
     if (distanciaKm == null) return tarifaBase;
     return tarifaBase + (tarifaPorKm * distanciaKm);
+  }
+
+  // Cuánto ganaría un repartidor específico por entregar ESTE pedido, ya con
+  // la comisión de la plataforma descontada — a diferencia de la tarifa que
+  // se le cobró al cliente en el checkout (que solo cuenta restaurante→
+  // cliente), aquí también se cuenta lo que el repartidor tiene que recorrer
+  // desde donde está parado ahorita hasta el restaurante, antes de ir a
+  // entregar — dos repartidores en lugares distintos ven un estimado
+  // distinto para el mismo pedido.
+  static double estimarGananciaRepartidor({
+    required double riderLat,
+    required double riderLng,
+    required double restaurantLat,
+    required double restaurantLng,
+    required double customerLat,
+    required double customerLng,
+  }) {
+    final distRiderRestaurante = Geolocator.distanceBetween(
+          riderLat, riderLng, restaurantLat, restaurantLng,
+        ) /
+        1000;
+    final distRestauranteCliente = Geolocator.distanceBetween(
+          restaurantLat, restaurantLng, customerLat, customerLng,
+        ) /
+        1000;
+    final envio = calcularCostoEnvio(distRiderRestaurante + distRestauranteCliente);
+    return envio * (1 - comisionRepartidorPct / 100);
   }
 
   // Pide el permiso de ubicación y, si ya quedó denegado permanentemente
@@ -143,13 +196,23 @@ class LocationService {
       _lat,
       _lng,
     );
+    // Morelia está fuera del radio de Maravatío/Acámbaro — se revisa aparte
+    // contra su propio centro. Si el usuario está dentro de cualquiera de
+    // los dos, cuenta como "en zona de servicio".
+    final distanciaMorelia = Geolocator.distanceBetween(
+      position.latitude,
+      position.longitude,
+      _latMorelia,
+      _lngMorelia,
+    );
+    final dentroDeZona = distancia <= _radioMetros || distanciaMorelia <= _radioMetros;
 
     return LocationResult(
-      status: distancia <= _radioMetros
+      status: dentroDeZona
           ? LocationStatus.enMaravatio
           : LocationStatus.fueraDeMaravatio,
       position: position,
-      distanciaKm: distancia / 1000,
+      distanciaKm: (distancia < distanciaMorelia ? distancia : distanciaMorelia) / 1000,
     );
   }
 
@@ -162,6 +225,8 @@ class LocationService {
   static String zonaFromCoords(double lat, double lng) {
     final dMaravatio = Geolocator.distanceBetween(lat, lng, _lat, _lng);
     final dAcambaro  = Geolocator.distanceBetween(lat, lng, _latAcambaro, _lngAcambaro);
+    final dMorelia   = Geolocator.distanceBetween(lat, lng, _latMorelia, _lngMorelia);
+    if (dMorelia < dMaravatio && dMorelia < dAcambaro) return 'morelia';
     return dAcambaro < dMaravatio ? 'acambaro' : 'maravatio';
   }
 
@@ -201,11 +266,22 @@ class LocationService {
         }
       }
     } catch (_) {}
-    return null;
+    // Nominatim como último respaldo — antes esta función se quedaba sin
+    // opciones aquí y detectZona() caía silenciosamente a 'maravatio' (bug
+    // real encontrado septiembre 2026: la Google Geocoding API está
+    // rechazando todo con REQUEST_DENIED porque el proyecto de Google Cloud
+    // de esa API key no tiene facturación habilitada — confirmado con curl
+    // directo a la API, no es un problema de la app). Esto dejaba
+    // restaurantes de Morelia mal detectados como Maravatío si el geocoder
+    // nativo del dispositivo tampoco resolvía esa dirección en particular.
+    return await _nominatim('$address, México', bounded: true);
   }
 
   // Bounding box de Maravatío: minLon,maxLat,maxLon,minLat
-  static const _viewbox = '-100.50,19.95,-100.40,19.85';
+  // Cubre Maravatío + Acámbaro + Morelia con margen — antes solo cubría
+  // Maravatío, lo que hacía que Nominatim (bounded=1) descartara de raíz
+  // cualquier resultado en Morelia.
+  static const _viewbox = '-101.35,20.15,-100.30,19.55';
 
   // Convierte coordenadas GPS (lat, lng) a una dirección de texto legible.
   // Intenta Google Geocoding primero (más preciso para México), luego Nominatim.
@@ -294,7 +370,7 @@ class LocationService {
 
   static Future<({double lat, double lng})?> _deviceGeocode(String address) async {
     try {
-      final fullAddress = '$address, Maravatío, Michoacán, México';
+      final fullAddress = '$address, Michoacán, México';
       var locations = await geo.locationFromAddress(fullAddress);
       if (locations.isEmpty) {
         locations = await geo.locationFromAddress(address);
@@ -308,7 +384,7 @@ class LocationService {
 
   static Future<({double lat, double lng})?> _googleGeocode(String address) async {
     try {
-      final query = Uri.encodeComponent('$address, Maravatío, Michoacán, México');
+      final query = Uri.encodeComponent('$address, Michoacán, México');
       final uri = Uri.parse(
           'https://maps.googleapis.com/maps/api/geocode/json'
           '?address=$query&key=${AppConstants.googleMapsApiKey}');
@@ -339,12 +415,12 @@ class LocationService {
           .toList();
 
   static List<String> _buildQueries(String address) {
-    final base = '$address, Maravatío, Michoacán, México';
+    final base = '$address, Michoacán, México';
     final withCol = address.toLowerCase().contains('colonia')
         ? base
-        : '${address.replaceAll(RegExp(r'\s+(\w+)$'), '')}, Colonia ${address.split(' ').last}, Maravatío, Michoacán, México';
+        : '${address.replaceAll(RegExp(r'\s+(\w+)$'), '')}, Colonia ${address.split(' ').last}, Michoacán, México';
     final sinNum = address.replaceAll(RegExp(r'#?\d+'), '').trim();
-    final sinNumQuery = '$sinNum, Maravatío, Michoacán, México';
+    final sinNumQuery = '$sinNum, Michoacán, México';
     return [base, withCol, sinNumQuery];
   }
 

@@ -37,7 +37,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
         setState(() { _error = 'Acceso restringido al administrador.'; _loading = false; });
         return;
       }
-      await AuthService.saveSession(email, '/admin');
+      await AuthService.saveSession(res.user!.id, '/admin', email: email);
       if (mounted) context.go('/admin');
     } catch (e) {
       setState(() { _error = 'Correo o contraseña incorrectos.'; _loading = false; });

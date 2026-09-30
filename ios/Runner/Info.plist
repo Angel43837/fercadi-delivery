@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>GOGO Food</string>
+	<string>GOGO Pruebas</string>
 	<key>GMSApiKey</key>
 	<string>AIzaSyDGxOWhjgxZsHjsgDtZdMlJ7q2OYzdYHDE</string>
 	<key>CFBundleExecutable</key>
@@ -17,7 +17,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>GOGO Food</string>
+	<string>GOGO Pruebas</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

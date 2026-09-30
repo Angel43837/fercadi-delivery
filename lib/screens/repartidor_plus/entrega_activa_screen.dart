@@ -16,6 +16,7 @@ import '../../core/constants.dart';
 import '../../services/location_service.dart';
 import '../../services/notification_service.dart';
 import '../../services/supabase_service.dart';
+import '../chat_screen.dart';
 import '../rating_dialog.dart';
 
 const _defaultRestaurantPos = LatLng(19.8969, -100.4447); // Centro Maravatío
@@ -348,8 +349,8 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
                   if (myLatLng != null)
                     Marker(
                       point: myLatLng,
-                      width: 44, height: 44,
-                      child: _Pin(icon: Icons.delivery_dining, color: const Color(0xFFFF6D00)),
+                      width: 72, height: 72,
+                      child: Image.asset('assets/images/moto_repartidor.png', width: 72, height: 72),
                     ),
                 ]),
               ],
@@ -569,10 +570,26 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
                         style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.w600, fontSize: 14),
                       ),
                     ),
+                    IconButton(
+                      icon: const Icon(Icons.chat_bubble_outline_rounded, color: AppConstants.primaryColor, size: 20),
+                      tooltip: 'Mensajes',
+                      onPressed: () => Navigator.push(context, MaterialPageRoute(
+                        builder: (_) => ChatScreen(
+                          orderId: widget.orderId,
+                          counterpartName: _customerProfileName ?? widget.customerName,
+                          counterpartPhoto: _customerAvatarUrl,
+                        ),
+                      )),
+                    ),
                   ]),
                   const SizedBox(height: 10),
-                  _InfoRow(Icons.phone_outlined, widget.customerPhone),
-                  const SizedBox(height: 8),
+                  // El cliente ya no captura teléfono en el checkout — solo
+                  // se muestra si su cuenta ya tiene uno asociado. Para
+                  // contactarlo siempre está el botón de mensajes de arriba.
+                  if (widget.customerPhone.isNotEmpty) ...[
+                    _InfoRow(Icons.phone_outlined, widget.customerPhone),
+                    const SizedBox(height: 8),
+                  ],
                   _InfoRow(Icons.location_on_outlined, widget.address),
                 ]),
               ),

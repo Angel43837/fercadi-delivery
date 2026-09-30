@@ -9,6 +9,7 @@ import 'screens/admin/admin_screen.dart';
 import 'screens/admin/admin_login_screen.dart';
 import 'screens/admin/admin_resenas_screen.dart';
 import 'screens/admin/admin_retiros_screen.dart';
+import 'screens/admin/admin_promociones_screen.dart';
 import 'services/auth_service.dart';
 
 void main() async {
@@ -43,6 +44,10 @@ final _adminRouter = GoRouter(
     GoRoute(
       path: '/admin/retiros',
       builder: (_, _) => const AdminRetirosScreen(),
+    ),
+    GoRoute(
+      path: '/admin/promociones',
+      builder: (_, _) => const AdminPromocionesScreen(),
     ),
   ],
 );

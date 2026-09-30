@@ -1,0 +1,23 @@
+-- Bug real encontrado el 2026-08-26: storage.objects tenía RLS activo con
+-- CERO políticas — eso bloquea en silencio TODA subida (INSERT) en los 3
+-- buckets (profile-photos, product-images, rider-avatars), aunque las fotos
+-- ya subidas se sigan viendo bien (la lectura pública no pasa por RLS).
+-- Esta es la causa real de "no puedo subir fotos" reportada en esta sesión.
+--
+-- Se deshabilita RLS aquí para que coincida con el modelo ya usado en
+-- producción (buckets públicos, sin políticas de RLS reales — la única
+-- protección real es que el nombre del archivo incluya el user_id/
+-- restaurant_id correspondiente, ver uploadProductImageBytes en
+-- supabase_service.dart).
+--
+-- PENDIENTE — esta sentencia NO se puede correr por SQL Editor ni por psql:
+-- storage.objects le pertenece a un rol interno de Supabase (no a "postgres"),
+-- así que ALTER TABLE falla con "must be owner of table objects" aunque
+-- seas el dueño del proyecto. La forma real de lograr el mismo resultado es
+-- por la UI: Dashboard → Storage → (cada bucket: profile-photos,
+-- product-images, rider-avatars) → pestaña Policies → New policy → permitir
+-- INSERT/SELECT/UPDATE/DELETE sin condición extra. Hay que hacerlo así tanto
+-- en GOGO-Pruebas como en producción — este archivo queda solo como registro
+-- de la causa raíz encontrada, no es ejecutable tal cual.
+
+alter table storage.objects disable row level security;

@@ -68,7 +68,7 @@ class _SplashScreenState extends State<SplashScreen>
     if (SupabaseService.useMock) {
       final session = await AuthService.getSession();
       if (!mounted) return;
-      context.go(session?.role ?? '/login');
+      context.go(session?.role ?? '/welcome');
       return;
     }
 
@@ -77,7 +77,7 @@ class _SplashScreenState extends State<SplashScreen>
     if (!mounted) return;
 
     if (supabaseSession == null) {
-      context.go('/login');
+      context.go('/welcome');
       return;
     }
 
@@ -93,12 +93,18 @@ class _SplashScreenState extends State<SplashScreen>
       _                => '/restaurants',
     };
 
-    // Mantiene 'session_email' sincronizado con el usuario real de Supabase
+    // Mantiene la sesión local sincronizada con el usuario real de Supabase
     // al restaurar una sesión existente (sin esto, el nombre de perfil se
-    // lee con la clave equivocada — 'guest:...' en vez de '<email>:...' —
-    // y parece cambiar solo entre "Usuario" y el nombre guardado).
-    final email = supabaseSession.user.email;
-    if (email != null) await AuthService.saveSession(email, route);
+    // lee con la clave equivocada — 'guest:...' en vez de '<uid>:...' — y
+    // parece cambiar solo entre "Usuario" y el nombre guardado). Se indexa
+    // por UID (no por email): un usuario de solo-teléfono no tiene correo,
+    // pero sí tiene UID siempre.
+    await AuthService.saveSession(
+      supabaseSession.user.id,
+      route,
+      email: supabaseSession.user.email,
+      phone: supabaseSession.user.phone,
+    );
     if (!mounted) return;
 
     context.go(route);

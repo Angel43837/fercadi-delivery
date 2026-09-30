@@ -17,6 +17,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/constants.dart';
 import '../../services/supabase_service.dart';
 import '../../services/auth_service.dart';
+import '../../widgets/phone_otp/phone_otp_flow.dart';
 
 // URL de regreso para móvil (deep link). En web se usa Uri.base.origin (localhost:PORT).
 const _redirectUrl = 'fercadi://login-callback';
@@ -36,18 +37,36 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStateMixin {
-  final _emailController    = TextEditingController();
-  final _passwordController = TextEditingController();
+  final _emailController           = TextEditingController();
+  final _passwordController        = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
   bool _isLoading        = false;
   bool _obscurePassword  = true;
   bool _isSignUp         = false;
   bool _acceptedTerms    = false;
+  // Inicio de sesión ahora arranca en un menú de 4 opciones (teléfono,
+  // correo, Google, Facebook) — null = mostrando el menú; 'phone'/'email'
+  // = ya eligió esa opción y se muestra solo ese formulario. No aplica a
+  // "crear cuenta" (ese sigue mostrando teléfono + correo juntos, sin menú).
+  String? _loginMethod;
   late final AnimationController _shakeController;
   // Supabase a veces dispara `signedIn` justo después de `passwordRecovery`
   // para el mismo enlace de recuperación — sin esta bandera, ese segundo
   // evento mandaba al usuario directo a la app antes de dejarlo poner la
   // contraseña nueva.
   bool _recovering       = false;
+  // Mismo motivo/patrón que `_recovering`: verifyOTP (login por teléfono)
+  // también dispara `signedIn` en este mismo stream — sin esta bandera, el
+  // manejador genérico de abajo navegaría a la app ANTES de que el propio
+  // flujo de teléfono decida si hace falta pasar por "completar perfil"
+  // (alta nueva) o ir directo al home (cuenta ya existente).
+  bool _phoneAuthInProgress = false;
+  // Mismo motivo que _phoneAuthInProgress: el alta por correo también debe
+  // pasar por "completar perfil" (pedir nombre) antes de entrar a la app —
+  // sin esta bandera, el manejador genérico de abajo mandaba al cliente
+  // nuevo directo a /restaurants en cuanto signUp() confirmaba su sesión,
+  // sin darle nunca la oportunidad de poner su nombre.
+  bool _emailSignUpInProgress = false;
 
   late final StreamSubscription<AuthState> _authSub;
 
@@ -62,10 +81,14 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         context.go('/reset-password');
         return;
       }
+      // El flujo de teléfono maneja su propia navegación (ver
+      // _handlePhoneVerified) — este manejador genérico es para
+      // correo/contraseña y Google/Facebook.
+      if (_phoneAuthInProgress || _emailSignUpInProgress) return;
       if (data.event == AuthChangeEvent.signedIn && !_recovering && mounted) {
         final user  = data.session?.user;
-        final role  = (user?.appMetadata['role'] ?? user?.userMetadata?['role']) as String?;
-        final email = user?.email ?? '';
+        if (user == null) return;
+        final role  = (user.appMetadata['role'] ?? user.userMetadata?['role']) as String?;
         final defaultRoute = role == 'repartidor'      ? '/repartidor'
                     : role == 'repartidor_plus' ? '/rider'
                     : role == 'dueno'           ? '/dueno'
@@ -76,10 +99,45 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         final route = (widget.returnTo != null && defaultRoute == '/restaurants')
             ? widget.returnTo!
             : defaultRoute;
-        await AuthService.saveSession(email, defaultRoute);
+        await AuthService.saveSession(user.id, defaultRoute, email: user.email, phone: user.phone);
         if (mounted) context.go(route);
       }
     });
+  }
+
+  // ── Login/registro por teléfono + OTP ────────────────────────────────────
+
+  Future<bool> _beforeFirstPhoneSend() async {
+    if (!_acceptedTerms) {
+      _showMessage('Debes aceptar los Términos y el Aviso de Privacidad', isError: true);
+      _shakeTermsBox();
+      return false;
+    }
+    return true;
+  }
+
+  void _handlePhoneVerified(AuthResponse res, {required bool isNewUser}) {
+    _phoneAuthInProgress = false;
+    if (!mounted) return;
+    if (isNewUser) {
+      // Alta nueva — falta nombre/foto, eso lo pide complete_profile_screen.
+      context.go('/complete-profile', extra: {
+        if (widget.returnTo != null) 'returnTo': widget.returnTo,
+      });
+      return;
+    }
+    final user = res.user;
+    if (user == null) return;
+    final role = (user.appMetadata['role'] ?? user.userMetadata?['role']) as String?;
+    final defaultRoute = role == 'repartidor'      ? '/repartidor'
+                : role == 'repartidor_plus' ? '/rider'
+                : role == 'dueno'           ? '/dueno'
+                : '/restaurants';
+    final route = (widget.returnTo != null && defaultRoute == '/restaurants')
+        ? widget.returnTo!
+        : defaultRoute;
+    AuthService.saveSession(user.id, defaultRoute, email: user.email, phone: user.phone)
+        .then((_) { if (mounted) context.go(route); });
   }
 
   @override
@@ -88,6 +146,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     _shakeController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
+    _confirmPasswordController.dispose();
     super.dispose();
   }
 
@@ -107,6 +166,10 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
       _showMessage('Por favor completa todos los campos', isError: true);
       return;
     }
+    if (_isSignUp && _passwordController.text != _confirmPasswordController.text) {
+      _showMessage('Las contraseñas no coinciden', isError: true);
+      return;
+    }
     setState(() => _isLoading = true);
     try {
       final email = _emailController.text.trim().toLowerCase();
@@ -114,18 +177,27 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         await Future.delayed(const Duration(milliseconds: 500));
         if (!mounted) return;
         final route = AuthService.roleToRoute(email);
-        await AuthService.saveSession(email, route);
+        // Modo mock: no hay UID real de Supabase — se usa uno sintético
+        // estable por correo, solo para que el caché local no se mezcle
+        // entre las distintas cuentas demo.
+        await AuthService.saveSession('mock:$email', route, email: email);
         if (!mounted) return;
         context.go(route);
         return;
       }
       if (_isSignUp) {
+        _emailSignUpInProgress = true;
         await Supabase.instance.client.auth.signUp(
           email: _emailController.text.trim(),
           password: _passwordController.text,
           data: {'accepted_terms_at': DateTime.now().toIso8601String()},
         );
-        _showMessage('Cuenta creada. Revisa tu correo para confirmar.');
+        if (!mounted) return;
+        // Igual que el alta por teléfono: falta nombre/foto, eso lo pide
+        // complete_profile_screen.dart antes de entrar a la app.
+        context.go('/complete-profile', extra: {
+          if (widget.returnTo != null) 'returnTo': widget.returnTo,
+        });
       } else {
         final res = await Supabase.instance.client.auth.signInWithPassword(
           email: _emailController.text.trim(),
@@ -139,13 +211,29 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         final route = (widget.returnTo != null && defaultRoute == '/restaurants')
             ? widget.returnTo!
             : defaultRoute;
-        await AuthService.saveSession(_emailController.text.trim(), defaultRoute);
+        await AuthService.saveSession(res.user!.id, defaultRoute, email: res.user!.email, phone: res.user!.phone);
         if (!mounted) return;
         context.go(route);
       }
-    } catch (e) {
-      _showMessage('Error: ${e.toString()}', isError: true);
+    } on AuthException catch (e) {
+      // Mismo criterio que repartidor_login_screen.dart: no mostrar el
+      // AuthException crudo (confunde a cualquier rol, no solo repartidores)
+      // y distinguir "correo sin confirmar" de credenciales inválidas.
+      final msg = _isSignUp
+          ? (e.message.toLowerCase().contains('already registered') ||
+                  e.code == 'user_already_exists'
+              ? 'Este correo ya está registrado'
+              : 'No se pudo crear la cuenta. Intenta de nuevo.')
+          : (e.code == 'email_not_confirmed'
+              ? 'Tu cuenta aún no está confirmada. Contacta a soporte.'
+              : 'Correo o contraseña incorrectos');
+      _showMessage(msg, isError: true);
+    } catch (_) {
+      _showMessage(
+          _isSignUp ? 'No se pudo crear la cuenta. Intenta de nuevo.' : 'Correo o contraseña incorrectos',
+          isError: true);
     } finally {
+      _emailSignUpInProgress = false;
       if (mounted) setState(() => _isLoading = false);
     }
   }
@@ -183,8 +271,8 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         redirectTo: kIsWeb ? Uri.base.origin : _redirectUrl,
       );
       if (mounted) _showMessage('Revisa tu correo para restablecer tu contraseña');
-    } catch (e) {
-      if (mounted) _showMessage('Error: $e', isError: true);
+    } catch (_) {
+      if (mounted) _showMessage('No se pudo enviar el correo. Intenta de nuevo.', isError: true);
     }
   }
 
@@ -198,8 +286,8 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         authScreenLaunchMode: kIsWeb ? LaunchMode.platformDefault : LaunchMode.externalApplication,
       );
       // La navegación la maneja el listener _authSub
-    } catch (e) {
-      if (mounted) _showMessage('Error con Google: $e', isError: true);
+    } catch (_) {
+      if (mounted) _showMessage('No se pudo iniciar sesión con Google. Intenta de nuevo.', isError: true);
       if (mounted) setState(() => _isLoading = false);
     }
   }
@@ -214,8 +302,8 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         authScreenLaunchMode: kIsWeb ? LaunchMode.platformDefault : LaunchMode.externalApplication,
       );
       // La navegación la maneja el listener _authSub
-    } catch (e) {
-      if (mounted) _showMessage('Error con Facebook: $e', isError: true);
+    } catch (_) {
+      if (mounted) _showMessage('No se pudo iniciar sesión con Facebook. Intenta de nuevo.', isError: true);
       if (mounted) setState(() => _isLoading = false);
     }
   }
@@ -241,128 +329,191 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const SizedBox(height: 60),
-              Center(
-                child: SvgPicture.asset(
-                  'assets/images/logo.svg',
-                  width: MediaQuery.of(context).size.width * 0.32,
-                  fit: BoxFit.contain,
-                  colorFilter: ColorFilter.mode(
-                      isDark ? AppConstants.primaryColor : Colors.white,
-                      BlendMode.srcIn),
-                ),
-              ),
-              const SizedBox(height: 28),
-              const Center(
-                child: Text(
-                  'Inicia sesión',
-                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.white),
-                ),
-              ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 40),
 
-              // ── Botones sociales ─────────────────────────────────────────────
-              _SocialButton(
-                onTap: _isLoading ? null : () => _requireTermsThen(_signInWithGoogle),
-                color: Colors.white,
-                disabled: !_acceptedTerms,
-                child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  _GoogleIcon(),
-                  const SizedBox(width: 10),
-                  const Text('Continuar con Google',
-                      style: TextStyle(color: Colors.black87, fontWeight: FontWeight.w600, fontSize: 15)),
-                ]),
-              ),
-              const SizedBox(height: 12),
-              _SocialButton(
-                onTap: _isLoading ? null : () => _requireTermsThen(_signInWithFacebook),
-                color: const Color(0xFF1877F2),
-                disabled: !_acceptedTerms,
-                child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  Text('f', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 22, height: 1)),
-                  SizedBox(width: 10),
-                  Text('Continuar con Facebook',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 15)),
-                ]),
-              ),
-              const SizedBox(height: 24),
-
-              // ── Divider ──────────────────────────────────────────────────────
-              Row(children: [
-                Expanded(child: Divider(color: Colors.white.withValues(alpha: 0.12))),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Text('o usa tu correo',
-                      style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 12)),
+              if (!_isSignUp && _loginMethod == null) ...[
+                // ── Menú de inicio de sesión: logo grande, 137×158, centrado ───
+                Center(
+                  child: Column(children: [
+                    Image.asset('assets/images/gogofood_go1.png', height: 62),
+                    const SizedBox(height: 2),
+                    Image.asset('assets/images/gogofood_go2.png', height: 62),
+                    const SizedBox(height: 6),
+                    Image.asset('assets/images/gogofood_word.png', height: 26),
+                  ]),
                 ),
-                Expanded(child: Divider(color: Colors.white.withValues(alpha: 0.12))),
-              ]),
-              const SizedBox(height: 24),
-
-              // ── Formulario email/contraseña ───────────────────────────────────
-              _buildField(
-                controller: _emailController,
-                label: 'Correo electrónico',
-                icon: Icons.email_outlined,
-                keyboardType: TextInputType.emailAddress,
-              ),
-              const SizedBox(height: 16),
-              _buildField(
-                controller: _passwordController,
-                label: 'Contraseña',
-                icon: Icons.lock_outline,
-                isPassword: true,
-              ),
-              const SizedBox(height: 32),
-              Opacity(
-                opacity: _acceptedTerms ? 1 : 0.5,
-                child: SizedBox(
-                  width: double.infinity,
-                  height: 56,
-                  child: ElevatedButton(
-                    onPressed: _isLoading ? null : () => _requireTermsThen(_authenticate),
-                    child: _isLoading
-                        ? const SizedBox(width: 22, height: 22,
-                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                        : Text(
-                            _isSignUp ? 'CREAR CUENTA' : 'INICIAR SESIÓN',
-                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                          ),
+                const SizedBox(height: 32),
+                const Center(
+                  child: Text(
+                    'INICIO DE SESIÓN',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 1),
                   ),
                 ),
-              ),
-              if (!_isSignUp)
+                const SizedBox(height: 24),
+                _ChoiceButton(
+                  label: 'NÚMERO TELEFÓNICO',
+                  onTap: () => setState(() => _loginMethod = 'phone'),
+                ),
+                const SizedBox(height: 12),
+                _ChoiceButton(
+                  label: 'CORREO Y CONTRASEÑA',
+                  onTap: () => setState(() => _loginMethod = 'email'),
+                ),
+                const SizedBox(height: 20),
+                _SocialButton(
+                  onTap: _isLoading ? null : () => _requireTermsThen(_signInWithGoogle),
+                  color: Colors.white,
+                  disabled: !_acceptedTerms,
+                  child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    _GoogleIcon(),
+                    const SizedBox(width: 10),
+                    const Text('Continuar con Google',
+                        style: TextStyle(color: Colors.black87, fontWeight: FontWeight.w600, fontSize: 15)),
+                  ]),
+                ),
+                const SizedBox(height: 12),
+                _SocialButton(
+                  onTap: _isLoading ? null : () => _requireTermsThen(_signInWithFacebook),
+                  color: const Color(0xFF1877F2),
+                  disabled: !_acceptedTerms,
+                  child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    Text('f', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 22, height: 1)),
+                    SizedBox(width: 10),
+                    Text('Continuar con Facebook',
+                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 15)),
+                  ]),
+                ),
+                const SizedBox(height: 12),
                 Center(
                   child: TextButton(
-                    onPressed: _isLoading ? null : _forgotPassword,
+                    onPressed: () => setState(() => _isSignUp = true),
                     child: Text(
-                      '¿Olvidaste tu contraseña?',
-                      style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13),
+                      '¿No tienes cuenta? Regístrate',
+                      style: TextStyle(
+                        color: isDark ? AppConstants.primaryColor : Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ),
-              const SizedBox(height: 4),
-              Center(
-                child: TextButton(
-                  onPressed: () => setState(() => _isSignUp = !_isSignUp),
-                  child: Text(
-                    _isSignUp ? '¿Ya tienes cuenta? Inicia sesión' : '¿No tienes cuenta? Regístrate',
-                    style: TextStyle(
-                      color: isDark ? AppConstants.primaryColor : Colors.white,
-                      fontWeight: FontWeight.w600,
+              ] else ...[
+                // ── Crear cuenta, o ya eligió un método de login ───────────────
+                Center(
+                  child: SvgPicture.asset(
+                    'assets/images/logo.svg',
+                    width: MediaQuery.of(context).size.width * 0.32,
+                    fit: BoxFit.contain,
+                    colorFilter: ColorFilter.mode(
+                        isDark ? AppConstants.primaryColor : Colors.white,
+                        BlendMode.srcIn),
+                  ),
+                ),
+                const SizedBox(height: 28),
+                if (_isSignUp)
+                  const Center(
+                    child: Text('Crea tu cuenta',
+                        style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.white)),
+                  )
+                else
+                  Row(children: [
+                    IconButton(
+                      onPressed: () => setState(() => _loginMethod = null),
+                      icon: const Icon(Icons.arrow_back, color: Colors.white),
+                    ),
+                    Expanded(
+                      child: Center(
+                        child: Text(
+                          _loginMethod == 'phone' ? 'Número telefónico' : 'Correo y contraseña',
+                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 48),
+                  ]),
+                const SizedBox(height: 32),
+
+                // ── Teléfono + código OTP ──────────────────────────────────────
+                if (_isSignUp || _loginMethod == 'phone') ...[
+                  PhoneOtpFlow(
+                    mode: PhoneAuthMode.login,
+                    beforeFirstSend: _beforeFirstPhoneSend,
+                    onWillVerify: () => _phoneAuthInProgress = true,
+                    onVerified: _handlePhoneVerified,
+                  ),
+                  const SizedBox(height: 24),
+                ],
+
+                // ── Formulario email/contraseña ────────────────────────────────
+                if (_isSignUp || _loginMethod == 'email') ...[
+                  _buildField(
+                    controller: _emailController,
+                    label: 'Correo electrónico',
+                    icon: Icons.email_outlined,
+                    keyboardType: TextInputType.emailAddress,
+                  ),
+                  const SizedBox(height: 16),
+                  _buildField(
+                    controller: _passwordController,
+                    label: 'Contraseña',
+                    icon: Icons.lock_outline,
+                    isPassword: true,
+                  ),
+                  if (_isSignUp) ...[
+                    const SizedBox(height: 16),
+                    _buildField(
+                      controller: _confirmPasswordController,
+                      label: 'Confirmar contraseña',
+                      icon: Icons.lock_outline,
+                      isPassword: true,
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  Opacity(
+                    opacity: _acceptedTerms ? 1 : 0.5,
+                    child: SizedBox(
+                      width: double.infinity,
+                      height: 56,
+                      child: ElevatedButton(
+                        onPressed: _isLoading ? null : () => _requireTermsThen(_authenticate),
+                        child: _isLoading
+                            ? const SizedBox(width: 22, height: 22,
+                                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                            : Text(
+                                _isSignUp ? 'CREAR CUENTA' : 'INICIAR SESIÓN',
+                                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                              ),
+                      ),
+                    ),
+                  ),
+                  if (!_isSignUp)
+                    Center(
+                      child: TextButton(
+                        onPressed: _isLoading ? null : _forgotPassword,
+                        child: Text(
+                          '¿Olvidaste tu contraseña?',
+                          style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13),
+                        ),
+                      ),
+                    ),
+                ],
+                const SizedBox(height: 4),
+                Center(
+                  child: TextButton(
+                    onPressed: () => setState(() {
+                      _isSignUp = !_isSignUp;
+                      _loginMethod = null;
+                      _confirmPasswordController.clear();
+                    }),
+                    child: Text(
+                      _isSignUp ? '¿Ya tienes cuenta? Inicia sesión' : '¿No tienes cuenta? Regístrate',
+                      style: TextStyle(
+                        color: isDark ? AppConstants.primaryColor : Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ),
-              ),
-              Center(
-                child: TextButton.icon(
-                  onPressed: () => context.go('/restaurants'),
-                  icon: Icon(Icons.explore_outlined,
-                      color: Colors.white.withValues(alpha: 0.7), size: 18),
-                  label: Text('Continuar como invitado',
-                      style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontWeight: FontWeight.w600)),
-                ),
-              ),
+              ],
               const SizedBox(height: 20),
 
               // ── Aceptación de términos y privacidad ───────────────────────────
@@ -474,6 +625,62 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
 
 // ── Widgets ───────────────────────────────────────────────────────────────────
 
+// Botón de opción del menú de inicio de sesión (teléfono / correo) — naranja
+// oscuro sobre el fondo naranja, mismo estilo de píldora que los sociales.
+class _ChoiceButton extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+  const _ChoiceButton({required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: double.infinity,
+        height: 62,
+        decoration: BoxDecoration(
+          color: const Color(0xFFFF4C00),
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            // Sombra exterior — 0px 1px 3.8px 1px #0000006E
+            BoxShadow(color: const Color(0xFF000000).withValues(alpha: 0x6E / 255), offset: const Offset(0, 1), blurRadius: 3.8, spreadRadius: 1),
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // Brillo interior naranja arriba — aproximación del
+            // "box-shadow: 1px -19px 40.3px -1px #DA3A00 inset" del diseño
+            // (Flutter no tiene sombra "inset" nativa, se simula con un
+            // degradado recortado a la misma forma redondeada del botón).
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      const Color(0xFFDA3A00).withValues(alpha: 0.55),
+                      const Color(0xFFDA3A00).withValues(alpha: 0),
+                    ],
+                    stops: const [0, 0.75],
+                  ),
+                ),
+              ),
+            ),
+            Text(
+              label,
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15, letterSpacing: 0.3),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _SocialButton extends StatelessWidget {
   final VoidCallback? onTap;
   final Color color;
@@ -492,11 +699,13 @@ class _SocialButton extends StatelessWidget {
       onTap: onTap,
       child: Container(
         width: double.infinity,
-        height: 54,
+        height: 62,
         decoration: BoxDecoration(
           color: (onTap == null || disabled) ? color.withValues(alpha: 0.5) : color,
-          borderRadius: BorderRadius.circular(14),
-          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 8, offset: const Offset(0, 2))],
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(color: const Color(0xFF000000).withValues(alpha: 0x6E / 255), offset: const Offset(0, 1), blurRadius: 3.8, spreadRadius: 1),
+          ],
         ),
         child: child,
       ),

@@ -10,7 +10,9 @@ import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'models/product.dart';
 import 'screens/splash_screen.dart';
+import 'screens/welcome_screen.dart';
 import 'screens/cliente/login_screen.dart';
+import 'screens/cliente/complete_profile_screen.dart';
 import 'screens/cliente/reset_password_screen.dart';
 import 'screens/legal_document_screen.dart';
 import 'core/legal_content.dart';
@@ -24,9 +26,12 @@ import 'screens/dueno/dueno_screen.dart';
 import 'screens/cliente/order_history_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/dueno/dueno_login_screen.dart';
+import 'screens/dueno/registro_restaurante_screen.dart';
 import 'screens/repartidor_login_screen.dart';
+import 'screens/repartidor_plus/registro_rider_plus_screen.dart';
 import 'screens/repartidor_plus/repartidor_plus_screen.dart';
-import 'screens/repartidor_plus/tienda_rider_screen.dart';
+import 'screens/cliente/my_promotions_screen.dart';
+import 'screens/cliente/promotion_detail_screen.dart';
 
 // Notifica a GoRouter cada vez que el estado de autenticación de Supabase cambia.
 // Con refreshListenable el router re-evalúa el redirect al restaurar la sesión del
@@ -47,6 +52,7 @@ class _SupabaseAuthNotifier extends ChangeNotifier {
 const _clientRoutes = {
   '/restaurants', '/menu', '/product-detail',
   '/cart', '/checkout', '/tracking', '/history',
+  '/my-promotions', '/promotion-detail',
 };
 
 // Subconjunto de _clientRoutes que un invitado (sin cuenta) sí puede
@@ -74,8 +80,9 @@ final appRouter = GoRouter(
 
     // Rutas públicas sin restricción
     const open = {
-      '/', '/login', '/moto', '/repartidor-login', '/dueno-login',
+      '/', '/welcome', '/login', '/moto', '/repartidor-login', '/dueno-login',
       '/restaurante', '/reset-password', '/privacy-policy', '/terms',
+      '/registro-restaurante', '/registro-rider',
     };
     if (open.contains(loc)) return null;
 
@@ -105,6 +112,7 @@ final appRouter = GoRouter(
   },
   routes: [
     GoRoute(path: '/',          builder: (_, _) => const SplashScreen()),
+    GoRoute(path: '/welcome',   builder: (_, _) => const WelcomeScreen()),
     GoRoute(
       path: '/login',
       builder: (_, state) {
@@ -116,6 +124,13 @@ final appRouter = GoRouter(
       },
     ),
     GoRoute(path: '/reset-password', builder: (_, _) => const ResetPasswordScreen()),
+    GoRoute(
+      path: '/complete-profile',
+      builder: (_, state) {
+        final extra = state.extra as Map<String, dynamic>?;
+        return CompleteProfileScreen(returnTo: extra?['returnTo'] as String?);
+      },
+    ),
     GoRoute(
       path: '/privacy-policy',
       builder: (_, _) => const LegalDocumentScreen(title: 'Aviso de Privacidad', content: kPrivacyPolicy),
@@ -140,16 +155,31 @@ final appRouter = GoRouter(
     GoRoute(path: '/repartidor', builder: (_, _) => const RepartidorScreen()),
     GoRoute(path: '/dueno',     builder: (_, _) => const DuenoScreen()),
     GoRoute(path: '/history',   builder: (_, _) => const OrderHistoryScreen()),
+    GoRoute(
+      path: '/my-promotions',
+      builder: (context, state) {
+        final extra = state.extra as Map<String, dynamic>?;
+        return MyPromotionsScreen(
+          selectionMode: extra?['selectionMode'] as bool? ?? false,
+          restaurantId: extra?['restaurantId'] as String?,
+        );
+      },
+    ),
+    GoRoute(
+      path: '/promotion-detail',
+      builder: (context, state) {
+        final extra = state.extra as Map<String, dynamic>?;
+        return PromotionDetailScreen(promotionId: extra?['promotionId'] as String? ?? '');
+      },
+    ),
     GoRoute(path: '/profile',   builder: (_, _) => const ProfileScreen()),
     GoRoute(path: '/restaurante',  builder: (_, _) => const DuenoLoginScreen()),
     GoRoute(path: '/dueno-login',  builder: (_, _) => const DuenoLoginScreen()),
+    GoRoute(path: '/registro-restaurante', builder: (_, _) => const RegistroRestauranteScreen()),
     GoRoute(path: '/moto',         builder: (_, _) => const RepartidorLoginScreen()),
     GoRoute(path: '/repartidor-login', builder: (_, _) => const RepartidorLoginScreen()),
+    GoRoute(path: '/registro-rider', builder: (_, _) => const RegistroRiderPlusScreen()),
     GoRoute(path: '/rider',        builder: (_, _) => const RepartidorPlusScreen()),
-    GoRoute(
-      path: '/tienda-rider',
-      builder: (context, state) => TiendaRiderScreen(currentCoins: (state.extra as int?) ?? 0),
-    ),
     GoRoute(
       path: '/tracking',
       builder: (context, state) {
@@ -163,6 +193,7 @@ final appRouter = GoRouter(
           lat: extra['lat'] as double?,
           lng: extra['lng'] as double?,
           restaurantImageUrl: extra['restaurantImageUrl'] as String?,
+          restaurants: (extra['restaurants'] as List?)?.cast<Map<String, String>>(),
         );
       },
     ),

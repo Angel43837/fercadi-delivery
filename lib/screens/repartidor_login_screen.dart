@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../services/auth_service.dart';
 
 const _orange = Color(0xFFFF5722);
@@ -52,6 +51,15 @@ class _RepartidorLoginScreenState extends State<RepartidorLoginScreen> {
       } else {
         context.go('/repartidor');
       }
+    } on AuthException catch (e) {
+      // Distinguir el motivo real en vez de un "credenciales incorrectas"
+      // genérico para todo — una cuenta nueva ya no debería quedar sin
+      // confirmar (ver auto_confirm_email_signup.sql), pero si llegara a
+      // pasar (p. ej. una cuenta creada antes de esa migración) el usuario
+      // necesita saber que no es un problema de contraseña.
+      setState(() => _error = e.code == 'email_not_confirmed'
+          ? 'Tu cuenta aún no está confirmada. Contacta a soporte.'
+          : 'Correo o contraseña incorrectos');
     } catch (_) {
       setState(() => _error = 'Correo o contraseña incorrectos');
     } finally {
@@ -162,17 +170,16 @@ class _RepartidorLoginScreenState extends State<RepartidorLoginScreen> {
                 ),
               ),
               const SizedBox(height: 20),
-              // El registro de riders vive en un sitio aparte (fuera de esta
-              // app, a petición del negocio) — ver
-              // https://gogo-registro.vercel.app. Antes había dos botones
-              // que llevaban a dos formularios distintos pero redundantes
-              // (creaban la misma cuenta 'repartidor_plus') — se
-              // consolidaron en uno solo del lado del sitio nuevo.
+              // El registro vive DENTRO de la app (restaurado sept 2026 — el
+              // sitio externo gogo-registro.vercel.app creaba cuentas en
+              // otro proyecto de Supabase distinto al que usa esta app, y
+              // esas cuentas nunca podían iniciar sesión aquí). Antes había
+              // dos botones que llevaban a dos formularios distintos pero
+              // redundantes (creaban la misma cuenta 'repartidor_plus') —
+              // se restauró solo uno, ya consolidado.
               Center(
                 child: TextButton(
-                  onPressed: () => launchUrl(
-                    Uri.parse('https://gogo-registro.vercel.app/registro-rider'),
-                  ),
+                  onPressed: () => context.push('/registro-rider'),
                   child: const Text('¿Nuevo repartidor? Únete a GOGO Riders',
                       style: TextStyle(
                           color: Colors.white,

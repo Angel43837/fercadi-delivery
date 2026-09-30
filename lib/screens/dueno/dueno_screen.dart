@@ -497,12 +497,15 @@ class _DuenoScreenState extends State<DuenoScreen> {
   }
 
   Widget _buildDashboard() {
-    final ventasHoy = _realOrders
+    // Ganancia neta del restaurante — ya con la comisión de la plataforma
+    // (GOGO) descontada de sus ventas, antes se mostraba el bruto completo.
+    final ventasHoyBruto = _realOrders
         .where((o) => o['status'] == 'delivered')
         .fold<double>(0, (s, o) => s + ((o['total'] as num?)?.toDouble() ?? 0));
+    final ventasHoy = ventasHoyBruto * (1 - LocationService.comisionRestaurantePct / 100);
     final entregados = _realOrders.where((o) => o['status'] == 'delivered').length;
     final pendientes = _realOrders.where((o) => o['status'] == 'pending').length;
-    final enCamino   = _realOrders.where((o) => o['status'] == 'delivering' || o['status'] == 'accepted').length;
+    final enCamino   = _realOrders.where((o) => o['status'] == 'delivering' || o['status'] == 'accepted' || o['status'] == 'restaurant_accepted').length;
     final cancelados = _realOrders.where((o) => o['status'] == 'cancelled').length;
     final total = _realOrders.length;
 
@@ -526,10 +529,10 @@ class _DuenoScreenState extends State<DuenoScreen> {
         const SizedBox(height: 20),
         Container(
           padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(color: _surface, borderRadius: BorderRadius.circular(16)),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Estado de pedidos',
-                style: TextStyle(color: _text, fontWeight: FontWeight.bold, fontSize: 14)),
+            const Text('Estado de pedidos',
+                style: TextStyle(color: Color(0xFF1A1A1A), fontWeight: FontWeight.bold, fontSize: 14)),
             const SizedBox(height: 14),
             if (total > 0) ClipRRect(
               borderRadius: BorderRadius.circular(6),
@@ -542,10 +545,10 @@ class _DuenoScreenState extends State<DuenoScreen> {
             ),
             const SizedBox(height: 12),
             Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-              _StatusLegend('Pendiente', const Color(0xFFFFB300),   pendientes, isDark: _isDark),
-              _StatusLegend('En camino', AppConstants.primaryColor, enCamino,   isDark: _isDark),
-              _StatusLegend('Entregado', Colors.green,              entregados, isDark: _isDark),
-              _StatusLegend('Cancelado', Colors.red,                cancelados, isDark: _isDark),
+              _StatusLegend('Pendiente', const Color(0xFFFFB300),   pendientes),
+              _StatusLegend('En camino', AppConstants.primaryColor, enCamino),
+              _StatusLegend('Entregado', Colors.green,              entregados),
+              _StatusLegend('Cancelado', Colors.red,                cancelados),
             ]),
           ]),
         ),
@@ -571,7 +574,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
             final s = o['status'] as String? ?? '';
             switch (_filterStatus) {
               case AppOrderStatus.pendiente: return s == 'pending';
-              case AppOrderStatus.enCamino:  return s == 'delivering' || s == 'accepted';
+              case AppOrderStatus.enCamino:  return s == 'delivering' || s == 'accepted' || s == 'restaurant_accepted';
               case AppOrderStatus.entregado: return s == 'delivered';
               default: return true;
             }
@@ -605,8 +608,14 @@ class _DuenoScreenState extends State<DuenoScreen> {
                   order: filtered[i],
                   isDark: _isDark,
                   onAccept: () async {
+                    // Confirma el pedido de parte del restaurante — a partir
+                    // de aquí ya se vuelve visible/tomable para repartidores
+                    // (antes esto marcaba directo 'accepted', el mismo
+                    // estado que usa un repartidor al reclamarlo — un
+                    // repartidor ya podía tomar el pedido ANTES de que el
+                    // restaurante confirmara nada).
                     await SupabaseService.adminUpdateOrderStatus(
-                        filtered[i]['id'] as String, 'accepted');
+                        filtered[i]['id'] as String, 'restaurant_accepted');
                     _loadRealOrders();
                   },
                   onCancel: () async {
@@ -682,7 +691,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
       Positioned(
         right: 16, bottom: 16,
         child: FloatingActionButton.extended(
-          backgroundColor: AppConstants.primaryColor,
+          backgroundColor: Colors.blue,
           onPressed: () {
             if (_products.length >= _maxProductos) {
               _showLimiteProductosDialog();
@@ -750,6 +759,10 @@ class _DuenoScreenState extends State<DuenoScreen> {
     List<String> selectedCatIds = existing?.categoryIds.toList() ?? [_categories.first.id];
     bool available = existing?.isAvailable ?? true;
     String? pickedImagePath = existing?.imagePath;
+    // Se guarda aparte (inmutable) porque más abajo pickedImagePath/existing.imagePath
+    // se sobreescriben con la foto nueva ANTES de decidir qué URL mandar a Supabase —
+    // sin esto no había forma de recuperar la foto buena si la subida nueva fallaba.
+    final String? originalImageUrl = existing?.imagePath;
     final picker = ImagePicker();
 
     // Promo state
@@ -770,13 +783,19 @@ class _DuenoScreenState extends State<DuenoScreen> {
       final messenger = ScaffoldMessenger.of(context);
       final xfile = await picker.pickImage(source: source, imageQuality: 80);
       if (xfile == null) return;
+      final previousUrl = pickedImagePath;
       setModal(() => pickedImagePath = xfile.path);
 
       // Leer bytes directamente del XFile (más confiable que File(path) en Android)
       final bytes = await xfile.readAsBytes();
-      final uploaded = await SupabaseService.uploadProductImageBytes(bytes);
+      final uploaded = await SupabaseService.uploadProductImageBytes(bytes, ownerId: _restaurantId);
       if (uploaded != null) {
         setModal(() => pickedImagePath = uploaded);
+        // Cada foto se sube con nombre nuevo (timestamp) — sin este borrado,
+        // la que se reemplaza se queda huérfana en el bucket para siempre.
+        if (previousUrl != null && previousUrl.startsWith('http') && previousUrl != uploaded) {
+          unawaited(SupabaseService.deleteImageByUrl(previousUrl));
+        }
         messenger.showSnackBar(
           const SnackBar(
             content: Text('Foto subida correctamente'),
@@ -828,10 +847,19 @@ class _DuenoScreenState extends State<DuenoScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            Text(
-              existing == null ? 'Nuevo platillo' : 'Editar platillo',
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 17),
-            ),
+            Row(children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back, color: Colors.white),
+                onPressed: () => Navigator.pop(ctx),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                existing == null ? 'Nuevo platillo' : 'Editar platillo',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 17),
+              ),
+            ]),
             const SizedBox(height: 16),
 
             GestureDetector(
@@ -1186,7 +1214,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 ),
                 Switch(
                   value: available,
-                  activeThumbColor: AppConstants.primaryColor,
+                  activeThumbColor: Colors.blue,
                   onChanged: (v) => setModal(() => available = v),
                 ),
               ]),
@@ -1235,10 +1263,13 @@ class _DuenoScreenState extends State<DuenoScreen> {
                     appData.setProductAvailability(existing.id, available);
                   }
 
-                  // Solo guardar URL pública en Supabase (no ruta local)
+                  // Solo guardar URL pública en Supabase (no ruta local) — si la
+                  // foto nueva no se subió (pickedImagePath quedó como ruta
+                  // local), se conserva la que ya estaba guardada en vez de
+                  // borrarla con null.
                   final urlForDb = (pickedImagePath?.startsWith('http') == true)
                       ? pickedImagePath
-                      : null;
+                      : (originalImageUrl?.startsWith('http') == true ? originalImageUrl : null);
 
                   final int? promoDiscount;
                   final bool promo2x1;
@@ -1396,15 +1427,29 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 // Subir imagen
                 OutlinedButton.icon(
                   onPressed: () async {
+                    final messenger = ScaffoldMessenger.of(context);
                     final picker = ImagePicker();
                     final xfile = await picker.pickImage(
                         source: ImageSource.gallery, imageQuality: 80, maxWidth: 1200);
                     if (xfile == null) return;
+                    final previousUrl = imageCtrl.text.trim();
                     final bytes = await xfile.readAsBytes();
                     final url = await SupabaseService.uploadProfilePhotoBytes(
                         bytes, 'banner_${_restaurantId}_${DateTime.now().millisecondsSinceEpoch}');
-                    if (url == null) return;
+                    if (url == null) {
+                      // Antes fallaba en silencio — el dueño no se enteraba
+                      // de que la foto del banner nunca se subió.
+                      messenger.showSnackBar(SnackBar(
+                          content: Text('No se pudo subir la foto (${SupabaseService.lastUploadError ?? "sin conexión"}).'),
+                          backgroundColor: Colors.redAccent));
+                      return;
+                    }
                     setModal(() => imageCtrl.text = url);
+                    // Cada foto se sube con nombre nuevo (timestamp) — sin
+                    // este borrado, la que se reemplaza se queda huérfana.
+                    if (previousUrl.startsWith('http') && previousUrl != url) {
+                      unawaited(SupabaseService.deleteImageByUrl(previousUrl));
+                    }
                   },
                   icon: const Icon(Icons.upload, size: 16),
                   label: const Text('Subir foto', style: TextStyle(fontSize: 13)),
@@ -1619,6 +1664,9 @@ class _DuenoScreenState extends State<DuenoScreen> {
                                 icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
                                 onPressed: () async {
                                   await SupabaseService.deleteBanner(b.id);
+                                  // Antes solo se borraba la fila — la foto
+                                  // se quedaba huérfana en el bucket.
+                                  unawaited(SupabaseService.deleteImageByUrl(b.imageUrl));
                                   _loadBanners();
                                 },
                               ),
@@ -1632,7 +1680,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
       Positioned(
         bottom: 20, right: 20,
         child: FloatingActionButton(
-          backgroundColor: AppConstants.primaryColor,
+          backgroundColor: Colors.blue,
           onPressed: () => showAddSheet(),
           child: const Icon(Icons.add, color: Colors.white),
         ),
@@ -1657,17 +1705,30 @@ class _DuenoScreenState extends State<DuenoScreen> {
       );
 
   Widget _buildPerfilRestaurante() {
-    const emojis = ['🍴', '🍔', '🌮', '🍕', '🍣', '🥗', '🍜', '🥩', '☕', '🧁'];
-
     Future<void> pickPhoto() async {
+      final messenger = ScaffoldMessenger.of(context);
       final picker = ImagePicker();
       final xfile = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80, maxWidth: 800);
       if (xfile == null) return;
       final bytes = await xfile.readAsBytes();
       final url = await SupabaseService.uploadProfilePhotoBytes(bytes, 'restaurant_$_restaurantId');
-      if (url == null) return;
-      await AuthService.saveRestaurantSettings(photo: url);
-      await SupabaseService.updateRestaurantLogo(_restaurantId, url);
+      if (url == null) {
+        // Antes fallaba en silencio — el dueño no se enteraba de que su
+        // logo/foto nunca se guardó.
+        messenger.showSnackBar(SnackBar(
+            content: Text('No se pudo subir la foto (${SupabaseService.lastUploadError ?? "sin conexión"}).'),
+            backgroundColor: Colors.redAccent));
+        return;
+      }
+      try {
+        await AuthService.saveRestaurantSettings(photo: url);
+        await SupabaseService.updateRestaurantLogo(_restaurantId, url);
+      } catch (e) {
+        messenger.showSnackBar(SnackBar(
+            content: Text('La foto se subió pero no se pudo guardar en tu restaurante: $e'),
+            backgroundColor: Colors.redAccent));
+        return;
+      }
       if (mounted) setState(() => _restPhoto = url);
     }
 
@@ -1689,44 +1750,8 @@ class _DuenoScreenState extends State<DuenoScreen> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 40),
       children: [
-        // ── Logo / banner del restaurante ──────────────────────────────────
-        GestureDetector(
-          onTap: pickPhoto,
-          child: Container(
-            width: double.infinity, height: 100,
-            decoration: BoxDecoration(
-              color: _surface2,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.white30),
-            ),
-            clipBehavior: Clip.hardEdge,
-            child: _restPhoto.isNotEmpty
-                ? Stack(fit: StackFit.expand, children: [
-                    Image.network(_restPhoto, fit: BoxFit.contain,
-                        errorBuilder: (_, _, _) => Center(child: Text(_restEmoji, style: const TextStyle(fontSize: 50)))),
-                    Positioned(bottom: 8, right: 8,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                        decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(20)),
-                        child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                          Icon(Icons.edit, color: Colors.white, size: 13),
-                          SizedBox(width: 4),
-                          Text('Cambiar logo', style: TextStyle(color: Colors.white, fontSize: 11)),
-                        ]),
-                      ),
-                    ),
-                  ])
-                : Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    Icon(Icons.add_photo_alternate_outlined, color: Colors.white54, size: 36),
-                    const SizedBox(height: 6),
-                    const Text('Agregar logo del restaurante', style: TextStyle(color: Colors.white70, fontSize: 13)),
-                    const Text('Esta imagen la ven los clientes en la lista', style: TextStyle(color: Colors.white38, fontSize: 11)),
-                  ]),
-          ),
-        ),
-        const SizedBox(height: 16),
-
-        // ── Foto de perfil circular ─────────────────────────────────────────
+        // ── Foto/logo del restaurante — un solo control (antes había otro
+        // recuadro grande arriba que hacía exactamente lo mismo) ────────────
         Center(
           child: GestureDetector(
             onTap: pickPhoto,
@@ -1761,53 +1786,18 @@ class _DuenoScreenState extends State<DuenoScreen> {
           ),
         ),
         const SizedBox(height: 16),
-
-        // ── Selector de emoji ───────────────────────────────────────────────
-        Center(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: emojis.map((e) => GestureDetector(
-                onTap: () {
-                  AuthService.saveRestaurantSettings(emoji: e);
-                  setState(() => _restEmoji = e);
-                },
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 150),
-                  margin: const EdgeInsets.symmetric(horizontal: 4),
-                  width: 42, height: 42,
-                  decoration: BoxDecoration(
-                    color: _restEmoji == e
-                        ? AppConstants.primaryColor.withValues(alpha: 0.2)
-                        : _surface,
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: _restEmoji == e
-                          ? AppConstants.primaryColor
-                          : _textLow,
-                    ),
-                  ),
-                  child: Center(child: Text(e, style: const TextStyle(fontSize: 20))),
-                ),
-              )).toList(),
-            ),
-          ),
-        ),
         const SizedBox(height: 28),
 
-        // ── Campos de texto ─────────────────────────────────────────────────
-        // Usan el color naranja del panel del dueño (_surface), no el tema
-        // negro genérico — antes se veían negros porque _FormField está
-        // pensado para la app de cliente, que sí es oscura.
+        // ── Campos de texto — fondo blanco (antes usaban el naranja oscuro
+        // del panel del dueño, ya no hace juego con el resto de la pantalla) ──
         _RestField(controller: _restNameCtrl,  label: 'Nombre del restaurante', icon: Icons.storefront_outlined,
-            fill: _surface, text: _text, textMid: _textMid),
+            fill: Colors.white, text: const Color(0xFF1A1A1A), textMid: Colors.black54),
         const SizedBox(height: 12),
         _RestField(controller: _restDescCtrl,  label: 'Descripción',            icon: Icons.notes_outlined, maxLines: 3,
-            fill: _surface, text: _text, textMid: _textMid),
+            fill: Colors.white, text: const Color(0xFF1A1A1A), textMid: Colors.black54),
         const SizedBox(height: 12),
         _RestField(controller: _restPhoneCtrl, label: 'Teléfono de contacto',   icon: Icons.phone_outlined, keyboardType: TextInputType.phone,
-            fill: _surface, text: _text, textMid: _textMid),
+            fill: Colors.white, text: const Color(0xFF1A1A1A), textMid: Colors.black54),
         const SizedBox(height: 12),
 
         // ── Dirección ───────────────────────────────────────────────────────
@@ -1816,25 +1806,25 @@ class _DuenoScreenState extends State<DuenoScreen> {
         if (kIsWeb)
           Container(
             decoration: BoxDecoration(
-              color: _surface,
+              color: Colors.white,
               borderRadius: BorderRadius.circular(14),
             ),
             child: TextField(
               controller: _restAddressCtrl,
-              style: TextStyle(color: _text),
+              style: const TextStyle(color: Color(0xFF1A1A1A)),
               onChanged: (v) => _restAddress = v,
               decoration: InputDecoration(
                 labelText: 'Dirección del local',
-                labelStyle: TextStyle(color: _textMid),
-                prefixIcon: const Icon(Icons.location_on_outlined, color: Colors.white),
+                labelStyle: const TextStyle(color: Colors.black54),
+                prefixIcon: const Icon(Icons.location_on_outlined, color: AppConstants.primaryColor),
                 filled: true,
-                fillColor: _surface,
+                fillColor: Colors.white,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(14),
                   borderSide: BorderSide.none,
                 ),
                 hintText: 'Ej: Calle Morelos 45, Col. Centro',
-                hintStyle: TextStyle(color: _textLow, fontSize: 13),
+                hintStyle: const TextStyle(color: Colors.black38, fontSize: 13),
               ),
             ),
           )
@@ -1844,26 +1834,26 @@ class _DuenoScreenState extends State<DuenoScreen> {
             child: AbsorbPointer(
               child: Container(
                 decoration: BoxDecoration(
-                  color: _surface,
+                  color: Colors.white,
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: TextField(
                   controller: TextEditingController(text: _restAddress),
                   readOnly: true,
-                  style: TextStyle(color: _text),
+                  style: const TextStyle(color: Color(0xFF1A1A1A)),
                   decoration: InputDecoration(
                     labelText: 'Dirección del local',
-                    labelStyle: TextStyle(color: _textMid),
-                    prefixIcon: const Icon(Icons.location_on_outlined, color: Colors.white),
-                    suffixIcon: const Icon(Icons.map_outlined, color: Colors.white, size: 20),
+                    labelStyle: const TextStyle(color: Colors.black54),
+                    prefixIcon: const Icon(Icons.location_on_outlined, color: AppConstants.primaryColor),
+                    suffixIcon: const Icon(Icons.map_outlined, color: AppConstants.primaryColor, size: 20),
                     filled: true,
-                    fillColor: _surface,
+                    fillColor: Colors.white,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(14),
                       borderSide: BorderSide.none,
                     ),
                     hintText: 'Toca para ubicar en el mapa',
-                    hintStyle: TextStyle(color: _textLow, fontSize: 13),
+                    hintStyle: const TextStyle(color: Colors.black38, fontSize: 13),
                   ),
                 ),
               ),
@@ -1875,7 +1865,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
         Row(children: [
           Icon(Icons.location_on, color: AppConstants.primaryColor, size: 16),
           const SizedBox(width: 6),
-          Text('Zona: ${_restZona == 'acambaro' ? 'Acámbaro' : 'Maravatío'}',
+          Text('Zona: ${LocationService.zonaLabel(_restZona)}',
               style: TextStyle(color: _textMid, fontSize: 13, fontWeight: FontWeight.w600)),
         ]),
         const SizedBox(height: 4),
@@ -1978,6 +1968,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 ),
               );
             },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
             icon: const Icon(Icons.save_outlined),
             label: const Text('GUARDAR CAMBIOS', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
@@ -1987,20 +1978,24 @@ class _DuenoScreenState extends State<DuenoScreen> {
   }
 
   Widget _buildBottomNav(int pendingCount) {
-    return Container(
-      decoration: BoxDecoration(
-        color: _surface,
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 10, offset: const Offset(0, -2))],
-      ),
-      child: SafeArea(
-        top: false,
-        child: Row(children: [
-          _NavItem(icon: Icons.dashboard_outlined,     label: 'Resumen',      index: 0, current: _tab, onTap: (i) => setState(() => _tab = i), isDark: _isDark),
-          _NavItem(icon: Icons.receipt_long_outlined,  label: 'Pedidos',      index: 1, current: _tab, onTap: (i) => setState(() => _tab = i), badge: pendingCount, isDark: _isDark),
-          _NavItem(icon: Icons.menu_book_outlined,     label: 'Menú',         index: 2, current: _tab, onTap: (i) => setState(() => _tab = i), isDark: _isDark),
-          _NavItem(icon: Icons.campaign_outlined,      label: 'Banners',      index: 4, current: _tab, onTap: (i) => setState(() => _tab = i), isDark: _isDark),
-          _NavItem(icon: Icons.storefront_outlined,    label: 'Restaurante',  index: 3, current: _tab, onTap: (i) => setState(() => _tab = i), isDark: _isDark),
-        ]),
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(30),
+            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 14, offset: const Offset(0, 6))],
+          ),
+          child: Row(children: [
+            _NavItem(icon: Icons.dashboard_outlined,     index: 0, current: _tab, onTap: (i) => setState(() => _tab = i)),
+            _NavItem(icon: Icons.receipt_long_outlined,  index: 1, current: _tab, onTap: (i) => setState(() => _tab = i), badge: pendingCount),
+            _NavItem(icon: Icons.menu_book_outlined,     index: 2, current: _tab, onTap: (i) => setState(() => _tab = i)),
+            _NavItem(icon: Icons.campaign_outlined,      index: 4, current: _tab, onTap: (i) => setState(() => _tab = i)),
+            _NavItem(icon: Icons.storefront_outlined,    index: 3, current: _tab, onTap: (i) => setState(() => _tab = i)),
+          ]),
+        ),
       ),
     );
   }
@@ -2036,15 +2031,13 @@ class _StatusLegend extends StatelessWidget {
   final String label;
   final Color color;
   final int count;
-  final bool isDark;
-  const _StatusLegend(this.label, this.color, this.count, {this.isDark = true});
+  const _StatusLegend(this.label, this.color, this.count);
 
   @override
   Widget build(BuildContext context) {
-    final textLow = isDark ? Colors.white.withValues(alpha: 0.4) : Colors.white.withValues(alpha: 0.7);
     return Column(children: [
       Text('$count', style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 18)),
-      Text(label, style: TextStyle(color: textLow, fontSize: 10)),
+      Text(label, style: const TextStyle(color: Colors.black54, fontSize: 10)),
     ]);
   }
 }
@@ -2069,12 +2062,13 @@ class _RealOrderMiniRow extends StatelessWidget {
     }).join(', ');
 
     final (statusLabel, statusColor) = switch (status) {
-      'pending'    => ('Pendiente',   const Color(0xFFFFB300)),
-      'accepted'   => ('Aceptado',    AppConstants.primaryColor),
-      'delivering' => ('En camino',   const Color(0xFF2196F3)),
-      'delivered'  => ('Entregado',   Colors.green),
-      'cancelled'  => ('Cancelado',   Colors.red),
-      _            => ('Desconocido', Colors.grey),
+      'pending'             => ('Pendiente',   const Color(0xFFFFB300)),
+      'restaurant_accepted' => ('Confirmado',  const Color(0xFF00BFA5)),
+      'accepted'            => ('Aceptado',    AppConstants.primaryColor),
+      'delivering'          => ('En camino',   const Color(0xFF2196F3)),
+      'delivered'           => ('Entregado',   Colors.green),
+      'cancelled'           => ('Cancelado',   Colors.red),
+      _                     => ('Desconocido', Colors.grey),
     };
 
     final surface = isDark ? const Color(0xFFE64A19) : Colors.white;
@@ -2158,7 +2152,7 @@ class _RealOrderCard extends StatelessWidget {
                 color: Colors.white.withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Text(status == 'pending' ? 'Pendiente' : 'Aceptado',
+              child: Text(status == 'pending' ? 'Pendiente' : (status == 'restaurant_accepted' ? 'Confirmado' : 'Aceptado'),
                   style: TextStyle(
                     color: status == 'pending' ? const Color(0xFFFFE082) : const Color(0xFFB9F6CA),
                     fontWeight: FontWeight.bold, fontSize: 12)),
@@ -2249,11 +2243,12 @@ class _RealOrderCard extends StatelessWidget {
     final items   = (order['order_items'] as List<dynamic>? ?? []);
 
     final (statusLabel, statusColor) = switch (status) {
-      'pending'    => ('Pendiente',  const Color(0xFFFFB300)),
-      'accepted'   => ('Aceptado',   AppConstants.primaryColor),
-      'delivering' => ('En camino',  const Color(0xFF2196F3)),
-      'delivered'  => ('Entregado',  Colors.green),
-      _            => ('Desconocido', Colors.grey),
+      'pending'             => ('Pendiente',   const Color(0xFFFFB300)),
+      'restaurant_accepted' => ('Confirmado',  const Color(0xFF00BFA5)),
+      'accepted'            => ('Aceptado',    AppConstants.primaryColor),
+      'delivering'          => ('En camino',   const Color(0xFF2196F3)),
+      'delivered'           => ('Entregado',   Colors.green),
+      _                     => ('Desconocido', Colors.grey),
     };
 
     final surface = isDark ? const Color(0xFFE64A19) : Colors.white;
@@ -2314,6 +2309,40 @@ class _RealOrderCard extends StatelessWidget {
             ]),
           ),
         ]),
+        // "Aceptar"/"Rechazar" solo mientras el pedido sigue pendiente — antes
+        // estos callbacks existían (onAccept/onCancel) pero no había ningún
+        // botón real en esta tarjeta que los llamara, así que el restaurante
+        // no tenía manera de confirmar/rechazar un pedido desde aquí.
+        if (status == 'pending') ...[
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: onCancel,
+                icon: const Icon(Icons.close, size: 16),
+                label: const Text('Rechazar'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.redAccent,
+                  side: const BorderSide(color: Colors.redAccent),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: onAccept,
+                icon: const Icon(Icons.check, size: 16),
+                label: const Text('Aceptar'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                ),
+              ),
+            ),
+          ]),
+        ],
       ]),
     ),
   );
@@ -2377,7 +2406,7 @@ class _ProductTile extends StatelessWidget {
         ),
         Switch(
           value: isAvailable,
-          activeThumbColor: AppConstants.primaryColor,
+          activeThumbColor: Colors.blue,
           onChanged: (_) => onToggle(),
         ),
       ]),
@@ -2419,42 +2448,30 @@ class _FilterChip extends StatelessWidget {
 
 class _NavItem extends StatelessWidget {
   final IconData icon;
-  final String label;
   final int index, current;
   final int badge;
   final ValueChanged<int> onTap;
-  final bool isDark;
-  const _NavItem({required this.icon, required this.label, required this.index, required this.current, required this.onTap, this.badge = 0, this.isDark = true});
+  const _NavItem({required this.icon, required this.index, required this.current, required this.onTap, this.badge = 0});
 
   @override
   Widget build(BuildContext context) {
     final active = index == current;
-    // En modo claro el fondo del menú sigue siendo naranja oscuro, no blanco
-    // — un ícono negro ahí casi no se distingue.
-    final inactive = isDark ? Colors.white.withValues(alpha: 0.3) : Colors.white.withValues(alpha: 0.55);
+    final color = active ? Colors.blue : AppConstants.primaryColor;
     return Expanded(
       child: InkWell(
         onTap: () => onTap(index),
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Stack(children: [
-              Icon(icon, color: active ? AppConstants.primaryColor : inactive, size: 22),
-              if (badge > 0)
-                Positioned(
-                  right: 0, top: 0,
-                  child: Container(
-                    width: 10, height: 10,
-                    decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
-                  ),
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          child: Stack(alignment: Alignment.center, children: [
+            Icon(icon, color: color, size: 24),
+            if (badge > 0)
+              Positioned(
+                right: 20, top: 6,
+                child: Container(
+                  width: 10, height: 10,
+                  decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
                 ),
-            ]),
-            const SizedBox(height: 4),
-            Text(label,
-                style: TextStyle(
-                    color: active ? AppConstants.primaryColor : inactive,
-                    fontSize: 10,
-                    fontWeight: active ? FontWeight.bold : FontWeight.normal)),
+              ),
           ]),
         ),
       ),
@@ -2491,7 +2508,7 @@ class _RestField extends StatelessWidget {
         decoration: InputDecoration(
           labelText: label,
           labelStyle: TextStyle(color: textMid),
-          prefixIcon: Icon(icon, color: Colors.white, size: 20),
+          prefixIcon: Icon(icon, color: AppConstants.primaryColor, size: 20),
           filled: true,
           fillColor: fill,
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),

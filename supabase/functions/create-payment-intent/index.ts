@@ -12,7 +12,7 @@ serve(async (req) => {
   }
 
   try {
-    const { amount, currency = 'mxn', orderId, paymentMethodType } = await req.json()
+    const { amount, currency = 'mxn', orderId, paymentMethodType, promotionClaimId, cartSummary } = await req.json()
 
     // Validar monto básico
     if (!amount || amount <= 0) {
@@ -28,6 +28,57 @@ serve(async (req) => {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
+    }
+
+    // Si el checkout trae una promoción aplicada, se vuelve a calcular el
+    // descuento AQUÍ (nunca se confía en el que mandó el celular) llamando
+    // a la misma función que usa el checkout para mostrarlo — y si el monto
+    // que mandó el cliente no coincide con lo que el servidor calculó, se
+    // rechaza el cobro antes de siquiera hablar con Stripe. Se exige
+    // cartSummary junto con promotionClaimId: un cliente que mandara el
+    // id de la promoción pero sin el resumen del carrito (para saltarse
+    // esta verificación) se rechaza directo.
+    if (promotionClaimId && !cartSummary) {
+      return new Response(JSON.stringify({ error: 'Falta el resumen del carrito para verificar la promoción' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+    if (promotionClaimId && cartSummary) {
+      // Cliente autenticado como quien llama (no service-role) — la función
+      // validate_promotion_for_order revisa auth.uid() para confirmar que
+      // el reclamo es de esta misma persona, así que hay que llamarla con
+      // su propio JWT, no con permisos de administrador.
+      const authHeader = req.headers.get('Authorization') ?? ''
+      const userClient = createClient(
+        Deno.env.get('SUPABASE_URL') ?? '',
+        Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+        { global: { headers: { Authorization: authHeader } } },
+      )
+      const { data: result, error: rpcError } = await userClient.rpc('validate_promotion_for_order', {
+        p_claim_id: promotionClaimId,
+        p_restaurant_id: cartSummary.restaurantId,
+        p_cart_items: cartSummary.items,
+        p_subtotal: cartSummary.subtotal,
+        p_delivery_fee: cartSummary.deliveryFee,
+      })
+      if (rpcError || !result?.valid) {
+        return new Response(
+          JSON.stringify({ error: 'Promoción inválida', reason: result?.reason ?? String(rpcError) }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        )
+      }
+      const discount = result.applies_to_shipping
+        ? Math.min(cartSummary.deliveryFee, result.discount_amount)
+        : result.discount_amount
+      const expectedTotal = cartSummary.subtotal + cartSummary.deliveryFee - discount
+      // Epsilon de un centavo de peso — evita falsos rechazos por redondeo.
+      if (Math.abs(expectedTotal - amount) > 0.5) {
+        return new Response(
+          JSON.stringify({ error: 'El monto no coincide con el descuento validado de la promoción' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        )
+      }
     }
 
     // Si viene orderId, verificar el monto real contra la BD para evitar manipulación

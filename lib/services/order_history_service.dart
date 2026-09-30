@@ -11,19 +11,25 @@ class OrderHistoryService {
   static const _key        = 'order_history';
   static const _activeKey  = 'active_order';
 
-  // Prefijo por usuario — se cachea para que clearActiveOrder funcione incluso después del logout
-  static String? _lastKnownEmail;
+  // Prefijo por usuario — se cachea para que clearActiveOrder funcione incluso
+  // después del logout. Indexado por UID (no por email): una cuenta de solo-
+  // teléfono no tiene email, y antes de este cambio caía siempre en 'guest',
+  // compartiendo historial con cualquier otra cuenta de solo-teléfono en el
+  // mismo celular. La migración de datos ya cacheados bajo el email de cuentas
+  // existentes la hace AuthService._migrateLegacyEmailKeyedData (que conoce
+  // las claves _activeKey/_key de este archivo como 'active_order'/'order_history').
+  static String? _lastKnownUid;
 
   static String get _userActiveKey {
-    final email = Supabase.instance.client.auth.currentUser?.email;
-    if (email != null) _lastKnownEmail = email;
-    return '${_lastKnownEmail ?? 'guest'}:$_activeKey';
+    final uid = Supabase.instance.client.auth.currentUser?.id;
+    if (uid != null) _lastKnownUid = uid;
+    return '${_lastKnownUid ?? 'guest'}:$_activeKey';
   }
 
   static String get _userHistoryKey {
-    final email = Supabase.instance.client.auth.currentUser?.email;
-    if (email != null) _lastKnownEmail = email;
-    return '${_lastKnownEmail ?? 'guest'}:$_key';
+    final uid = Supabase.instance.client.auth.currentUser?.id;
+    if (uid != null) _lastKnownUid = uid;
+    return '${_lastKnownUid ?? 'guest'}:$_key';
   }
 
   // ── Pedido activo (para volver a tracking después de salir) ─────────────────

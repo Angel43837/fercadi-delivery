@@ -6,14 +6,26 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 // auth_service.dart
 // Maneja la sesión del usuario y todos sus datos de perfil guardados localmente.
 // Usa SharedPreferences (almacenamiento local del teléfono) para persistir los datos.
-// Cada dato de perfil se guarda con el email como prefijo para separar cuentas.
+// Cada dato de perfil se guarda con el UID de Supabase como prefijo para separar cuentas.
 //
 // Roles disponibles: cliente (sin rol), repartidor, dueno, admin
-// La sesión guarda: email + ruta de destino según el rol
+// La sesión guarda: uid + rol +, si existen, email/teléfono (solo como metadata,
+// ya no como identidad — ver nota abajo).
+//
+// Antes de agregar login por teléfono, todo esto estaba indexado por email
+// (session_email). Una cuenta de solo-teléfono no tiene email, así que se
+// migró la identidad al UID de Supabase (auth.currentUser.id), que siempre
+// existe sin importar el método de login. Para no perder los datos ya
+// guardados de cuentas existentes, saveSession() migra automáticamente (una
+// sola vez, la primera vez que esa cuenta inicia sesión después de este
+// cambio) cada valor cacheado de '<email>:clave' a '<uid>:clave' — ver
+// _migrateLegacyEmailKeyedData más abajo.
 
 class AuthService {
   static const _keyRole         = 'session_role';
+  static const _keyUid          = 'session_uid';
   static const _keyEmail        = 'session_email';
+  static const _keyPhone        = 'session_phone';
   // Sesiones independientes para roles no-cliente (no interfieren con el splash del usuario)
   static const _keyDuenoEmail      = 'dueno_session_email';
   static const _keyRepartidorEmail = 'moto_session_email';
@@ -32,42 +44,110 @@ class AuthService {
   static const _keyRestEmoji       = 'restaurant_emoji';
   static const _keyRestaurantId    = 'restaurant_id';
 
+  // Claves que antes vivían bajo '<email>:...' y que _migrateLegacyEmailKeyedData
+  // copia a '<uid>:...' la primera vez que una cuenta existente inicia sesión.
+  // Incluye las de este archivo más las de OrderHistoryService (viven en otro
+  // archivo pero usan el mismo patrón de prefijo por identidad) — se listan
+  // aquí como strings literales para no crear una dependencia circular entre
+  // los dos servicios.
+  static const _legacyMigrationKeys = [
+    _keyDisplayName, _keyPayment, _keyAvatarColor, _keyProfilePhoto,
+    _keyZona, _keyCLABE, _keySavedAddresses,
+    'active_order', 'order_history', // OrderHistoryService
+  ];
+
     // ── Clave con prefijo por usuario ────────────────────────────────────────────
-  // Prefija cada clave con el email del usuario actual para que los datos
-  // de diferentes cuentas en el mismo teléfono no se mezclen.
-  // Ejemplo: "anjelom227@gmail.com:profile_display_name"
+  // Prefija cada clave con el UID de Supabase del usuario actual para que los
+  // datos de diferentes cuentas en el mismo teléfono no se mezclen.
+  // Ejemplo: "3fa2c1e0-...:profile_display_name"
   static Future<String> _userKey(String key) async {
     final prefs = await SharedPreferences.getInstance();
-    final email = prefs.getString(_keyEmail) ?? 'guest';
-    return '$email:$key';
+    final uid = prefs.getString(_keyUid) ?? 'guest';
+    return '$uid:$key';
   }
 
   // ── Sesión ───────────────────────────────────────────────────────────────────
 
-  static Future<void> saveSession(String email, String role) async {
+  // [uid] es el identificador estable (auth.currentUser.id, o un uid sintético
+  // 'mock:<email>' en modo mock). [email]/[phone] son opcionales — una cuenta
+  // de solo-teléfono no tiene email, y viceversa.
+  static Future<void> saveSession(
+    String uid,
+    String role, {
+    String? email,
+    String? phone,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyEmail, email);
+    await _migrateLegacyEmailKeyedData(prefs, uid: uid, email: email);
+    await prefs.setString(_keyUid, uid);
     await prefs.setString(_keyRole, role);
-    final nameKey = '$email:$_keyDisplayName';
+    if (email != null && email.isNotEmpty) {
+      await prefs.setString(_keyEmail, email);
+    } else {
+      await prefs.remove(_keyEmail);
+    }
+    if (phone != null && phone.isNotEmpty) {
+      await prefs.setString(_keyPhone, phone);
+    }
+    final nameKey = '$uid:$_keyDisplayName';
     if (prefs.getString(nameKey) == null) {
-      final name = email.split('@').first;
-      await prefs.setString(nameKey, _capitalize(name));
+      final base = (email != null && email.contains('@'))
+          ? email.split('@').first
+          : (phone ?? 'Usuario');
+      await prefs.setString(nameKey, _capitalize(base));
     }
   }
 
-  static Future<({String email, String role})?> getSession() async {
+  static Future<({String uid, String role, String? email, String? phone})?> getSession() async {
     final prefs = await SharedPreferences.getInstance();
-    final email = prefs.getString(_keyEmail);
-    final role  = prefs.getString(_keyRole);
-    if (email == null || role == null) return null;
-    return (email: email, role: role);
+    final uid  = prefs.getString(_keyUid);
+    final role = prefs.getString(_keyRole);
+    if (uid == null || role == null) return null;
+    return (uid: uid, role: role, email: prefs.getString(_keyEmail), phone: prefs.getString(_keyPhone));
   }
 
   static Future<void> clearSession() async {
     final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_keyUid);
     await prefs.remove(_keyEmail);
+    await prefs.remove(_keyPhone);
     await prefs.remove(_keyRole);
     try { await Supabase.instance.client.auth.signOut(); } catch (_) {}
+  }
+
+  // Copia, una sola vez por cuenta, cada valor cacheado bajo '<email>:clave'
+  // a '<uid>:clave' — para que una cuenta que ya tenía nombre/foto/direcciones
+  // guardadas antes de este cambio no las pierda. Es seguro llamarla siempre
+  // desde saveSession(): no hace nada si la cuenta es de solo-teléfono (sin
+  // email, nada que migrar), nunca pisa un valor que ya exista bajo la clave
+  // nueva, y una bandera 'migrated_to_uid:<uid>' la vuelve un no-op después
+  // de la primera vez.
+  static Future<void> _migrateLegacyEmailKeyedData(
+    SharedPreferences prefs, {
+    required String uid,
+    String? email,
+  }) async {
+    if (email == null || email.isEmpty) return;
+    final doneFlag = 'migrated_to_uid:$uid';
+    if (prefs.getBool(doneFlag) == true) return;
+    for (final k in _legacyMigrationKeys) {
+      final legacyKey = '$email:$k';
+      final newKey = '$uid:$k';
+      if (prefs.containsKey(newKey)) continue;
+      final v = prefs.get(legacyKey);
+      if (v is String) {
+        await prefs.setString(newKey, v);
+      } else if (v is int) {
+        await prefs.setInt(newKey, v);
+      } else if (v is bool) {
+        await prefs.setBool(newKey, v);
+      } else if (v is double) {
+        await prefs.setDouble(newKey, v);
+      } else if (v is List<String>) {
+        await prefs.setStringList(newKey, v);
+      }
+    }
+    await prefs.setBool(doneFlag, true);
   }
 
   // ── Sesión del dueño (independiente del cliente) ────────────────────────────
@@ -75,11 +155,6 @@ class AuthService {
   static Future<void> saveDuenoSession(String email) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyDuenoEmail, email);
-  }
-
-  static Future<String?> getDuenoSession() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_keyDuenoEmail);
   }
 
   static Future<void> clearDuenoSession() async {
@@ -93,23 +168,6 @@ class AuthService {
   static Future<void> saveRepartidorSession(String email) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyRepartidorEmail, email);
-  }
-
-  static Future<String?> getRepartidorSession() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_keyRepartidorEmail);
-  }
-
-  static Future<void> clearRepartidorSession() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_keyRepartidorEmail);
-    try { await Supabase.instance.client.auth.signOut(); } catch (_) {}
-  }
-
-  static Future<void> clearAll() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
-    try { await Supabase.instance.client.auth.signOut(); } catch (_) {}
   }
 
   static String roleToRoute(String email) {

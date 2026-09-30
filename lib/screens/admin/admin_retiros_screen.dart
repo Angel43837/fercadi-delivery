@@ -59,7 +59,7 @@ class _AdminRetirosScreenState extends State<AdminRetirosScreen> {
         final lng = (loc['lng'] as num?)?.toDouble();
         if (lat != null && lng != null) {
           final zona = LocationService.zonaFromCoords(lat, lng);
-          _zonas[id] = zona == 'acambaro' ? 'Acámbaro' : 'Maravatío';
+          _zonas[id] = LocationService.zonaLabel(zona);
         }
       }
       if (mounted) setState(() {});

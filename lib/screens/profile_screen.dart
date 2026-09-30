@@ -26,6 +26,7 @@ import '../core/constants.dart';
 import '../services/auth_service.dart';
 import '../services/location_service.dart';
 import '../services/supabase_service.dart';
+import 'cliente/link_phone_screen.dart';
 import 'map_picker_screen.dart';
 
 const _avatarColors = [
@@ -60,6 +61,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String  _role       = '';
   String? _photoPath;
   String  _originalName  = '';
+  String? _currentPhone;
   bool    _photoChanged  = false;
   bool    _photoUploading = false;
   // Diagnóstico temporal: en qué paso va la subida de foto ahora mismo —
@@ -105,6 +107,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _payment        = payment;
       _colorIndex     = color;
       _email          = supaUser?.email ?? session?.email ?? '';
+      _currentPhone   = supaUser?.phone;
       _role           = realRole ?? session?.role ?? '';
       _photoPath      = photo;
       _clabeCtrl.text = clabe;
@@ -136,7 +139,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16))),
           ),
           const SizedBox(height: 8),
-          for (final z in const [('maravatio', 'Maravatío'), ('acambaro', 'Acámbaro')])
+          for (final z in const [('maravatio', 'Maravatío'), ('acambaro', 'Acámbaro'), ('morelia', 'Morelia')])
             ListTile(
               leading: Icon(
                 _zona == z.$1 ? Icons.radio_button_checked : Icons.radio_button_off,
@@ -217,7 +220,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               decoration: BoxDecoration(color: AppConstants.primaryColor.withValues(alpha: 0.12), shape: BoxShape.circle),
               child: const Icon(Icons.map_rounded, color: AppConstants.primaryColor, size: 20)),
             title: const Text('Zona de entrega', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-            subtitle: Text(_zona == 'acambaro' ? 'Acámbaro' : 'Maravatío',
+            subtitle: Text(LocationService.zonaLabel(_zona),
                 style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 12)),
             onTap: () { Navigator.pop(context); _showZonaPicker(); },
           ),
@@ -368,6 +371,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // usuario), así que Image.network la mostraba en caché y no se veía la foto
   // nueva. Se le agrega un parámetro de versión para forzar que se vuelva a
   // descargar; Supabase ignora esa parte de la url y sirve el archivo igual.
+  // '+528091234567' → '+52 809 *** 4567' — muestra el teléfono ya vinculado
+  // sin exponerlo completo en pantalla.
+  String _maskPhone(String phone) {
+    if (phone.length < 6) return phone;
+    final visible = phone.substring(0, phone.length - 4);
+    final last4   = phone.substring(phone.length - 4);
+    return '${visible.length > 4 ? '${visible.substring(0, 4)}***' : visible} $last4';
+  }
+
   String? _withCacheBust(String? url) =>
       url == null ? null : '$url?v=${DateTime.now().millisecondsSinceEpoch}';
 
@@ -430,8 +442,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  // Nombre de archivo en Storage para la foto de perfil — antes se derivaba
+  // saneando el email ('_email.replaceAll(...)'), lo cual dejaba a toda
+  // cuenta de solo-teléfono (sin email) subiendo bajo el mismo nombre vacío
+  // 'profile_.webp'. Se usa el UID real de Supabase, que siempre existe.
+  String _profileStorageUserId() {
+    final uid = Supabase.instance.client.auth.currentUser?.id;
+    if (uid != null && uid.isNotEmpty) return uid;
+    // Mock/fallback — no debería pasar con sesión real, pero evita un
+    // nombre de archivo vacío si de algún modo no hay usuario todavía.
+    return _email.isNotEmpty
+        ? _email.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_')
+        : 'guest';
+  }
+
   Future<void> _doPickPhotoFlow(XFile xfile) async {
-    final userId = _email.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
+    final userId = _profileStorageUserId();
 
     if (kIsWeb) {
       // En web: leer bytes directamente y subir a Supabase (sin recorte)
@@ -460,7 +486,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       // verdad — el await se queda esperando un "listo" que no va a
       // llegar porque la pantalla nunca apareció. Esta pausa corta deja
       // que la animación de cierre anterior termine primero.
-      await Future.delayed(const Duration(milliseconds: 400));
+      await Future.delayed(const Duration(milliseconds: 900));
       if (!mounted) return;
       final croppedPath = await _cropImage(originalPath).timeout(
         const Duration(seconds: 90),
@@ -551,7 +577,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
       // Misma pausa que _pickPhoto(): dejar que cualquier pantalla anterior
       // termine de cerrarse antes de presentar el recorte.
-      await Future.delayed(const Duration(milliseconds: 400));
+      await Future.delayed(const Duration(milliseconds: 900));
       if (!mounted) return;
       final croppedPath = await _cropImage(sourcePath).timeout(
         const Duration(seconds: 90),
@@ -562,7 +588,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       await _cleanOldLocalPhotos(appDir);
       final destPath = p.join(appDir.path, 'profile_photo_${DateTime.now().millisecondsSinceEpoch}.jpg');
       await File(croppedPath).copy(destPath);
-      final userId    = _email.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
+      final userId    = _profileStorageUserId();
       final remoteUrl = await SupabaseService.uploadProfilePhoto(destPath, userId);
       if (!mounted) return;
       setState(() { _photoPath = _withCacheBust(remoteUrl) ?? destPath; _photoChanged = true; });
@@ -890,6 +916,40 @@ class _ProfileScreenState extends State<ProfileScreen> {
           Container(
             decoration: BoxDecoration(color: cardBg, borderRadius: BorderRadius.circular(16)),
             child: Column(children: [
+              // Solo cliente: es el único login que hoy soporta teléfono+OTP
+              // (login_screen.dart) — ofrecerlo en dueño/repartidor sería
+              // vincular un número que esas pantallas de login no saben usar.
+              if (_role == 'cliente') ...[
+                ListTile(
+                  leading: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(color: AppConstants.primaryColor.withValues(alpha: 0.12), shape: BoxShape.circle),
+                    child: const Icon(Icons.phone_iphone, color: AppConstants.primaryColor, size: 20),
+                  ),
+                  title: Text(
+                    (_currentPhone == null || _currentPhone!.isEmpty) ? 'Vincular número de teléfono' : 'Teléfono vinculado',
+                    style: TextStyle(color: cardText, fontWeight: FontWeight.w600),
+                  ),
+                  subtitle: Text(
+                    (_currentPhone == null || _currentPhone!.isEmpty)
+                        ? 'Inicia sesión más rápido la próxima vez'
+                        : _maskPhone(_currentPhone!),
+                    style: TextStyle(color: cardSub, fontSize: 12),
+                  ),
+                  trailing: (_currentPhone == null || _currentPhone!.isEmpty)
+                      ? Icon(Icons.chevron_right, color: cardChev)
+                      : const Icon(Icons.check_circle, color: Colors.green, size: 20),
+                  onTap: (_currentPhone == null || _currentPhone!.isEmpty)
+                      ? () async {
+                          final linked = await Navigator.of(context).push<String>(
+                            MaterialPageRoute(builder: (_) => const LinkPhoneScreen()),
+                          );
+                          if (linked != null && mounted) setState(() => _currentPhone = linked);
+                        }
+                      : null,
+                ),
+                Divider(height: 1, color: cardDiv, indent: 16, endIndent: 16),
+              ],
               ListTile(
                 leading: Container(
                   padding: const EdgeInsets.all(8),
