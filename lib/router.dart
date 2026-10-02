@@ -25,6 +25,7 @@ import 'screens/repartidor/repartidor_screen.dart';
 import 'screens/dueno/dueno_screen.dart';
 import 'screens/cliente/order_history_screen.dart';
 import 'screens/profile_screen.dart';
+import 'screens/avisos_screen.dart';
 import 'screens/dueno/dueno_login_screen.dart';
 import 'screens/dueno/registro_restaurante_screen.dart';
 import 'screens/repartidor_login_screen.dart';
@@ -173,6 +174,7 @@ final appRouter = GoRouter(
       },
     ),
     GoRoute(path: '/profile',   builder: (_, _) => const ProfileScreen()),
+    GoRoute(path: '/avisos',    builder: (_, _) => const AvisosScreen()),
     GoRoute(path: '/restaurante',  builder: (_, _) => const DuenoLoginScreen()),
     GoRoute(path: '/dueno-login',  builder: (_, _) => const DuenoLoginScreen()),
     GoRoute(path: '/registro-restaurante', builder: (_, _) => const RegistroRestauranteScreen()),

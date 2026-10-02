@@ -348,15 +348,20 @@ venta del restaurante — guardado en `platform_config`
 - **Restaurante**: el dashboard del dueño (`ventasHoy` en
   `dueno_screen.dart`) aplica el mismo 10% sobre el bruto del día.
 
-### Bug conocido, sin corregir — repartidor no queda "inactivo" al cerrar sesión
+### `rider_locations.is_active` — columna muerta, investigado sept 2026
 
-`SupabaseService.setRiderInactive()` existe (pone `rider_locations.is_active
-= false`) pero nada la llama — el logout real de repartidor_plus usa
-`AuthService.clearSession()`, que no la invoca. Varias consultas sí filtran
-por `is_active = true` para mostrar riders disponibles, así que un
-repartidor que cierra sesión se sigue mostrando como activo/disponible.
-Detectado en una limpieza de código muerto (sept 2026), no corregido
-todavía.
+Se sospechó un bug ("el repartidor de flota se queda mostrando como
+disponible después de cerrar sesión, porque nada marca `is_active =
+false`"), pero al investigar a fondo resultó que **nada en toda la app ni
+en las políticas de la base de datos lee esa columna** — ni un solo
+`.eq('is_active', ...)` contra `rider_locations` en todo el código. Lo que
+de verdad decide si un rider se ve "en línea" para el jefe de flota
+(`flota_screen.dart`, `_isOnline()`) es si su `last_seen` tiene menos de 5
+minutos — un chequeo que ya funciona bien y se autocorrige solo (no
+depende de que alguien cierre sesión, cubre también el caso normal de que
+la app se cierre sola o se pierda la señal). Se quitó
+`SupabaseService.setRiderInactive()` (la función que escribía en esa
+columna muerta) por ya no aportar nada.
 
 ## Registro y login por correo (cliente) — corregido sept 2026
 
@@ -404,6 +409,138 @@ lo hacía regresar de golpe al principio. Corregido con un
 usuario (`dragDetails != null`) de nuestro propio `animateToPage`: pausa el
 timer al detectar `ScrollStartNotification` con drag real, y lo reinicia
 (desde 0s) en `ScrollEndNotification`.
+
+## Banners promocionales — nunca desaparecían del carrusel al vencer — corregido oct 2026
+
+Al agregarle un selector de duración al formulario de banners (ver más
+abajo), se encontró un segundo bug relacionado: el % de descuento de un
+banner sí dejaba de aplicarse al vencer (`RestaurantBanner.isDiscountActive`,
+usado en `_recomputeBannerDiscounts()`), pero el banner en sí (imagen,
+título, badge) **nunca se quitaba del carrusel** — `getBanners()` solo
+filtraba `is_active = true`, sin checar `expires_at` en ningún lado del
+lado de la UI. Se agregó `RestaurantBanner.isExpired` (independiente de si
+tiene descuento o no — también aplica a banners informativos sin %) y se
+filtra en `_buildPromoBanner()` (`restaurants_screen.dart`) antes de
+armar las slides del carrusel.
+
+## Formulario de banners — nunca tuvo forma de ponerles tiempo límite — corregido oct 2026
+
+A diferencia del promo-por-platillo (que sí tiene un selector de
+duración desde antes), el formulario para crear banners en
+`dueno_screen.dart` nunca pedía una fecha de expiración —
+`RestaurantBanner.expiresAt` siempre quedaba `null` (nunca expira). Se
+agregó el mismo selector de chips (1h/2h/.../5 días + "No expira") usado
+en el promo de platillo, conectado al campo real.
+
+## CLABE del repartidor — se guardaba pero Admin nunca la veía — corregido oct 2026
+
+`repartidor_plus_screen.dart` guarda la CLABE en `rider_payout_accounts`
+específicamente para que Admin la vea al procesar un retiro manual
+(`RiderWithdrawalRepository.saveClabe`), pero nada la leía de vuelta en
+ningún lado — Admin tenía que pedírsela al repartidor por fuera de la
+app. Se agregó `RiderWithdrawalRepository.getClabe()` y se muestra
+(seleccionable, para copiar fácil) en la tarjeta "Cuenta del repartidor"
+de `admin_retiros_screen.dart`. RLS ya permitía que Admin la leyera
+(`read_own_payout_account`), no hizo falta ninguna migración.
+
+## "Clientes y repartidores" en Admin — reescrito para usar cuentas reales — oct 2026
+
+Antes esa pantalla armaba sus dos listas escaneando `orders` (clientes
+desde `customer_name`/teléfono en texto libre, repartidores contando
+`repartidor_id`) — una cuenta sin pedidos **no aparecía en ningún lado**,
+y los repartidores salían con su UUID corto en vez de su nombre
+(`getRepartidores()` nunca hacía join con el perfil real).
+
+Se extendió la Edge Function `admin-user-lookup` con una acción nueva,
+`listByRole` (`{action: 'listByRole', role: string | string[]}`) — usa
+`admin.auth.admin.listUsers()` paginado y filtra por
+`app_metadata.role`/`user_metadata.role`; un cliente normal no tiene
+`role` guardado en absoluto, así que `'cliente'` se usa como valor
+especial para "cualquier cuenta sin role". Nuevo wrapper en Dart:
+`SupabaseService.listUsersByRole(roles)`.
+
+`_buildUsuarios()` ahora usa esas listas reales como fuente de la lista
+(`_clientUsers`/`_repartidorUsers`, cargadas una vez en `_loadUsuarios()`)
+y solo usa `orders` para calcular la cifra de "pedidos"/"entregas" por
+cuenta (via `customer_id`/`repartidor_id`). Se agregó
+`SupabaseService.getOrdersByCustomerId()` (más confiable que el viejo
+`getOrdersByPhone`, que dependía de texto libre). `_UserTile` y
+`_UserDetailSheet` ahora también muestran la foto real
+(`user_metadata.avatar_url`) en vez de solo un ícono genérico.
+
+## Mensajes directos de Admin a un usuario — nuevo, oct 2026
+
+No existía ninguna forma de que Admin le avisara algo puntual a una
+cuenta específica (ej. "tu identificación salió borrosa, vuelve a
+subirla") — el chat existente es solo por pedido (cliente↔repartidor) y
+las alertas son para incidentes internos, ninguno de los dos sirve para
+esto.
+
+- Tabla nueva `admin_messages` (`recipient_id`, `sent_by`, `title`, `body`,
+  `read_at`) — RLS: solo `is_admin()` puede insertar, cada quien ve solo
+  lo suyo (`recipient_id = auth.uid() or is_admin()`), el destinatario
+  puede marcar como leído su propia fila.
+- Admin: botón "Mandar mensaje" (ícono ✈️) en `_UserDetailSheet`
+  (`admin_screen.dart`) — abre un diálogo simple de título+cuerpo.
+- Cliente/repartidor: pantalla nueva `avisos_screen.dart` (ruta
+  `/avisos`), compartida igual que `/profile` — entrada con contador de
+  no leídos agregada en `profile_screen.dart`, justo antes de la sección
+  "Sesión".
+- Es de una sola vía (Admin → usuario), sin respuesta — si se necesita
+  ida y vuelta real después, hay que extenderlo.
+
+## Documentos del registro web de un repartidor, visibles en Admin — nuevo, oct 2026
+
+Los repartidores que se registran desde la página web oficial
+(`gogo-web-pruebas`, repo separado `~/Pagina_web_GoGo`) suben foto de
+perfil, identificación (frente/reverso) y comprobante de domicilio a una
+tabla `drivers` + bucket privado `identificaciones` — pero **nada en
+ninguna app los mostraba**, ni siquiera Admin. El bucket es privado a
+propósito (son datos sensibles), así que ni Admin puede leerlo directo
+desde el cliente — hace falta `service_role` para firmar URLs.
+
+Se agregó la acción `driverDocs` a la Edge Function `admin-user-lookup`
+(`{action: 'driverDocs', userId}`) — lee la fila de `drivers` con
+service_role y firma URLs temporales (10 min) para los 3 documentos +
+regresa la foto de perfil (bucket público, no necesita firma). Wrapper:
+`SupabaseService.getDriverDocs(riderId)`. En Admin, botón "Ver
+documentos" (ícono 🪪) en la ficha de un repartidor, visible solo para
+riders (`_UserDetailSheet(isRider: true)`) — abre `_DriverDocsSheet`, que
+muestra vehículo/ciudad/tipo de identificación + las 4 imágenes, con
+aviso claro si la cuenta nunca se registró por la web (no tiene fila en
+`drivers` — ej. las de flota).
+
+**Pendiente, fuera de alcance de esta sesión:** no hay ninguna forma de
+**aprobar/rechazar** a un repartidor desde Admin todavía (solo ver sus
+documentos) — el campo `drivers.status` por default queda en `'aprobado'`
+automático (ver nota en `~/Pagina_web_GoGo/documentos` del otro repo), sin
+que nadie los revise de verdad antes de activarse.
+
+## Registro web (restaurantes y repartidores) — bug real que rompía TODO el registro — oct 2026
+
+**Este bug vive en el repo separado `~/Pagina_web_GoGo`** (sitio oficial,
+`gogo-web-pruebas.vercel.app`), no en este — se documenta aquí también
+porque bloqueaba por completo el alta de restaurantes y repartidores
+reales. `src/lib/realSubmission.ts` llamaba a
+`supabase.auth.refreshSession()` justo después de `signUp()`, pensando
+que el JWT recién emitido no traía todavía el `app_metadata` que escribe
+el trigger `sync_role_to_app_metadata` — pero se verificó decodificando
+un JWT real de prueba que **sí lo trae desde el primer momento** (el
+trigger es `BEFORE INSERT`, corre antes de que GoTrue arme el JWT de
+respuesta). Ese `refreshSession()` no tenía nada que corregir, y encima
+fallaba con `Auth session missing!`, tronando el registro justo después
+de crear la cuenta — antes de subir imágenes o insertar la fila de
+restaurante/rider. Se quitó esa llamada de los dos flujos
+(`submitRestaurantRegistration`/`submitDriverRegistration`).
+
+De paso se encontró que el registro web y la app de GOGO Food (este
+repo) usan columnas de aprobación **completamente distintas y
+desconectadas** sobre la misma tabla `restaurants`: el sitio web usa
+`status` (enum `restaurant_status` propio), mientras que esta app usa
+`approval_status` (la que de verdad controla la RLS de
+`read_restaurants` y lo que ve Admin) — aprobar un restaurante desde un
+lado no se refleja en el otro. Sin resolver todavía, pendiente de
+decisión del negocio sobre cuál columna es la fuente de verdad.
 
 ## Seguimiento del pedido — ya existía, solo se corrigieron bugs de UI/GPS
 

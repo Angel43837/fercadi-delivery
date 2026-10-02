@@ -203,12 +203,26 @@ class _DuenoScreenState extends State<DuenoScreen> {
   }
 
   Future<void> _loadRestaurantSettings() async {
-    final s = await AuthService.getRestaurantSettings();
+    final local = await AuthService.getRestaurantSettings();
+    // Supabase es la fuente de verdad para nombre/descripción/dirección/
+    // emoji/foto — el caché local (local) se usa solo si falla la consulta
+    // (ej. sin internet) o en modo mock. El teléfono no tiene columna en
+    // la tabla "restaurants" todavía, así que ese sigue siendo local-only.
+    final remote = await SupabaseService.getRestaurantProfile(_restaurantId);
+    final s = remote ?? local;
+    if (remote != null) {
+      // Refresca el caché local con lo real, para que la próxima vez que
+      // se abra (incluso sin internet) ya tenga lo correcto a la mano.
+      await AuthService.saveRestaurantSettings(
+        name: remote['name'], desc: remote['desc'], address: remote['address'],
+        photo: remote['photo'], emoji: remote['emoji'],
+      );
+    }
     if (!mounted) return;
     setState(() {
       _restName    = s['name']!;
       _restDesc    = s['desc']!;
-      _restPhone   = s['phone']!;
+      _restPhone   = local['phone']!;
       _restAddress = s['address']!;
       _restPhoto   = s['photo']!;
       _restEmoji   = s['emoji']!.isNotEmpty ? s['emoji']! : '🍴';
@@ -1383,6 +1397,11 @@ class _DuenoScreenState extends State<DuenoScreen> {
       Color  badgeColor   = existing?.badgeColor ?? colors[0];
       String? productId   = existing?.productId;
       int? discount       = existing?.discountPercent;
+      // null = "No expira" (el comportamiento de siempre). Si ya traía una
+      // fecha futura, no se puede reconstruir en cuántas horas se puso
+      // originalmente — se deja en "No expira" hasta que el dueño elija
+      // una duración nueva a propósito.
+      int? bannerDurationHours;
 
       final titleCtrl    = TextEditingController(text: title);
       final subtitleCtrl = TextEditingController(text: subtitle);
@@ -1494,6 +1513,49 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 ))),
                 const SizedBox(height: 14),
 
+                // Duración — antes este formulario no tenía forma de ponerle
+                // tiempo límite a un banner, así que se quedaban activos
+                // para siempre aunque el dueño pensara que ya se iban a
+                // quitar solos.
+                Text('Duración', style: TextStyle(color: _textMid, fontSize: 12)),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 8, runSpacing: 8,
+                  children: [
+                    {'h': null, 'label': 'No expira'},
+                    {'h': 1, 'label': '1h'},
+                    {'h': 2, 'label': '2h'},
+                    {'h': 3, 'label': '3h'},
+                    {'h': 5, 'label': '5h'},
+                    {'h': 12, 'label': '12h'},
+                    {'h': 24, 'label': '1 día'},
+                    {'h': 48, 'label': '2 días'},
+                    {'h': 120, 'label': '5 días'},
+                  ].map((opt) {
+                    final h = opt['h'] as int?;
+                    final label = opt['label'] as String;
+                    final sel = bannerDurationHours == h;
+                    return GestureDetector(
+                      onTap: () => setModal(() => bannerDurationHours = h),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: sel ? AppConstants.primaryColor : _inputFill,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: sel ? AppConstants.primaryColor : Colors.white24),
+                        ),
+                        child: Text(label,
+                            style: TextStyle(
+                                color: sel ? Colors.white : _textMid,
+                                fontWeight: sel ? FontWeight.bold : FontWeight.normal,
+                                fontSize: 13)),
+                      ),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 14),
+
                 // Producto vinculado
                 Text('Producto vinculado (opcional)', style: TextStyle(color: _textMid, fontSize: 12)),
                 const SizedBox(height: 6),
@@ -1555,6 +1617,9 @@ class _DuenoScreenState extends State<DuenoScreen> {
                         badgeColor: badgeColor,
                         productId: productId,
                         discountPercent: discountValue,
+                        expiresAt: bannerDurationHours == null
+                            ? null
+                            : DateTime.now().add(Duration(hours: bannerDurationHours!)),
                         sortOrder: existing?.sortOrder ?? _bannerList.length,
                       );
                       Navigator.pop(ctx);
@@ -1952,6 +2017,17 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 await SupabaseService.updateRestaurantZona(_restaurantId, zona);
                 if (mounted) setState(() => _restZona = zona);
                 await SupabaseService.updateRestaurantCategorias(_restaurantId, _restCategorias.toList());
+                // Antes esto solo se guardaba en el caché local del
+                // dispositivo — nunca llegaba a Supabase, así que un
+                // cliente nunca veía el nombre/descripción/dirección
+                // actualizados, y se perdía todo al reinstalar la app.
+                await SupabaseService.updateRestaurantProfile(
+                  restaurantId: _restaurantId,
+                  name: _restNameCtrl.text.trim(),
+                  description: _restDescCtrl.text.trim(),
+                  address: _restAddress,
+                  emoji: _restEmoji,
+                );
               }
               if (!mounted) return;
               setState(() {

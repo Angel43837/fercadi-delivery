@@ -84,6 +84,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     super.initState();
     _loadSavedAddresses();
     _loadRestaurants();
+    _loadPreferredPayment();
+  }
+
+  // Antes el checkout siempre arrancaba en "efectivo" sin importar lo que
+  // el usuario hubiera guardado como método preferido en su perfil — tenía
+  // que volver a elegir tarjeta cada vez que pedía.
+  Future<void> _loadPreferredPayment() async {
+    final saved = await AuthService.getPreferredPayment();
+    if (!mounted) return;
+    setState(() => _payment = saved == 'card' ? _Pay.card : _Pay.cash);
   }
 
   Future<void> _loadRestaurants() async {

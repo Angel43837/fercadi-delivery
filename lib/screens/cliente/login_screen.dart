@@ -334,13 +334,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
               if (!_isSignUp && _loginMethod == null) ...[
                 // ── Menú de inicio de sesión: logo grande, 137×158, centrado ───
                 Center(
-                  child: Column(children: [
-                    Image.asset('assets/images/gogofood_go1.png', height: 62),
-                    const SizedBox(height: 2),
-                    Image.asset('assets/images/gogofood_go2.png', height: 62),
-                    const SizedBox(height: 6),
-                    Image.asset('assets/images/gogofood_word.png', height: 26),
-                  ]),
+                  child: Image.asset('assets/images/logo_main.png', height: 158, fit: BoxFit.contain),
                 ),
                 const SizedBox(height: 32),
                 const Center(

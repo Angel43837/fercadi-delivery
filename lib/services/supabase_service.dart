@@ -831,19 +831,6 @@ class SupabaseService {
     } catch (_) {}
   }
 
-  // Marca al rider como inactivo al cerrar sesión
-  static Future<void> setRiderInactive() async {
-    if (useMock) return;
-    try {
-      final uid = _client.auth.currentUser?.id;
-      if (uid == null) return;
-      await _client
-          .from('rider_locations')
-          .update({'is_active': false})
-          .eq('rider_id', uid);
-    } catch (_) {}
-  }
-
   // Obtiene las ubicaciones actuales de una lista de riders
   static Future<Map<String, Map<String, dynamic>>> getRiderLocations(
     List<String> riderIds,
@@ -1329,6 +1316,51 @@ class SupabaseService {
         .eq('id', restaurantId);
   }
 
+  // Perfil real del restaurante (nombre, descripción, dirección, emoji,
+  // logo) tal cual vive en Supabase — fuente de verdad para el panel de
+  // ajustes del dueño. Antes ese panel solo leía un caché local
+  // (SharedPreferences) que se pierde al reinstalar la app o entrar desde
+  // otro dispositivo, mostrando todo en blanco aunque el restaurante sí
+  // tuviera sus datos guardados de verdad del otro lado.
+  static Future<Map<String, String>?> getRestaurantProfile(
+    String restaurantId,
+  ) async {
+    if (useMock) return null;
+    try {
+      final row = await _client
+          .from('restaurants')
+          .select('name, description, address, image_url, emoji_icon')
+          .eq('id', restaurantId)
+          .maybeSingle();
+      if (row == null) return null;
+      return {
+        'name':    row['name'] as String? ?? '',
+        'desc':    row['description'] as String? ?? '',
+        'address': row['address'] as String? ?? '',
+        'photo':   row['image_url'] as String? ?? '',
+        'emoji':   row['emoji_icon'] as String? ?? '',
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> updateRestaurantProfile({
+    required String restaurantId,
+    required String name,
+    required String description,
+    required String address,
+    required String emoji,
+  }) async {
+    if (useMock) return;
+    await _client.from('restaurants').update({
+      'name': name,
+      'description': description,
+      'address': address,
+      'emoji_icon': emoji,
+    }).eq('id', restaurantId);
+  }
+
   static Future<String> getRestaurantZona(String restaurantId) async {
     if (useMock) return 'maravatio';
     try {
@@ -1757,26 +1789,55 @@ class SupabaseService {
     await _sendFcmForStatus(orderId, status);
   }
 
-  static Future<List<Map<String, dynamic>>> getRepartidores() async {
+  // ── Mensajes directos de Admin a un usuario ───────────────────────────────
+
+  // Admin le manda un aviso puntual a un cliente o repartidor específico
+  // (ej. "tu identificación salió borrosa, vuelve a subirla") — antes no
+  // existía ninguna forma de hacer esto desde la app.
+  static Future<void> sendAdminMessage({
+    required String recipientId,
+    required String title,
+    required String body,
+  }) async {
+    if (useMock) return;
+    await _client.from('admin_messages').insert({
+      'recipient_id': recipientId,
+      'sent_by': _client.auth.currentUser?.id,
+      'title': title,
+      'body': body,
+    });
+  }
+
+  static Future<List<Map<String, dynamic>>> getMyAdminMessages() async {
     if (useMock) return [];
+    final uid = _client.auth.currentUser?.id;
+    if (uid == null) return [];
     final data = await _client
-        .from('orders')
-        .select('repartidor_id')
-        .not('repartidor_id', 'is', null);
-    final orders = (data as List).cast<Map<String, dynamic>>();
-    final Map<String, int> counts = {};
-    for (final o in orders) {
-      final id = o['repartidor_id'] as String? ?? '';
-      if (id.isNotEmpty) counts[id] = (counts[id] ?? 0) + 1;
-    }
-    final result =
-        counts.entries
-            .map((e) => <String, dynamic>{'id': e.key, 'entregas': e.value})
-            .toList()
-          ..sort(
-            (a, b) => (b['entregas'] as int).compareTo(a['entregas'] as int),
-          );
-    return result;
+        .from('admin_messages')
+        .select()
+        .eq('recipient_id', uid)
+        .order('created_at', ascending: false);
+    return (data as List).cast<Map<String, dynamic>>();
+  }
+
+  static Future<int> getUnreadAdminMessageCount() async {
+    if (useMock) return 0;
+    final uid = _client.auth.currentUser?.id;
+    if (uid == null) return 0;
+    final data = await _client
+        .from('admin_messages')
+        .select('id')
+        .eq('recipient_id', uid)
+        .filter('read_at', 'is', null);
+    return (data as List).length;
+  }
+
+  static Future<void> markAdminMessageRead(String messageId) async {
+    if (useMock) return;
+    await _client
+        .from('admin_messages')
+        .update({'read_at': DateTime.now().toUtc().toIso8601String()})
+        .eq('id', messageId);
   }
 
   // ── Alertas de la plataforma ──────────────────────────────────────────────
@@ -2193,6 +2254,23 @@ class SupabaseService {
     return (data as List).cast<Map<String, dynamic>>();
   }
 
+  // Historial de pedidos de un cliente por su id real (orders.customer_id) —
+  // más confiable que getOrdersByPhone, que depende de un texto libre
+  // guardado en customer_name y puede no coincidir si el formato del
+  // teléfono varía entre pedidos.
+  static Future<List<Map<String, dynamic>>> getOrdersByCustomerId(
+    String customerId,
+  ) async {
+    if (useMock) return [];
+    final data = await _client
+        .from('orders')
+        .select('*, order_items(quantity, price, notes, products(id, name))')
+        .eq('customer_id', customerId)
+        .order('created_at', ascending: false)
+        .limit(100);
+    return (data as List).cast<Map<String, dynamic>>();
+  }
+
   // Historial completo de entregas de un repartidor (todas las fechas, no solo hoy).
   static Future<List<Map<String, dynamic>>> getOrdersByRepartidor(
     String repartidorId,
@@ -2307,6 +2385,53 @@ class SupabaseService {
           )
           .timeout(const Duration(seconds: 15));
       if (res.data is Map) return Map<String, dynamic>.from(res.data as Map);
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Todas las cuentas de un rol (o varios), tengan o no pedidos — a
+  // diferencia de las listas de "Clientes"/"Repartidores" de Admin, que
+  // antes se armaban solo a partir de orders.repartidor_id/customer_name y
+  // por eso una cuenta recién creada sin pedidos no aparecía en ningún lado.
+  static Future<List<Map<String, dynamic>>> listUsersByRole(
+    List<String> roles,
+  ) async {
+    if (useMock) return [];
+    try {
+      final res = await _client.functions
+          .invoke(
+            'admin-user-lookup',
+            body: {'action': 'listByRole', 'role': roles},
+          )
+          .timeout(const Duration(seconds: 20));
+      final data = res.data;
+      if (data is Map && data['users'] is List) {
+        return (data['users'] as List).cast<Map<String, dynamic>>();
+      }
+      return [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  // Datos del registro web de un repartidor (vehículo, tipo de
+  // identificación) + enlaces temporales a sus documentos — null si nunca
+  // se registró por la web (ej. cuentas de flota, que no pasan por ahí).
+  static Future<Map<String, dynamic>?> getDriverDocs(String riderId) async {
+    if (useMock) return null;
+    try {
+      final res = await _client.functions
+          .invoke(
+            'admin-user-lookup',
+            body: {'action': 'driverDocs', 'userId': riderId},
+          )
+          .timeout(const Duration(seconds: 15));
+      final data = res.data;
+      if (data is Map && data['driver'] is Map) {
+        return Map<String, dynamic>.from(data['driver'] as Map);
+      }
       return null;
     } catch (_) {
       return null;

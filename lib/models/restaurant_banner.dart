@@ -31,6 +31,12 @@ class RestaurantBanner {
       discountPercent != null &&
       (expiresAt == null || expiresAt!.isAfter(DateTime.now()));
 
+  // A diferencia de isDiscountActive (que solo aplica si el banner tiene un
+  // % de descuento), esto decide si el banner en sí ya debe desaparecer del
+  // carrusel — aplica también a banners sin descuento (ej. "NUEVO") que
+  // también se les puede poner tiempo límite.
+  bool get isExpired => expiresAt != null && !expiresAt!.isAfter(DateTime.now());
+
   factory RestaurantBanner.fromJson(Map<String, dynamic> json) {
     final hex = (json['badge_color_hex'] as String? ?? 'E53935').replaceAll('#', '');
     final colorInt = int.tryParse('FF$hex', radix: 16) ?? 0xFFE53935;

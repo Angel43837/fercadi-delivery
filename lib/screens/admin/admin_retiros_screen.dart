@@ -433,12 +433,19 @@ class _RetiroDetailSheet extends StatefulWidget {
 
 class _RetiroDetailSheetState extends State<_RetiroDetailSheet> {
   List<Map<String, dynamic>> _log = [];
+  String? _clabe;
 
   @override
   void initState() {
     super.initState();
     widget.repo.fetchStatusLog(widget.withdrawal.id).then((l) {
       if (mounted) setState(() => _log = l);
+    });
+    // Se guarda específicamente para que Admin la vea al procesar el
+    // retiro — antes nada la leía de vuelta, Admin tenía que pedírsela al
+    // repartidor por fuera de la app.
+    widget.repo.getClabe(widget.withdrawal.riderId).then((c) {
+      if (mounted) setState(() => _clabe = c);
     });
   }
 
@@ -489,6 +496,20 @@ class _RetiroDetailSheetState extends State<_RetiroDetailSheet> {
                 const SizedBox(height: 4),
                 Text('Estado de cuenta: ${banned ? 'Suspendida' : 'Activa'}',
                     style: TextStyle(color: banned ? AdminColors.statusCancelled : AdminColors.statusDelivered, fontSize: 13)),
+                const SizedBox(height: 4),
+                Row(children: [
+                  Text('CLABE: ', style: TextStyle(color: AdminColors.textSecondary, fontSize: 13)),
+                  Expanded(
+                    child: SelectableText(
+                      _clabe ?? 'No registrada',
+                      style: TextStyle(
+                        color: _clabe != null ? AdminColors.textPrimary : AdminColors.textSecondary,
+                        fontSize: 13,
+                        fontWeight: _clabe != null ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                  ),
+                ]),
               ]),
             ),
             const SizedBox(height: 16),

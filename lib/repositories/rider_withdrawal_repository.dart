@@ -71,4 +71,20 @@ class RiderWithdrawalRepository {
   Future<void> saveClabe(String riderId, String clabe) async {
     await _client.from('rider_payout_accounts').upsert({'rider_id': riderId, 'clabe': clabe});
   }
+
+  // Admin necesita ver la CLABE para transferirle el dinero al repartidor
+  // al completar un retiro — se guardaba con ese propósito (saveClabe) pero
+  // nada la leía de vuelta en ningún lado.
+  Future<String?> getClabe(String riderId) async {
+    try {
+      final data = await _client
+          .from('rider_payout_accounts')
+          .select('clabe')
+          .eq('rider_id', riderId)
+          .maybeSingle();
+      return data?['clabe'] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
 }

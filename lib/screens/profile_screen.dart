@@ -70,6 +70,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // una vez resuelto el bug de la foto que se queda cargando.
   String? _uploadStage;
   String  _zona          = 'maravatio';
+  int     _unreadAvisos  = 0;
 
   bool get _isDirty => _photoChanged || _nameCtrl.text.trim() != _originalName;
 
@@ -94,6 +95,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final clabe   = await AuthService.getCLABE();
     final defAddr = await AuthService.getDefaultAddress();
     final zona    = await AuthService.getZona();
+    final unread  = await SupabaseService.getUnreadAdminMessageCount();
     // El rol real siempre se saca de la sesión activa de Supabase (misma
     // fuente que usa el router para proteger rutas) — la sesión "legacy"
     // de AuthService puede quedar con datos de otra cuenta/rol anterior
@@ -112,6 +114,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _photoPath      = photo;
       _clabeCtrl.text = clabe;
       _zona           = zona;
+      _unreadAvisos   = unread;
       if (defAddr != null) {
         _addrText = defAddr['address'] as String? ?? '';
         _addrLat  = (defAddr['lat'] as num?)?.toDouble();
@@ -909,6 +912,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
           // Nota: el pago con tarjeta se procesa siempre con Stripe (PaymentSheet)
           // directo en el checkout — no se guarda ningún dato de tarjeta aquí.
+
+          // ── Avisos de Admin ───────────────────────────────────────────────
+          Container(
+            margin: const EdgeInsets.only(bottom: 28),
+            decoration: BoxDecoration(color: cardBg, borderRadius: BorderRadius.circular(16)),
+            child: ListTile(
+              onTap: () => context.push('/avisos'),
+              leading: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(color: AppConstants.primaryColor.withValues(alpha: 0.12), shape: BoxShape.circle),
+                child: const Icon(Icons.notifications_outlined, color: AppConstants.primaryColor, size: 20),
+              ),
+              title: Text('Avisos', style: TextStyle(color: cardText, fontWeight: FontWeight.w600)),
+              subtitle: Text(
+                _unreadAvisos > 0 ? '$_unreadAvisos sin leer' : 'Sin avisos nuevos',
+                style: TextStyle(color: cardSub, fontSize: 12),
+              ),
+              trailing: _unreadAvisos > 0
+                  ? Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(color: AppConstants.primaryColor, borderRadius: BorderRadius.circular(10)),
+                      child: Text('$_unreadAvisos', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                    )
+                  : Icon(Icons.chevron_right, color: cardSub),
+            ),
+          ),
 
           // ── Sesión ──────────────────────────────────────────────────────────
           _SectionLabel('Sesión'),

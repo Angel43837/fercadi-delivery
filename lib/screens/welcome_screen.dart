@@ -61,16 +61,7 @@ class WelcomeScreen extends StatelessWidget {
                   // a la derecha (a pedido del dueño, viendo la pantalla real).
                   Transform.translate(
                     offset: const Offset(75, 32),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Image.asset('assets/images/gogofood_go1.png', height: 62),
-                        const SizedBox(height: 2),
-                        Image.asset('assets/images/gogofood_go2.png', height: 62),
-                        const SizedBox(height: 6),
-                        Image.asset('assets/images/gogofood_word.png', height: 26),
-                      ],
-                    ),
+                    child: Image.asset('assets/images/logo_main.png', height: 158, fit: BoxFit.contain),
                   ),
                   const Spacer(flex: 4),
                   _WelcomeButton(

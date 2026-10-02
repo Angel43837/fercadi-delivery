@@ -1489,7 +1489,12 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
   // ── Promo carousel ────────────────────────────────────────────────────
 
   Widget _buildPromoBanner(Restaurant r) {
-    final realBanners = _banners[r.id] ?? [];
+    // Antes esto mostraba TODOS los banners de _banners[r.id] sin importar
+    // su expiración — el % de descuento sí dejaba de aplicarse solo
+    // (isDiscountActive, usado en _recomputeBannerDiscounts), pero el
+    // banner en sí (imagen/título/badge) se quedaba en el carrusel para
+    // siempre aunque el dueño le hubiera puesto un tiempo límite real.
+    final realBanners = (_banners[r.id] ?? []).where((b) => !b.isExpired).toList();
     if (realBanners.isNotEmpty) {
       return _PromoCarousel(slides: realBanners.map((b) => _PromoSlide(
         image: b.imageUrl,

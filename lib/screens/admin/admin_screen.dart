@@ -48,7 +48,11 @@ class _AdminScreenState extends State<AdminScreen> {
   AppOrderStatus? _filterStatus;
   List<Map<String, dynamic>> _realOrders = [];
   List<Map<String, dynamic>> _restaurants = [];
-  List<Map<String, dynamic>> _repartidores = [];
+  // Cuentas reales (tengan o no pedidos) — a diferencia del enfoque viejo,
+  // que solo contaba IDs que ya aparecían en orders.repartidor_id.
+  List<Map<String, dynamic>> _clientUsers = [];
+  List<Map<String, dynamic>> _repartidorUsers = [];
+  bool _loadingUsuarios = true;
   bool _loadingOrders = false;
   bool _loadingRestaurants = false;
   Timer? _pollTimer;
@@ -86,7 +90,7 @@ class _AdminScreenState extends State<AdminScreen> {
     _loadStoreItems();
     _loadOrders();
     _loadRestaurants();
-    _loadRepartidores();
+    _loadUsuarios();
     _loadAlerts();
     _loadStats();
     _loadRetirosPendientes();
@@ -149,11 +153,24 @@ class _AdminScreenState extends State<AdminScreen> {
     }
   }
 
-  Future<void> _loadRepartidores() async {
+  // Cuentas reales de clientes/repartidores — tengan o no pedidos todavía.
+  Future<void> _loadUsuarios() async {
     try {
-      final data = await SupabaseService.getRepartidores();
-      if (mounted) setState(() => _repartidores = data);
-    } catch (_) {}
+      final clients = await SupabaseService.listUsersByRole(['cliente']);
+      final riders = await SupabaseService.listUsersByRole([
+        'repartidor',
+        'repartidor_plus',
+      ]);
+      if (mounted) {
+        setState(() {
+          _clientUsers = clients;
+          _repartidorUsers = riders;
+          _loadingUsuarios = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loadingUsuarios = false);
+    }
   }
 
   Future<void> _loadAlerts() async {
@@ -803,8 +820,8 @@ class _AdminScreenState extends State<AdminScreen> {
       List<Map<String, dynamic>> ratings,
     })
   >
-  _loadClientDetail(String phone) async {
-    final orders = await SupabaseService.getOrdersByPhone(phone);
+  _loadClientDetail(String customerId) async {
+    final orders = await SupabaseService.getOrdersByCustomerId(customerId);
     final orderIds = orders.map((o) => o['id'] as String).toList();
     final allRatings = await SupabaseService.getRatingsForOrders(orderIds);
     // El repartidor califica al cliente -> is_driver: true
@@ -840,31 +857,41 @@ class _AdminScreenState extends State<AdminScreen> {
     return (orders: orders, avgRating: avg, ratings: clientRatings);
   }
 
-  void _showClientDetail(String name, String phone) {
+  void _showClientDetail(String customerId, String name, {String? avatarUrl}) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (_) => _UserDetailSheet(
+        userId: customerId,
         title: name,
-        subtitle: phone,
+        subtitle: 'Historial y calificaciones',
         icon: Icons.person_outline,
         color: AppConstants.primaryColor,
-        future: _loadClientDetail(phone),
+        avatarUrl: avatarUrl,
+        future: _loadClientDetail(customerId),
       ),
     );
   }
 
-  void _showRepartidorDetail(String repartidorId, String shortId, Color color) {
+  void _showRepartidorDetail(
+    String repartidorId,
+    String name,
+    Color color, {
+    String? avatarUrl,
+  }) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (_) => _UserDetailSheet(
-        title: 'Repartidor $shortId',
+        userId: repartidorId,
+        title: name,
         subtitle: 'Historial y calificaciones',
         icon: Icons.delivery_dining,
         color: color,
+        avatarUrl: avatarUrl,
+        isRider: true,
         future: _loadRepartidorDetail(repartidorId),
       ),
     );
@@ -1587,6 +1614,7 @@ class _AdminScreenState extends State<AdminScreen> {
         final r = _restaurants[i];
         final id = r['id'] as String? ?? '';
         final icon = r['emoji_icon'] as String? ?? '🍽️';
+        final logoUrl = r['image_url'] as String?;
         final name = r['name'] as String? ?? 'Restaurante';
         final address = r['address'] as String? ?? '';
         final isOpen = appData.isRestaurantOpen(id);
@@ -1609,7 +1637,21 @@ class _AdminScreenState extends State<AdminScreen> {
             children: [
               Row(
                 children: [
-                  Text(icon, style: const TextStyle(fontSize: 30)),
+                  // Antes solo se mostraba el emoji genérico, aunque el
+                  // restaurante ya tuviera un logo real subido (desde la
+                  // app o desde el registro web) — ahora se prefiere la
+                  // foto real cuando existe, con el emoji de respaldo para
+                  // los restaurantes que todavía no tienen una.
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: (logoUrl != null && logoUrl.isNotEmpty)
+                        ? Image.network(
+                            logoUrl,
+                            width: 36, height: 36, fit: BoxFit.cover,
+                            errorBuilder: (_, _, _) => Text(icon, style: const TextStyle(fontSize: 30)),
+                          )
+                        : Text(icon, style: const TextStyle(fontSize: 30)),
+                  ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
@@ -1760,29 +1802,24 @@ class _AdminScreenState extends State<AdminScreen> {
   // ── Usuarios ─────────────────────────────────────────────────────────────────
 
   Widget _buildUsuarios() {
-    final Map<String, Map<String, dynamic>> clientMap = {};
+    // Pedidos/gasto por cliente real (orders.customer_id) y entregas por
+    // repartidor real (orders.repartidor_id) — solo para la cifra que se
+    // muestra en cada tarjeta. La LISTA en sí ahora sale de las cuentas
+    // reales (_clientUsers/_repartidorUsers), no de quién ya hizo un
+    // pedido, así que una cuenta nueva sin actividad todavía aparece.
+    final Map<String, int> ordersByClient = {};
+    final Map<String, double> totalByClient = {};
+    final Map<String, int> entregasByRider = {};
     for (final o in _realOrders) {
-      Map<String, dynamic> delivery = {};
-      try {
-        delivery =
-            jsonDecode(o['customer_name'] as String? ?? '{}')
-                as Map<String, dynamic>;
-      } catch (_) {}
-      final phone = delivery['phone'] as String? ?? '—';
-      if (!clientMap.containsKey(phone)) {
-        clientMap[phone] = {
-          'name': delivery['name'] as String? ?? 'Cliente',
-          'phone': phone,
-          'orders': 0,
-          'total': 0.0,
-        };
+      final cid = o['customer_id'] as String?;
+      if (cid != null) {
+        ordersByClient[cid] = (ordersByClient[cid] ?? 0) + 1;
+        totalByClient[cid] =
+            (totalByClient[cid] ?? 0) + ((o['total'] as num?)?.toDouble() ?? 0);
       }
-      clientMap[phone]!['orders'] = (clientMap[phone]!['orders'] as int) + 1;
-      clientMap[phone]!['total'] =
-          (clientMap[phone]!['total'] as double) +
-          ((o['total'] as num?)?.toDouble() ?? 0);
+      final rid = o['repartidor_id'] as String?;
+      if (rid != null) entregasByRider[rid] = (entregasByRider[rid] ?? 0) + 1;
     }
-    final clients = clientMap.values.toList();
 
     final repartidoreColors = [
       const Color(0xFF00BFA5),
@@ -1797,48 +1834,77 @@ class _AdminScreenState extends State<AdminScreen> {
       children: [
         _SectionTitle(
           icon: Icons.people_outline,
-          label: 'Clientes (${clients.length})',
+          label: 'Clientes (${_clientUsers.length})',
         ),
         const SizedBox(height: 10),
-        if (clients.isEmpty)
-          _EmptyHint('Sin pedidos registrados aún')
+        if (_loadingUsuarios)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 20),
+            child: Center(
+              child: CircularProgressIndicator(color: AppConstants.primaryColor),
+            ),
+          )
+        else if (_clientUsers.isEmpty)
+          _EmptyHint('Sin clientes registrados aún')
         else
-          ...clients.map(
-            (c) => _UserTile(
-              name: c['name'] as String,
-              subtitle: c['phone'] as String,
+          ..._clientUsers.map((u) {
+            final id = u['id'] as String;
+            final orders = ordersByClient[id] ?? 0;
+            final total = totalByClient[id] ?? 0.0;
+            final rawName = (u['name'] as String?)?.trim();
+            final name = (rawName != null && rawName.isNotEmpty)
+                ? rawName
+                : (u['email'] as String? ?? u['phone'] as String? ?? 'Cliente');
+            return _UserTile(
+              name: name,
+              subtitle: (u['email'] as String?) ?? (u['phone'] as String?) ?? '—',
               trailing:
-                  '${c['orders']} pedido${(c['orders'] as int) != 1 ? 's' : ''} • \$${(c['total'] as double).toStringAsFixed(0)}',
+                  '$orders pedido${orders != 1 ? 's' : ''} • \$${total.toStringAsFixed(0)}',
               color: AppConstants.primaryColor,
               icon: Icons.person_outline,
-              onTap: () =>
-                  _showClientDetail(c['name'] as String, c['phone'] as String),
-            ),
-          ),
+              avatarUrl: u['avatarUrl'] as String?,
+              onTap: () => _showClientDetail(
+                id,
+                name,
+                avatarUrl: u['avatarUrl'] as String?,
+              ),
+            );
+          }),
         const SizedBox(height: 24),
 
         _SectionTitle(
           icon: Icons.delivery_dining,
-          label: 'Repartidores (${_repartidores.length})',
+          label: 'Repartidores (${_repartidorUsers.length})',
         ),
         const SizedBox(height: 10),
-        if (_repartidores.isEmpty)
-          _EmptyHint('Sin repartidores con entregas registradas')
+        if (_loadingUsuarios)
+          const SizedBox.shrink()
+        else if (_repartidorUsers.isEmpty)
+          _EmptyHint('Sin repartidores registrados aún')
         else
-          ..._repartidores.asMap().entries.map((entry) {
+          ..._repartidorUsers.asMap().entries.map((entry) {
             final i = entry.key;
-            final r = entry.value;
-            final id = r['id'] as String? ?? '';
-            final entregas = r['entregas'] as int? ?? 0;
-            final shortId = adminShortId(id);
+            final u = entry.value;
+            final id = u['id'] as String;
+            final entregas = entregasByRider[id] ?? 0;
             final color = repartidoreColors[i % repartidoreColors.length];
+            final rawName = (u['name'] as String?)?.trim();
+            final name = (rawName != null && rawName.isNotEmpty)
+                ? rawName
+                : 'Repartidor ${adminShortId(id)}';
             return _UserTile(
-              name: 'Repartidor $shortId',
+              name: name,
               subtitle: '$entregas entrega${entregas != 1 ? 's' : ''} totales',
               trailing: '$entregas entregas',
               color: color,
               icon: Icons.delivery_dining,
-              onTap: () => _showRepartidorDetail(id, shortId, color),
+              avatarUrl: u['avatarUrl'] as String?,
+              onTap: () => _showRepartidorDetail(
+                id,
+                name,
+                color,
+                avatarUrl: u['avatarUrl'] as String?,
+              ),
             );
           }),
         const SizedBox(height: 16),
@@ -3101,6 +3167,7 @@ class _UserTile extends StatelessWidget {
   final String name, subtitle, trailing;
   final Color color;
   final IconData icon;
+  final String? avatarUrl;
   final VoidCallback? onTap;
   const _UserTile({
     required this.name,
@@ -3108,6 +3175,7 @@ class _UserTile extends StatelessWidget {
     required this.trailing,
     required this.color,
     required this.icon,
+    this.avatarUrl,
     this.onTap,
   });
 
@@ -3125,14 +3193,19 @@ class _UserTile extends StatelessWidget {
         ),
         child: Row(
           children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
+            ClipOval(
+              child: Container(
+                width: 40,
+                height: 40,
                 color: color.withValues(alpha: 0.15),
-                shape: BoxShape.circle,
+                child: (avatarUrl != null && avatarUrl!.isNotEmpty)
+                    ? Image.network(
+                        avatarUrl!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) => Icon(icon, color: color, size: 20),
+                      )
+                    : Icon(icon, color: color, size: 20),
               ),
-              child: Icon(icon, color: color, size: 20),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -3181,9 +3254,12 @@ class _UserTile extends StatelessWidget {
 }
 
 class _UserDetailSheet extends StatelessWidget {
+  final String userId;
   final String title, subtitle;
   final IconData icon;
   final Color color;
+  final String? avatarUrl;
+  final bool isRider;
   final Future<
     ({
       List<Map<String, dynamic>> orders,
@@ -3193,12 +3269,80 @@ class _UserDetailSheet extends StatelessWidget {
   >
   future;
   const _UserDetailSheet({
+    required this.userId,
     required this.title,
     required this.subtitle,
     required this.icon,
     required this.color,
+    this.avatarUrl,
+    this.isRider = false,
     required this.future,
   });
+
+  Future<void> _showDocs(BuildContext context) async {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => _DriverDocsSheet(riderId: userId),
+    );
+  }
+
+  Future<void> _sendMessage(BuildContext context) async {
+    final titleCtrl = TextEditingController();
+    final bodyCtrl = TextEditingController();
+    final sent = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppConstants.surfaceColor,
+        title: const Text('Mandar mensaje', style: TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: titleCtrl,
+              autofocus: true,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'Título',
+                labelStyle: TextStyle(color: Colors.white54),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: bodyCtrl,
+              maxLines: 4,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'Mensaje',
+                labelStyle: TextStyle(color: Colors.white54),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppConstants.primaryColor),
+            child: const Text('Enviar'),
+          ),
+        ],
+      ),
+    );
+    if (sent != true) return;
+    if (titleCtrl.text.trim().isEmpty || bodyCtrl.text.trim().isEmpty) return;
+    await SupabaseService.sendAdminMessage(
+      recipientId: userId,
+      title: titleCtrl.text.trim(),
+      body: bodyCtrl.text.trim(),
+    );
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Mensaje enviado'), backgroundColor: Colors.green),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -3254,14 +3398,19 @@ class _UserDetailSheet extends StatelessWidget {
                     padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
                     child: Row(
                       children: [
-                        Container(
-                          width: 48,
-                          height: 48,
-                          decoration: BoxDecoration(
+                        ClipOval(
+                          child: Container(
+                            width: 48,
+                            height: 48,
                             color: color.withValues(alpha: 0.15),
-                            shape: BoxShape.circle,
+                            child: (avatarUrl != null && avatarUrl!.isNotEmpty)
+                                ? Image.network(
+                                    avatarUrl!,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, _, _) => Icon(icon, color: color, size: 24),
+                                  )
+                                : Icon(icon, color: color, size: 24),
                           ),
-                          child: Icon(icon, color: color, size: 24),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
@@ -3285,6 +3434,17 @@ class _UserDetailSheet extends StatelessWidget {
                               ),
                             ],
                           ),
+                        ),
+                        if (isRider)
+                          IconButton(
+                            onPressed: () => _showDocs(context),
+                            icon: const Icon(Icons.badge_outlined, color: AppConstants.primaryColor),
+                            tooltip: 'Ver documentos',
+                          ),
+                        IconButton(
+                          onPressed: () => _sendMessage(context),
+                          icon: const Icon(Icons.send_outlined, color: AppConstants.primaryColor),
+                          tooltip: 'Mandar mensaje',
                         ),
                       ],
                     ),
@@ -3382,6 +3542,132 @@ class _UserDetailSheet extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+// Documentos del registro web de un repartidor (identificación, comprobante
+// de domicilio) — null si la cuenta nunca pasó por ese registro (ej. los
+// de flota, dados de alta directo en Supabase). Las imágenes llegan como
+// URLs firmadas de corta duración, generadas por la Edge Function con
+// service_role — el bucket es privado a propósito.
+class _DriverDocsSheet extends StatelessWidget {
+  final String riderId;
+  const _DriverDocsSheet({required this.riderId});
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.8,
+      minChildSize: 0.4,
+      maxChildSize: 0.95,
+      expand: false,
+      builder: (context, scrollController) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: AppConstants.surfaceColor,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: FutureBuilder<Map<String, dynamic>?>(
+            future: SupabaseService.getDriverDocs(riderId),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const Center(
+                  child: CircularProgressIndicator(color: AppConstants.primaryColor),
+                );
+              }
+              final driver = snapshot.data;
+              if (driver == null) {
+                return const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Text(
+                      'Esta cuenta no se registró por la página web, así que '
+                      'no tiene identificación ni comprobante guardados aquí.',
+                      style: TextStyle(color: Colors.white60),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                );
+              }
+              return ListView(
+                controller: scrollController,
+                padding: const EdgeInsets.all(20),
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40, height: 4,
+                      decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    '${driver['first_name'] ?? ''} ${driver['last_name'] ?? ''}'.trim(),
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${driver['vehicle'] ?? '—'} · ${driver['city'] ?? '—'}, ${driver['state'] ?? '—'}',
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Tipo de identificación: ${driver['id_type'] ?? '—'} · Estado: ${driver['status'] ?? '—'}',
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13),
+                  ),
+                  const SizedBox(height: 20),
+                  _DocImage(title: 'Identificación — frente', url: driver['idFrontUrl'] as String?),
+                  const SizedBox(height: 16),
+                  _DocImage(title: 'Identificación — reverso', url: driver['idBackUrl'] as String?),
+                  const SizedBox(height: 16),
+                  _DocImage(title: 'Comprobante de domicilio', url: driver['proofUrl'] as String?),
+                  const SizedBox(height: 16),
+                  _DocImage(title: 'Foto de perfil', url: driver['photo_url'] as String?),
+                ],
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _DocImage extends StatelessWidget {
+  final String title;
+  final String? url;
+  const _DocImage({required this.title, required this.url});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+        const SizedBox(height: 8),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: (url != null && url!.isNotEmpty)
+              ? Image.network(
+                  url!,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => Container(
+                    height: 140,
+                    color: Colors.white10,
+                    alignment: Alignment.center,
+                    child: const Text('No se pudo cargar', style: TextStyle(color: Colors.white38, fontSize: 12)),
+                  ),
+                )
+              : Container(
+                  height: 100,
+                  width: double.infinity,
+                  color: Colors.white10,
+                  alignment: Alignment.center,
+                  child: const Text('No disponible', style: TextStyle(color: Colors.white38, fontSize: 12)),
+                ),
+        ),
+      ],
     );
   }
 }
