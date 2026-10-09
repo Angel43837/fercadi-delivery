@@ -8,6 +8,8 @@
 // Los pedidos se actualizan en tiempo real usando Supabase Realtime (subscribeToOrders).
 
 import 'dart:async';
+import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -102,6 +104,15 @@ class _DuenoScreenState extends State<DuenoScreen> {
   String? _correctionNotes;
   bool    _approvalLoaded   = false;
 
+  // Pantalla de "restaurante apagado + sin platillos" (nuevo, oct 2026) y el
+  // tutorial de la pestaña Platillos — cada uno se muestra una sola vez por
+  // sesión de la app, no en cada cambio de pestaña.
+  bool _dismissedClosedGate  = false;
+  bool _shownMenuTutorial    = false;
+  bool _menuTutorialVisible  = false;
+  bool _productsLoaded       = false;
+  bool _onboardingFlagsLoaded = false;
+
   // Límites del plan gratuito — con premium se amplían.
   static const int _maxProductosGratis   = 7;
   static const int _maxProductosPremium  = 20;
@@ -156,6 +167,15 @@ class _DuenoScreenState extends State<DuenoScreen> {
   Future<void> _initRestaurant() async {
     _restaurantId = await AuthService.getRestaurantId();
     if (!SupabaseService.useMock) {
+      final seenClosedGate = await AuthService.hasSeenDuenoOnboarding('closed_gate', _restaurantId);
+      final seenMenuTutorial = await AuthService.hasSeenDuenoOnboarding('menu_tutorial', _restaurantId);
+      if (mounted) {
+        setState(() {
+          _dismissedClosedGate = seenClosedGate;
+          _shownMenuTutorial = seenMenuTutorial;
+          _onboardingFlagsLoaded = true;
+        });
+      }
       _loadApprovalStatus();
       _loadCategories();
       _loadProductsFromSupabase();
@@ -205,9 +225,8 @@ class _DuenoScreenState extends State<DuenoScreen> {
   Future<void> _loadRestaurantSettings() async {
     final local = await AuthService.getRestaurantSettings();
     // Supabase es la fuente de verdad para nombre/descripción/dirección/
-    // emoji/foto — el caché local (local) se usa solo si falla la consulta
-    // (ej. sin internet) o en modo mock. El teléfono no tiene columna en
-    // la tabla "restaurants" todavía, así que ese sigue siendo local-only.
+    // emoji/foto/teléfono — el caché local (local) se usa solo si falla la
+    // consulta (ej. sin internet) o en modo mock.
     final remote = await SupabaseService.getRestaurantProfile(_restaurantId);
     final s = remote ?? local;
     if (remote != null) {
@@ -215,14 +234,14 @@ class _DuenoScreenState extends State<DuenoScreen> {
       // se abra (incluso sin internet) ya tenga lo correcto a la mano.
       await AuthService.saveRestaurantSettings(
         name: remote['name'], desc: remote['desc'], address: remote['address'],
-        photo: remote['photo'], emoji: remote['emoji'],
+        photo: remote['photo'], emoji: remote['emoji'], phone: remote['phone'],
       );
     }
     if (!mounted) return;
     setState(() {
       _restName    = s['name']!;
       _restDesc    = s['desc']!;
-      _restPhone   = local['phone']!;
+      _restPhone   = s['phone']!;
       _restAddress = s['address']!;
       _restPhoto   = s['photo']!;
       _restEmoji   = s['emoji']!.isNotEmpty ? s['emoji']! : '🍴';
@@ -323,6 +342,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
         promoIs2x1: p.promoIs2x1,
         promoExpiresAt: p.promoExpiresAt,
       )).toList();
+      _productsLoaded = true;
     });
   }
 
@@ -341,6 +361,16 @@ class _DuenoScreenState extends State<DuenoScreen> {
     final appData = context.watch<AppDataProvider>();
     final isOpen = appData.isRestaurantOpen(_restaurantId);
     final pendingCount = _realOrders.where((o) => o['status'] == 'pending').length;
+
+    final sinPlatillos = !SupabaseService.useMock && _productsLoaded && _products.isEmpty;
+    if (_onboardingFlagsLoaded && !isOpen && sinPlatillos && !_dismissedClosedGate) {
+      return _buildClosedEmptyGate();
+    }
+    if (_onboardingFlagsLoaded && _tab == 2 && sinPlatillos && !_shownMenuTutorial) {
+      _shownMenuTutorial = true;
+      _menuTutorialVisible = true;
+      AuthService.markDuenoOnboardingSeen('menu_tutorial', _restaurantId);
+    }
 
     return Scaffold(
       backgroundColor: _bg,
@@ -361,6 +391,64 @@ class _DuenoScreenState extends State<DuenoScreen> {
         _buildBottomNav(pendingCount),
       ]),
     );
+  }
+
+  // Un restaurante nuevo empieza apagado a propósito (ver realSubmission.ts
+  // en el repo de la página web) para que no le salga vacío a un cliente.
+  // Antes nadie se lo explicaba al dueño — se veía como si la app estuviera
+  // rota. Se muestra una vez por sesión; el botón lo manda directo a
+  // Platillos para que arranque su menú.
+  Widget _buildClosedEmptyGate() {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.nightlight_round, color: Colors.white, size: 72),
+              const SizedBox(height: 24),
+              const Text(
+                'Tu restaurante está apagado',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 22),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'No aparecerá para que tus clientes compren hasta que agregues '
+                'tus platillos y lo enciendas.\n\n¡Buena suerte! 🍀',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontSize: 15, height: 1.5),
+              ),
+              const SizedBox(height: 32),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppConstants.primaryColor,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                  onPressed: () {
+                    AuthService.markDuenoOnboardingSeen('closed_gate', _restaurantId);
+                    setState(() {
+                      _dismissedClosedGate = true;
+                      _tab = 2;
+                    });
+                  },
+                  child: const Text('Agregar mis platillos',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+                ),
+              ),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _dismissMenuTutorial() {
+    if (_menuTutorialVisible) setState(() => _menuTutorialVisible = false);
   }
 
   Widget _buildApprovalGate() {
@@ -702,22 +790,87 @@ class _DuenoScreenState extends State<DuenoScreen> {
           );
         }).toList(),
       ),
+      if (_menuTutorialVisible) ...[
+        Positioned.fill(
+          child: GestureDetector(
+            onTap: _dismissMenuTutorial,
+            child: Container(color: Colors.black.withValues(alpha: 0.75)),
+          ),
+        ),
+        Positioned.fill(
+          child: IgnorePointer(child: CustomPaint(painter: _CurvedArrowPainter())),
+        ),
+        Center(
+          child: GestureDetector(
+            onTap: _dismissMenuTutorial,
+            child: const _OutlinedTutorialText(),
+          ),
+        ),
+        Positioned(
+          right: 90, bottom: 10,
+          child: IgnorePointer(
+            child: Icon(Icons.back_hand_rounded, color: Colors.white, size: 36,
+                shadows: [Shadow(color: AppConstants.primaryColor, blurRadius: 16)]),
+          ),
+        ),
+      ],
       Positioned(
         right: 16, bottom: 16,
-        child: FloatingActionButton.extended(
-          backgroundColor: Colors.blue,
-          onPressed: () {
-            if (_products.length >= _maxProductos) {
-              _showLimiteProductosDialog();
-              return;
-            }
-            _showProductForm(null, isExtra: false);
-          },
-          icon: const Icon(Icons.add, color: Colors.white),
-          label: const Text('Nuevo platillo', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        child: Container(
+          decoration: _menuTutorialVisible
+              ? BoxDecoration(
+                  shape: BoxShape.circle,
+                  boxShadow: [BoxShadow(color: AppConstants.primaryColor.withValues(alpha: 0.7), blurRadius: 24, spreadRadius: 6)],
+                )
+              : null,
+          child: FloatingActionButton.extended(
+            backgroundColor: Colors.blue,
+            onPressed: () {
+              if (_menuTutorialVisible) setState(() => _menuTutorialVisible = false);
+              if (_products.length >= _maxProductos) {
+                _showLimiteProductosDialog();
+                return;
+              }
+              _showProductForm(null, isExtra: false);
+            },
+            icon: const Icon(Icons.add, color: Colors.white),
+            label: const Text('Nuevo platillo', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
         ),
       ),
     ]);
+  }
+
+  // Tarjeta del tour paso a paso del formulario de "Nuevo platillo" — se
+  // coloca justo junto al campo que explica, así no depende de calcular
+  // coordenadas (que se desalinean entre tamaños de pantalla distintos).
+  Widget _tourCard({required List<String> lines, required String body, required String buttonLabel, required VoidCallback onNext}) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.symmetric(vertical: 18),
+      alignment: Alignment.center,
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        _OutlinedTutorialText(lines: lines, fontSize: 26),
+        const SizedBox(height: 10),
+        Text(body, textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontSize: 13, height: 1.3)),
+        const SizedBox(height: 10),
+        const Icon(Icons.arrow_downward_rounded, color: AppConstants.primaryColor, size: 30),
+        const SizedBox(height: 10),
+        SizedBox(
+          width: 220,
+          child: ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppConstants.primaryColor,
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: onNext,
+            child: Text(buttonLabel, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+          ),
+        ),
+      ]),
+    );
   }
 
   void _showPromoLockedDialog() {
@@ -766,7 +919,20 @@ class _DuenoScreenState extends State<DuenoScreen> {
     );
   }
 
-  void _showProductForm(_Product? existing, {bool isExtra = false}) {
+  void _showProductForm(_Product? existing, {bool isExtra = false}) async {
+    // Tour paso a paso (foto -> categorías) solo al crear el primer platillo
+    // de verdad — nunca al editar uno existente, y solo una vez por
+    // restaurante (igual que los otros avisos de onboarding del dueño).
+    int tourStep = 0; // 0 = oculto, 1 = foto, 2 = categorías
+    if (existing == null) {
+      final seen = await AuthService.hasSeenDuenoOnboarding('product_form_tutorial', _restaurantId);
+      if (!seen) {
+        tourStep = 1;
+        await AuthService.markDuenoOnboardingSeen('product_form_tutorial', _restaurantId);
+      }
+    }
+    if (!mounted) return;
+
     final nameCtrl  = TextEditingController(text: existing?.name ?? '');
     final descCtrl  = TextEditingController(text: existing?.description ?? '');
     final priceCtrl = TextEditingController(text: existing != null ? existing.price.toStringAsFixed(0) : '');
@@ -841,11 +1007,16 @@ class _DuenoScreenState extends State<DuenoScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFFFF5722),
+      backgroundColor: Colors.transparent,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModal) => SingleChildScrollView(
+        builder: (ctx, setModal) => ClipRRect(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 250),
+            color: tourStep != 0 ? Colors.black : const Color(0xFFFF5722),
+            child: SingleChildScrollView(
           padding: EdgeInsets.fromLTRB(
             20, 20, 20,
             MediaQuery.of(ctx).viewInsets.bottom + MediaQuery.of(ctx).padding.bottom + 24,
@@ -876,11 +1047,23 @@ class _DuenoScreenState extends State<DuenoScreen> {
             ]),
             const SizedBox(height: 16),
 
-            GestureDetector(
-              onTap: () => showModalBottomSheet(
-                context: ctx,
-                backgroundColor: AppConstants.surfaceColor,
-                shape: const RoundedRectangleBorder(
+            if (tourStep == 1)
+              _tourCard(
+                lines: const ['Agrega', 'foto del platillo'],
+                body: 'Toca el cuadro de abajo para tomarla con la cámara o elegirla de tu galería.',
+                buttonLabel: 'Siguiente',
+                onNext: () => setModal(() => tourStep = 2),
+              ),
+            AnimatedOpacity(
+              duration: const Duration(milliseconds: 200),
+              opacity: tourStep == 2 ? 0.25 : 1,
+              child: IgnorePointer(
+                ignoring: tourStep == 2,
+                child: GestureDetector(
+                  onTap: () => showModalBottomSheet(
+                    context: ctx,
+                    backgroundColor: AppConstants.surfaceColor,
+                    shape: const RoundedRectangleBorder(
                     borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
                 builder: (_) => SafeArea(
                   child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -960,10 +1143,17 @@ class _DuenoScreenState extends State<DuenoScreen> {
                       ]),
               ),
             ),
+              ),
+            ),
             const SizedBox(height: 14),
 
             // ── Normal / Promo toggle ────────────────────────────────────────
-            ClipRRect(
+            AnimatedOpacity(
+              duration: const Duration(milliseconds: 200),
+              opacity: tourStep != 0 ? 0.25 : 1,
+              child: IgnorePointer(
+                ignoring: tourStep != 0,
+                child: ClipRRect(
               borderRadius: BorderRadius.circular(12),
               child: Row(children: [
                 Expanded(
@@ -1016,6 +1206,8 @@ class _DuenoScreenState extends State<DuenoScreen> {
                   ),
                 ),
               ]),
+            ),
+              ),
             ),
 
             // ── Promo config (solo cuando isPromoMode == true) ──────────────
@@ -1174,68 +1366,164 @@ class _DuenoScreenState extends State<DuenoScreen> {
 
             const SizedBox(height: 14),
 
-            Text('Categorías', style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 13, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8, runSpacing: 8,
-              children: _categories.map((c) {
-                final selected = selectedCatIds.contains(c.id);
-                return GestureDetector(
-                  onTap: () => setModal(() {
-                    if (selected) {
-                      if (selectedCatIds.length > 1) selectedCatIds.remove(c.id);
-                    } else {
-                      selectedCatIds.add(c.id);
-                    }
-                  }),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 150),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: selected ? Colors.white : Colors.white.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: selected ? Colors.white : Colors.white38),
+            if (tourStep == 2)
+              _tourCard(
+                lines: const ['Elige la', 'categoría'],
+                body: 'Toca las que apliquen a este platillo — puedes elegir más de una.',
+                buttonLabel: 'Entendido',
+                onNext: () => setModal(() => tourStep = 0),
+              ),
+            AnimatedOpacity(
+              duration: const Duration(milliseconds: 200),
+              opacity: tourStep == 1 ? 0.25 : 1,
+              child: IgnorePointer(
+                ignoring: tourStep == 1,
+                child: Container(
+                  decoration: tourStep == 2
+                      ? BoxDecoration(
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: AppConstants.primaryColor, width: 2),
+                        )
+                      : null,
+                  padding: tourStep == 2 ? const EdgeInsets.all(8) : EdgeInsets.zero,
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('Categorías', style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 13, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8, runSpacing: 8,
+                      children: _categories.map((c) {
+                        final selected = selectedCatIds.contains(c.id);
+                        return GestureDetector(
+                          onTap: () => setModal(() {
+                            if (selected) {
+                              if (selectedCatIds.length > 1) selectedCatIds.remove(c.id);
+                            } else {
+                              selectedCatIds.add(c.id);
+                            }
+                          }),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 150),
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: selected ? Colors.white : Colors.white.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: selected ? Colors.white : Colors.white38),
+                            ),
+                            child: Text(
+                              '${c.emoji} ${c.name}',
+                              style: TextStyle(
+                                color: selected ? AppConstants.primaryColor : Colors.white,
+                                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
                     ),
-                    child: Text(
-                      '${c.emoji} ${c.name}',
-                      style: TextStyle(
-                        color: selected ? AppConstants.primaryColor : Colors.white,
-                        fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ),
-                );
-              }).toList(),
+                  ]),
+                ),
+              ),
             ),
             const SizedBox(height: 12),
-            _FormField(controller: nameCtrl,  label: 'Nombre del platillo', icon: Icons.fastfood_outlined, maxLength: 15, isDark: false),
-            const SizedBox(height: 12),
-            _FormField(controller: descCtrl,  label: 'Descripción',         icon: Icons.notes, maxLines: 2, maxLength: 30, isDark: false),
-            const SizedBox(height: 12),
-            _FormField(controller: priceCtrl, label: 'Precio (MXN)',        icon: Icons.attach_money, keyboardType: TextInputType.number, isDark: false),
+
+            if (tourStep == 3)
+              _tourCard(
+                lines: const ['Ponle', 'nombre'],
+                body: 'Cómo se va a llamar en el menú (máximo 15 caracteres).',
+                buttonLabel: 'Siguiente',
+                onNext: () => setModal(() => tourStep = 4),
+              ),
+            AnimatedOpacity(
+              duration: const Duration(milliseconds: 200),
+              opacity: (tourStep != 0 && tourStep != 3) ? 0.25 : 1,
+              child: IgnorePointer(
+                ignoring: tourStep != 0 && tourStep != 3,
+                child: _FormField(controller: nameCtrl, label: 'Nombre del platillo', icon: Icons.fastfood_outlined, maxLength: 15, isDark: false),
+              ),
+            ),
             const SizedBox(height: 12),
 
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-              decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(12)),
-              child: Row(children: [
-                Icon(Icons.storefront_outlined, color: Colors.white.withValues(alpha: 0.5), size: 20),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text('Disponible en el menú',
-                      style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 14)),
+            if (tourStep == 4)
+              _tourCard(
+                lines: const ['Agrega una', 'descripción'],
+                body: 'Cuenta brevemente qué trae o cómo está preparado.',
+                buttonLabel: 'Siguiente',
+                onNext: () => setModal(() => tourStep = 5),
+              ),
+            AnimatedOpacity(
+              duration: const Duration(milliseconds: 200),
+              opacity: (tourStep != 0 && tourStep != 4) ? 0.25 : 1,
+              child: IgnorePointer(
+                ignoring: tourStep != 0 && tourStep != 4,
+                child: _FormField(controller: descCtrl, label: 'Descripción', icon: Icons.notes, maxLines: 2, maxLength: 30, isDark: false),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            if (tourStep == 5)
+              _tourCard(
+                lines: const ['Pon el', 'precio'],
+                body: 'En pesos mexicanos (MXN), sin el símbolo \$.',
+                buttonLabel: 'Siguiente',
+                onNext: () => setModal(() => tourStep = 6),
+              ),
+            AnimatedOpacity(
+              duration: const Duration(milliseconds: 200),
+              opacity: (tourStep != 0 && tourStep != 5) ? 0.25 : 1,
+              child: IgnorePointer(
+                ignoring: tourStep != 0 && tourStep != 5,
+                child: _FormField(controller: priceCtrl, label: 'Precio (MXN)', icon: Icons.attach_money, keyboardType: TextInputType.number, isDark: false),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            if (tourStep == 6)
+              _tourCard(
+                lines: const ['Disponible', 'o no'],
+                body: 'Actívalo cuando esté listo para vender — si se te acaba, apágalo aquí mismo.',
+                buttonLabel: 'Siguiente',
+                onNext: () => setModal(() => tourStep = 7),
+              ),
+            AnimatedOpacity(
+              duration: const Duration(milliseconds: 200),
+              opacity: (tourStep != 0 && tourStep != 6) ? 0.25 : 1,
+              child: IgnorePointer(
+                ignoring: tourStep != 0 && tourStep != 6,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                  decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(12)),
+                  child: Row(children: [
+                    Icon(Icons.storefront_outlined, color: Colors.white.withValues(alpha: 0.5), size: 20),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text('Disponible en el menú',
+                          style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 14)),
+                    ),
+                    Switch(
+                      value: available,
+                      activeThumbColor: Colors.blue,
+                      onChanged: (v) => setModal(() => available = v),
+                    ),
+                  ]),
                 ),
-                Switch(
-                  value: available,
-                  activeThumbColor: Colors.blue,
-                  onChanged: (v) => setModal(() => available = v),
-                ),
-              ]),
+              ),
             ),
             const SizedBox(height: 20),
 
-            SizedBox(
+            if (tourStep == 7)
+              _tourCard(
+                lines: const ['Y por', 'último...'],
+                body: 'Toca aquí para guardar tu platillo.',
+                buttonLabel: 'Entendido',
+                onNext: () => setModal(() => tourStep = 0),
+              ),
+            AnimatedOpacity(
+              duration: const Duration(milliseconds: 200),
+              opacity: (tourStep != 0 && tourStep != 7) ? 0.25 : 1,
+              child: IgnorePointer(
+                ignoring: tourStep != 0 && tourStep != 7,
+                child: SizedBox(
               width: double.infinity, height: 52,
               child: ElevatedButton(
                 onPressed: () async {
@@ -1325,7 +1613,11 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 ),
               ),
             ),
+              ),
+            ),
           ]),
+        ),
+          ),
         ),
       ),
     );
@@ -2027,6 +2319,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
                   description: _restDescCtrl.text.trim(),
                   address: _restAddress,
                   emoji: _restEmoji,
+                  phone: _restPhoneCtrl.text.trim(),
                 );
               }
               if (!mounted) return;
@@ -2627,6 +2920,98 @@ class _FormField extends StatelessWidget {
             borderRadius: BorderRadius.circular(12),
             borderSide: const BorderSide(color: AppConstants.primaryColor)),
       ),
+    );
+  }
+}
+
+// Flecha curva que apunta del texto del tutorial hacia el botón resaltado.
+class _CurvedArrowPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = AppConstants.primaryColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3.5
+      ..strokeCap = StrokeCap.round;
+
+    // Del texto centrado hacia el botón "Nuevo platillo" (abajo a la
+    // derecha) — se detiene un poco antes del botón para no perderse dentro
+    // de su brillo naranja.
+    final start = Offset(size.width * 0.58, size.height * 0.56);
+    final control = Offset(size.width * 0.95, size.height * 0.75);
+    final end = Offset(size.width * 0.84, size.height - 95);
+    final path = ui.Path()
+      ..moveTo(start.dx, start.dy)
+      ..quadraticBezierTo(control.dx, control.dy, end.dx, end.dy);
+    canvas.drawPath(path, paint);
+
+    // Punta de flecha alineada con la tangente de la curva en su punto final
+    // (derivada de la bezier cuadrática: 2 * (end - control)) — con borde
+    // blanco para que resalte aunque caiga sobre fondo naranja/brillo.
+    const arrowSize = 15.0;
+    final dir = (end - control);
+    final angle = dir.direction; // radianes
+    Offset rotated(double a, double len) =>
+        end + Offset(math.cos(angle + a), math.sin(angle + a)) * len;
+    final arrowPath = ui.Path()
+      ..moveTo(end.dx, end.dy)
+      ..lineTo(rotated(math.pi - 0.4, arrowSize).dx, rotated(math.pi - 0.4, arrowSize).dy)
+      ..lineTo(rotated(math.pi + 0.4, arrowSize).dx, rotated(math.pi + 0.4, arrowSize).dy)
+      ..close();
+    canvas.drawPath(arrowPath, Paint()..color = AppConstants.primaryColor);
+    canvas.drawPath(
+      arrowPath,
+      Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..strokeJoin = StrokeJoin.round,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+// Texto del tutorial estilo "caricatura": relleno blanco con contorno grueso
+// naranja y sombra, como las letras de una promoción — más llamativo que un
+// texto plano para que de verdad se note sobre el fondo oscurecido.
+class _OutlinedTutorialText extends StatelessWidget {
+  final List<String> lines;
+  final double fontSize;
+  const _OutlinedTutorialText({this.lines = const ['Agrega', 'nuevo platillo'], this.fontSize = 34});
+
+  @override
+  Widget build(BuildContext context) {
+    final baseStyle = TextStyle(
+      fontSize: fontSize,
+      fontWeight: FontWeight.w900,
+      height: 1.15,
+    );
+
+    Widget line(String text) {
+      return Stack(alignment: Alignment.center, children: [
+        // Contorno (se dibuja detrás, más grueso).
+        Text(
+          text,
+          textAlign: TextAlign.center,
+          style: baseStyle.copyWith(
+            foreground: Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 7
+              ..color = AppConstants.primaryColor,
+          ),
+        ),
+        // Relleno blanco encima.
+        Text(text, textAlign: TextAlign.center, style: baseStyle.copyWith(color: Colors.white)),
+      ]);
+    }
+
+    return DecoratedBox(
+      decoration: BoxDecoration(boxShadow: [
+        BoxShadow(color: Colors.black.withValues(alpha: 0.6), blurRadius: 12, offset: const Offset(0, 4)),
+      ]),
+      child: Column(mainAxisSize: MainAxisSize.min, children: lines.map(line).toList()),
     );
   }
 }

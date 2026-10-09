@@ -20,6 +20,61 @@ import '../../services/supabase_service.dart';
 import '../../theme/admin_theme.dart';
 import '../../theme/admin_widgets.dart';
 
+// Corre una acción de Admin (aprobar/rechazar, etc.) y SIEMPRE avisa en
+// pantalla si algo salió mal — antes, si el RPC tronaba (como pasó con un
+// bug real de columna/tipo), el botón simplemente "no hacía nada" sin
+// ningún aviso, y parecía que la app estaba rota en vez de mostrar el
+// error real.
+Future<void> _runAdminAction(BuildContext context, Future<void> Function() action) async {
+  try {
+    await action();
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Listo'), backgroundColor: Colors.green),
+      );
+    }
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo completar: $e'), backgroundColor: Colors.red[700]),
+      );
+    }
+  }
+}
+
+// Compartido entre la pantalla principal (rechazar restaurante) y la hoja de
+// documentos de un repartidor (rechazar/pedir corrección) — no depende de
+// ningún estado propio, solo del context.
+Future<String?> _promptRejectionReason(BuildContext context) async {
+  final ctrl = TextEditingController();
+  return showDialog<String>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: AppConstants.surfaceColor,
+      title: const Text('Motivo del rechazo', style: TextStyle(color: Colors.white)),
+      content: TextField(
+        controller: ctrl,
+        autofocus: true,
+        maxLines: 3,
+        style: const TextStyle(color: Colors.white),
+        decoration: const InputDecoration(labelText: 'Explica por qué se rechaza', labelStyle: TextStyle(color: Colors.white54)),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+        ElevatedButton(
+          onPressed: () {
+            final text = ctrl.text.trim();
+            if (text.isEmpty) return;
+            Navigator.pop(ctx, text);
+          },
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+          child: const Text('Rechazar'),
+        ),
+      ],
+    ),
+  );
+}
+
 // ── Pantalla principal ───────────────────────────────────────────────────────
 
 class AdminScreen extends StatefulWidget {
@@ -43,6 +98,7 @@ class _AdminScreenState extends State<AdminScreen> {
   static const _tabEventos = 7;
   static const _tabAlertas = 8;
   static const _tabConfig = 9;
+  static const _tabAceptaciones = 10;
 
   int _tab = 0;
   AppOrderStatus? _filterStatus;
@@ -53,6 +109,10 @@ class _AdminScreenState extends State<AdminScreen> {
   List<Map<String, dynamic>> _clientUsers = [];
   List<Map<String, dynamic>> _repartidorUsers = [];
   bool _loadingUsuarios = true;
+  // Repartidores registrados por la web que todavía necesitan revisión —
+  // apartado "Aceptaciones" (junto con los restaurantes pendientes, que ya
+  // viven dentro de _restaurants).
+  List<Map<String, dynamic>> _pendingDrivers = [];
   bool _loadingOrders = false;
   bool _loadingRestaurants = false;
   Timer? _pollTimer;
@@ -94,12 +154,14 @@ class _AdminScreenState extends State<AdminScreen> {
     _loadAlerts();
     _loadStats();
     _loadRetirosPendientes();
+    _loadPendingDrivers();
     _pollTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       _loadOrders();
       _loadRestaurants();
       _loadAlerts();
       _loadStats();
       _loadRetirosPendientes();
+      _loadPendingDrivers();
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) context.read<AppDataProvider>().initRestaurantLikes();
@@ -171,6 +233,11 @@ class _AdminScreenState extends State<AdminScreen> {
     } catch (_) {
       if (mounted) setState(() => _loadingUsuarios = false);
     }
+  }
+
+  Future<void> _loadPendingDrivers() async {
+    final data = await SupabaseService.getPendingDrivers();
+    if (mounted) setState(() => _pendingDrivers = data);
   }
 
   Future<void> _loadAlerts() async {
@@ -968,6 +1035,7 @@ class _AdminScreenState extends State<AdminScreen> {
                 _buildEventos(),
                 _buildAlertas(),
                 _buildConfig(),
+                _buildAceptaciones(),
               ],
             ),
           ),
@@ -983,6 +1051,7 @@ class _AdminScreenState extends State<AdminScreen> {
     _tabEventos => 'Eventos',
     _tabAlertas => 'Alertas',
     _tabConfig => 'Configuración',
+    _tabAceptaciones => 'Aceptaciones',
     _ => '',
   };
 
@@ -1068,7 +1137,20 @@ class _AdminScreenState extends State<AdminScreen> {
     final alertasPendientes = _alerts
         .where((a) => a['status'] != 'resuelta')
         .length;
+    final restaurantesPendientes = _restaurants
+        .where((r) {
+          final s = r['approval_status'] as String? ?? 'aprobado';
+          return s == 'pendiente' || s == 'en_revision';
+        })
+        .length;
     final items = <(IconData, String, String, int, VoidCallback)>[
+      (
+        Icons.how_to_reg_outlined,
+        'Aceptaciones',
+        'Restaurantes y repartidores por revisar',
+        restaurantesPendientes + _pendingDrivers.length,
+        () => setState(() => _tab = _tabAceptaciones),
+      ),
       (
         Icons.storefront_outlined,
         'Restaurantes',
@@ -1622,6 +1704,8 @@ class _AdminScreenState extends State<AdminScreen> {
         final ordersToday = _realOrders
             .where((o) => o['restaurant_id'] == id)
             .length;
+        final approvalStatus = r['approval_status'] as String? ?? 'aprobado';
+        final needsReview = approvalStatus == 'pendiente' || approvalStatus == 'en_revision';
 
         return Container(
           margin: const EdgeInsets.only(bottom: 12),
@@ -1766,6 +1850,71 @@ class _AdminScreenState extends State<AdminScreen> {
                   ),
                 ],
               ),
+              // Banner de aprobación — antes no existía NINGÚN botón en
+              // ninguna app para aceptar/rechazar un restaurante dado de
+              // alta por el registro web; se quedaban en "pendiente" para
+              // siempre sin que nadie pudiera hacer nada al respecto desde
+              // aquí (la RPC ya existía, solo le faltaba esta pantalla).
+              if (approvalStatus != 'aprobado' && approvalStatus != 'activo') ...[
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        switch (approvalStatus) {
+                          'pendiente' => 'Pendiente de revisión',
+                          'en_revision' => 'En revisión',
+                          'correcciones_solicitadas' => 'Se le pidieron correcciones',
+                          'rechazado' => 'Rechazado',
+                          _ => approvalStatus,
+                        },
+                        style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 12),
+                      ),
+                      if (needsReview) ...[
+                        const SizedBox(height: 8),
+                        Row(children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () async {
+                                final motivo = await _promptRejectionReason(context);
+                                if (motivo == null || !mounted) return;
+                                await _runAdminAction(context, () async {
+                                  await SupabaseService.adminTransitionRestaurantStatus(
+                                    restaurantId: id, newStatus: 'rechazado', note: motivo,
+                                  );
+                                  await _loadRestaurants();
+                                });
+                              },
+                              style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent),
+                              child: const Text('Rechazar', style: TextStyle(fontSize: 12)),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: () => _runAdminAction(context, () async {
+                                await SupabaseService.adminTransitionRestaurantStatus(
+                                  restaurantId: id, newStatus: 'aprobado',
+                                );
+                                await _loadRestaurants();
+                              }),
+                              style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                              child: const Text('Aprobar', style: TextStyle(fontSize: 12, color: Colors.white)),
+                            ),
+                          ),
+                        ]),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
               Divider(height: 1, color: Colors.white.withValues(alpha: 0.06)),
               const SizedBox(height: 12),
@@ -1796,6 +1945,131 @@ class _AdminScreenState extends State<AdminScreen> {
           ),
         );
       },
+    );
+  }
+
+  // ── Aceptaciones ─────────────────────────────────────────────────────────────
+  // Un solo lugar donde llegan restaurantes Y repartidores que registraron
+  // desde la página web y todavía esperan que alguien los apruebe —
+  // antes había que buscarlos por separado (restaurantes mezclados en la
+  // lista general, repartidores ni siquiera visibles en ningún lado).
+
+  Widget _buildAceptaciones() {
+    final pendingRestaurants = _restaurants.where((r) {
+      final s = r['approval_status'] as String? ?? 'aprobado';
+      return s == 'pendiente' || s == 'en_revision' || s == 'correcciones_solicitadas';
+    }).toList();
+
+    if (pendingRestaurants.isEmpty && _pendingDrivers.isEmpty) {
+      return Center(
+        child: Text(
+          'Nada pendiente de revisión 🎉',
+          style: TextStyle(color: Colors.white.withValues(alpha: 0.3)),
+        ),
+      );
+    }
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        if (pendingRestaurants.isNotEmpty) ...[
+          _SectionTitle(icon: Icons.storefront_outlined, label: 'Restaurantes (${pendingRestaurants.length})'),
+          const SizedBox(height: 10),
+          ...pendingRestaurants.map(_buildPendingRestaurantCard),
+          const SizedBox(height: 24),
+        ],
+        if (_pendingDrivers.isNotEmpty) ...[
+          _SectionTitle(icon: Icons.delivery_dining, label: 'Repartidores (${_pendingDrivers.length})'),
+          const SizedBox(height: 10),
+          ..._pendingDrivers.map(_buildPendingDriverCard),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildPendingRestaurantCard(Map<String, dynamic> r) {
+    final name = r['name'] as String? ?? 'Restaurante';
+    final icon = r['emoji_icon'] as String? ?? '🍽️';
+    final logoUrl = r['image_url'] as String?;
+    final approvalStatus = r['approval_status'] as String? ?? 'pendiente';
+
+    return GestureDetector(
+      onTap: () => showModalBottomSheet(
+        context: context,
+        backgroundColor: Colors.transparent,
+        isScrollControlled: true,
+        builder: (_) => _RestaurantDetailSheet(restaurant: r),
+      ).then((_) => _loadRestaurants()),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(color: AppConstants.surfaceColor, borderRadius: BorderRadius.circular(14)),
+        child: Row(children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: (logoUrl != null && logoUrl.isNotEmpty)
+                ? Image.network(logoUrl, width: 40, height: 40, fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => Text(icon, style: const TextStyle(fontSize: 28)))
+                : Text(icon, style: const TextStyle(fontSize: 28)),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+              Text(
+                switch (approvalStatus) {
+                  'correcciones_solicitadas' => 'Se le pidieron correcciones',
+                  'en_revision' => 'En revisión',
+                  _ => 'Pendiente',
+                },
+                style: TextStyle(color: Colors.orange.withValues(alpha: 0.8), fontSize: 12),
+              ),
+            ]),
+          ),
+          Icon(Icons.chevron_right, color: Colors.white.withValues(alpha: 0.3)),
+        ]),
+      ),
+    );
+  }
+
+  Widget _buildPendingDriverCard(Map<String, dynamic> d) {
+    final id = d['id'] as String? ?? '';
+    final name = '${d['first_name'] ?? ''} ${d['last_name'] ?? ''}'.trim();
+    final status = d['status'] as String? ?? 'en_revision';
+
+    return GestureDetector(
+      onTap: () => showModalBottomSheet(
+        context: context,
+        backgroundColor: Colors.transparent,
+        isScrollControlled: true,
+        builder: (_) => _DriverDocsSheet(riderId: id),
+      ).then((_) => _loadPendingDrivers()),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(color: AppConstants.surfaceColor, borderRadius: BorderRadius.circular(14)),
+        child: Row(children: [
+          Container(
+            width: 40, height: 40,
+            decoration: BoxDecoration(color: AppConstants.primaryColor.withValues(alpha: 0.15), shape: BoxShape.circle),
+            child: const Icon(Icons.delivery_dining, color: AppConstants.primaryColor, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(name.isEmpty ? adminShortId(id) : name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+              Text(
+                '${d['vehicle'] ?? '—'} · ${d['city'] ?? '—'} · ${switch (status) {
+                  'requiere_correccion' => 'Se le pidieron correcciones',
+                  _ => 'En revisión',
+                }}',
+                style: TextStyle(color: Colors.orange.withValues(alpha: 0.8), fontSize: 12),
+              ),
+            ]),
+          ),
+          Icon(Icons.chevron_right, color: Colors.white.withValues(alpha: 0.3)),
+        ]),
+      ),
     );
   }
 
@@ -3546,14 +3820,194 @@ class _UserDetailSheet extends StatelessWidget {
   }
 }
 
+// Todo lo que un restaurante mandó en su registro web — antes "Aceptaciones"
+// solo mostraba el nombre y dos botones, sin dejar ver nada de lo que de
+// verdad hay que revisar (descripción, dirección, datos del dueño, logo,
+// portada) antes de aprobar o rechazar.
+class _RestaurantDetailSheet extends StatefulWidget {
+  final Map<String, dynamic> restaurant;
+  const _RestaurantDetailSheet({required this.restaurant});
+
+  @override
+  State<_RestaurantDetailSheet> createState() => _RestaurantDetailSheetState();
+}
+
+class _RestaurantDetailSheetState extends State<_RestaurantDetailSheet> {
+  late Map<String, dynamic> r = widget.restaurant;
+  String? _ownerEmail;
+  bool _loadingEmail = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOwnerEmail();
+  }
+
+  Future<void> _loadOwnerEmail() async {
+    final ownerId = r['owner_id'] as String?;
+    if (ownerId == null) {
+      if (mounted) setState(() => _loadingEmail = false);
+      return;
+    }
+    final info = await SupabaseService.lookupAuthUser(ownerId);
+    if (mounted) {
+      setState(() {
+        _ownerEmail = info?['email'] as String?;
+        _loadingEmail = false;
+      });
+    }
+  }
+
+  String _fmtDays(List? days) =>
+      (days == null || days.isEmpty) ? '—' : days.cast<String>().join(', ');
+
+  @override
+  Widget build(BuildContext context) {
+    final approvalStatus = r['approval_status'] as String? ?? 'pendiente';
+    final needsReview = approvalStatus == 'pendiente' ||
+        approvalStatus == 'en_revision' ||
+        approvalStatus == 'correcciones_solicitadas';
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.85,
+      minChildSize: 0.4,
+      maxChildSize: 0.95,
+      expand: false,
+      builder: (context, scrollController) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: AppConstants.surfaceColor,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: ListView(
+            controller: scrollController,
+            padding: const EdgeInsets.all(20),
+            children: [
+              Center(
+                child: Container(
+                  width: 40, height: 4,
+                  decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(r['name'] as String? ?? 'Restaurante',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+              if ((r['brand_name'] as String? ?? '').isNotEmpty)
+                Text('Marca: ${r['brand_name']}', style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13)),
+              const SizedBox(height: 16),
+              _DocImage(title: 'Logo', url: r['logo_url'] as String?),
+              const SizedBox(height: 16),
+              _DocImage(title: 'Portada', url: r['cover_url'] as String?),
+              const SizedBox(height: 20),
+              _infoRow('Descripción', r['description'] as String?),
+              _infoRow('Tipo de establecimiento', r['establishment_type'] as String?),
+              _infoRow('Modalidad', r['modality'] as String?),
+              _infoRow('Categorías', (r['categorias'] as List?)?.cast<String>().join(', ')),
+              _infoRow('Dirección', r['address'] as String?),
+              _infoRow('Ciudad / Estado', '${r['city'] ?? '—'}, ${r['state'] ?? '—'} · CP ${r['postal_code'] ?? '—'}'),
+              _infoRow('Teléfono del restaurante', r['phone'] as String?),
+              _infoRow('Días de atención', _fmtDays(r['open_days'] as List?)),
+              _infoRow('Horario', '${r['open_time'] ?? '—'} – ${r['close_time'] ?? '—'}'),
+              const Divider(color: Colors.white12, height: 28),
+              _infoRow('Dueño', r['owner_name'] as String?),
+              _infoRow('Teléfono del dueño', r['owner_phone'] as String?),
+              _infoRow('Correo de acceso', _loadingEmail ? 'Cargando…' : (_ownerEmail ?? '—')),
+              const SizedBox(height: 24),
+              if (needsReview)
+                Row(children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () async {
+                        final motivo = await _promptRejectionReason(context);
+                        if (motivo == null || !context.mounted) return;
+                        await _runAdminAction(context, () async {
+                          await SupabaseService.adminTransitionRestaurantStatus(
+                            restaurantId: r['id'] as String, newStatus: 'rechazado', note: motivo,
+                          );
+                        });
+                        if (context.mounted) Navigator.pop(context);
+                      },
+                      style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent),
+                      child: const Text('Rechazar'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () async {
+                        await _runAdminAction(context, () async {
+                          await SupabaseService.adminTransitionRestaurantStatus(
+                            restaurantId: r['id'] as String, newStatus: 'aprobado',
+                          );
+                        });
+                        if (context.mounted) Navigator.pop(context);
+                      },
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                      child: const Text('Aprobar', style: TextStyle(color: Colors.white)),
+                    ),
+                  ),
+                ])
+              else
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(10)),
+                  child: Text(
+                    approvalStatus == 'rechazado' ? 'Rechazado' : 'Ya aprobado',
+                    style: TextStyle(color: approvalStatus == 'rechazado' ? Colors.red : Colors.green, fontWeight: FontWeight.bold),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _infoRow(String label, String? value) {
+    if (value == null || value.trim().isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 2),
+        Text(value, style: const TextStyle(color: Colors.white, fontSize: 14)),
+      ]),
+    );
+  }
+}
+
 // Documentos del registro web de un repartidor (identificación, comprobante
 // de domicilio) — null si la cuenta nunca pasó por ese registro (ej. los
 // de flota, dados de alta directo en Supabase). Las imágenes llegan como
 // URLs firmadas de corta duración, generadas por la Edge Function con
 // service_role — el bucket es privado a propósito.
-class _DriverDocsSheet extends StatelessWidget {
+class _DriverDocsSheet extends StatefulWidget {
   final String riderId;
   const _DriverDocsSheet({required this.riderId});
+
+  @override
+  State<_DriverDocsSheet> createState() => _DriverDocsSheetState();
+}
+
+class _DriverDocsSheetState extends State<_DriverDocsSheet> {
+  late Future<Map<String, dynamic>?> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = SupabaseService.getDriverDocs(widget.riderId);
+  }
+
+  void _reload() => setState(() => _future = SupabaseService.getDriverDocs(widget.riderId));
+
+  Future<void> _transition(String newStatus, {String? note}) async {
+    await _runAdminAction(context, () async {
+      await SupabaseService.adminTransitionDriverStatus(
+        driverId: widget.riderId, newStatus: newStatus, note: note,
+      );
+      _reload();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -3569,7 +4023,7 @@ class _DriverDocsSheet extends StatelessWidget {
             borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
           ),
           child: FutureBuilder<Map<String, dynamic>?>(
-            future: SupabaseService.getDriverDocs(riderId),
+            future: _future,
             builder: (context, snapshot) {
               if (snapshot.connectionState != ConnectionState.done) {
                 return const Center(
@@ -3612,6 +4066,11 @@ class _DriverDocsSheet extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
+                    '${driver['phone'] ?? '—'} · ${driver['email'] ?? '—'}',
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
                     'Tipo de identificación: ${driver['id_type'] ?? '—'} · Estado: ${driver['status'] ?? '—'}',
                     style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13),
                   ),
@@ -3623,6 +4082,39 @@ class _DriverDocsSheet extends StatelessWidget {
                   _DocImage(title: 'Comprobante de domicilio', url: driver['proofUrl'] as String?),
                   const SizedBox(height: 16),
                   _DocImage(title: 'Foto de perfil', url: driver['photo_url'] as String?),
+                  const SizedBox(height: 24),
+                  if ((driver['status'] as String?) != 'aprobado' &&
+                      (driver['status'] as String?) != 'activo')
+                    Row(children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () async {
+                            final motivo = await _promptRejectionReason(context);
+                            if (motivo == null) return;
+                            await _transition('rechazado', note: motivo);
+                          },
+                          style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent),
+                          child: const Text('Rechazar'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () => _transition('aprobado'),
+                          style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                          child: const Text('Aprobar', style: TextStyle(color: Colors.white)),
+                        ),
+                      ),
+                    ])
+                  else
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Text('Ya aprobado', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                    ),
                 ],
               );
             },

@@ -9,6 +9,7 @@
 //
 // body: { action: 'lookup' | 'ban' | 'unban' | 'driverDocs', userId: string }
 //     | { action: 'listByRole', role: string }
+//     | { action: 'listPendingDrivers' }
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
@@ -96,6 +97,22 @@ Deno.serve(async (req) => {
     if (!userId) {
       return new Response(JSON.stringify({ error: 'Falta userId' }), {
         status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    // Repartidores registrados por la web que todavía necesitan que alguien
+    // los revise — drivers no tiene ninguna policy de SELECT para Admin
+    // (solo "id = auth.uid()", cada quien ve la suya), así que esto
+    // también tiene que pasar por aquí con service_role.
+    if (action === 'listPendingDrivers') {
+      const { data, error } = await admin
+        .from('drivers')
+        .select('id, first_name, last_name, city, vehicle, status, created_at')
+        .not('status', 'in', '("aprobado","activo")')
+        .order('created_at', { ascending: false })
+      if (error) throw error
+      return new Response(JSON.stringify({ drivers: data }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }

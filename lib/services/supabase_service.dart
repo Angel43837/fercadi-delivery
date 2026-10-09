@@ -282,6 +282,39 @@ class SupabaseService {
     return data;
   }
 
+  // Admin aprueba/rechaza/pide correcciones a un restaurante dado de alta
+  // por el registro web — admin_transition_restaurant_status() ya existe
+  // en la base (RPC security definer, valida is_admin() del lado del
+  // servidor), esto solo le faltaba un wrapper en Dart.
+  static Future<void> adminTransitionRestaurantStatus({
+    required String restaurantId,
+    required String newStatus,
+    String? note,
+  }) async {
+    if (useMock) return;
+    await _client.rpc('admin_transition_restaurant_status', params: {
+      'p_restaurant_id': restaurantId,
+      'p_new_status': newStatus,
+      'p_note': note,
+    });
+  }
+
+  // Mismo patrón que arriba, para un repartidor registrado por la web
+  // (tabla drivers) — antes no existía ninguna forma de aprobar/rechazar
+  // a un rider desde ninguna app.
+  static Future<void> adminTransitionDriverStatus({
+    required String driverId,
+    required String newStatus,
+    String? note,
+  }) async {
+    if (useMock) return;
+    await _client.rpc('admin_transition_driver_status', params: {
+      'p_driver_id': driverId,
+      'p_new_status': newStatus,
+      'p_note': note,
+    });
+  }
+
   static Future<List<Category>> getCategories(String restaurantId) async {
     if (useMock) return _mockCategories[restaurantId] ?? [];
     final data = await _client
@@ -1329,7 +1362,7 @@ class SupabaseService {
     try {
       final row = await _client
           .from('restaurants')
-          .select('name, description, address, image_url, emoji_icon')
+          .select('name, description, address, image_url, emoji_icon, phone')
           .eq('id', restaurantId)
           .maybeSingle();
       if (row == null) return null;
@@ -1339,6 +1372,7 @@ class SupabaseService {
         'address': row['address'] as String? ?? '',
         'photo':   row['image_url'] as String? ?? '',
         'emoji':   row['emoji_icon'] as String? ?? '',
+        'phone':   row['phone'] as String? ?? '',
       };
     } catch (_) {
       return null;
@@ -1351,6 +1385,7 @@ class SupabaseService {
     required String description,
     required String address,
     required String emoji,
+    required String phone,
   }) async {
     if (useMock) return;
     await _client.from('restaurants').update({
@@ -1358,6 +1393,7 @@ class SupabaseService {
       'description': description,
       'address': address,
       'emoji_icon': emoji,
+      'phone': phone,
     }).eq('id', restaurantId);
   }
 
@@ -2438,6 +2474,25 @@ class SupabaseService {
     }
   }
 
+  // Repartidores registrados por la web que todavía necesitan revisión —
+  // alimenta el apartado de "Aceptaciones" en Admin, junto con los
+  // restaurantes pendientes.
+  static Future<List<Map<String, dynamic>>> getPendingDrivers() async {
+    if (useMock) return [];
+    try {
+      final res = await _client.functions
+          .invoke('admin-user-lookup', body: {'action': 'listPendingDrivers'})
+          .timeout(const Duration(seconds: 15));
+      final data = res.data;
+      if (data is Map && data['drivers'] is List) {
+        return (data['drivers'] as List).cast<Map<String, dynamic>>();
+      }
+      return [];
+    } catch (_) {
+      return [];
+    }
+  }
+
   // Nombre/foto de la contraparte de un pedido (cliente↔repartidor) —
   // vía Edge Function, que verifica que quien llama de verdad participe
   // en ese pedido antes de devolver el perfil del otro lado.
@@ -2535,6 +2590,43 @@ class SupabaseService {
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'orders',
+          callback: (_) => onUpdate(),
+        )
+        .subscribe();
+    return channel;
+  }
+
+  // ── Llamadas a repartidor desde la app de escritorio (gogo-pedidos-escritorio) ──
+  // Ver supabase/migrations/20261008000000_rider_calls.sql — un dueño llama
+  // a TODOS los repartidores de flota en línea; el primero en aceptar se
+  // queda el pedido (respond_rider_call valida eso del lado del servidor).
+
+  static Future<List<Map<String, dynamic>>> getPendingRiderCalls() async {
+    if (useMock) return [];
+    final data = await _client
+        .from('rider_calls')
+        .select()
+        .eq('status', 'pendiente')
+        .order('created_at');
+    return (data as List).cast<Map<String, dynamic>>();
+  }
+
+  // true si de verdad la ganó (nadie más la aceptó primero).
+  static Future<bool> respondRiderCall(String callId, bool accept) async {
+    final res = await _client.rpc('respond_rider_call', params: {
+      'p_call_id': callId,
+      'p_accept': accept,
+    });
+    return res == true;
+  }
+
+  static RealtimeChannel subscribeToRiderCalls(void Function() onUpdate) {
+    final channel = _client.channel('db_rider_calls');
+    channel
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'rider_calls',
           callback: (_) => onUpdate(),
         )
         .subscribe();

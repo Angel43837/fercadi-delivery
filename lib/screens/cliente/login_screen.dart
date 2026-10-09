@@ -13,14 +13,31 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/constants.dart';
 import '../../services/supabase_service.dart';
 import '../../services/auth_service.dart';
 import '../../widgets/phone_otp/phone_otp_flow.dart';
 
-// URL de regreso para móvil (deep link). En web se usa Uri.base.origin (localhost:PORT).
-const _redirectUrl = 'fercadi://login-callback';
+// URL de regreso para móvil (deep link). Cada flavor de iOS tiene su propio
+// esquema registrado en su Info-*.plist (fercadi / fercadipruebas /
+// fercadiadmin / fercadiflota) para que no choquen si hay varios instalados
+// en el mismo teléfono a la vez — antes esto era un string fijo a "fercadi",
+// así que Google/Facebook solo podían regresar correctamente a la build que
+// de verdad tuviera ese esquema exacto, tronando en cualquier otro flavor.
+const _redirectSchemeByBundleId = {
+  'com.fercadi.app':         'fercadi',
+  'com.fercadi.app.pruebas': 'fercadipruebas',
+  'com.fercadi.admin':       'fercadiadmin',
+  'com.fercadi.flota':       'fercadiflota',
+};
+
+Future<String> _resolveRedirectUrl() async {
+  final info = await PackageInfo.fromPlatform();
+  final scheme = _redirectSchemeByBundleId[info.packageName] ?? 'fercadi';
+  return '$scheme://login-callback';
+}
 
 class LoginScreen extends StatefulWidget {
   // A dónde regresar tras iniciar sesión con éxito, en vez del home normal
@@ -268,7 +285,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     try {
       await Supabase.instance.client.auth.resetPasswordForEmail(
         email,
-        redirectTo: kIsWeb ? Uri.base.origin : _redirectUrl,
+        redirectTo: kIsWeb ? Uri.base.origin : await _resolveRedirectUrl(),
       );
       if (mounted) _showMessage('Revisa tu correo para restablecer tu contraseña');
     } catch (_) {
@@ -279,7 +296,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   Future<void> _signInWithGoogle() async {
     setState(() => _isLoading = true);
     try {
-      final redirect = kIsWeb ? Uri.base.origin : _redirectUrl;
+      final redirect = kIsWeb ? Uri.base.origin : await _resolveRedirectUrl();
       await Supabase.instance.client.auth.signInWithOAuth(
         OAuthProvider.google,
         redirectTo: redirect,
@@ -295,7 +312,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   Future<void> _signInWithFacebook() async {
     setState(() => _isLoading = true);
     try {
-      final redirect = kIsWeb ? Uri.base.origin : _redirectUrl;
+      final redirect = kIsWeb ? Uri.base.origin : await _resolveRedirectUrl();
       await Supabase.instance.client.auth.signInWithOAuth(
         OAuthProvider.facebook,
         redirectTo: redirect,

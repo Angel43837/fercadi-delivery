@@ -141,7 +141,32 @@ class _RegistroRestauranteScreenState extends State<RegistroRestauranteScreen> {
     ));
   }
 
+  // Si ya escribió una dirección, la ubicamos tal cual (geocodificación
+  // normal: texto → coordenadas) sin tocar lo que escribió. Solo si el
+  // campo está vacío usamos el GPS para detectar dónde está físicamente.
   Future<void> _detectarUbicacion() async {
+    final address = _addressCtrl.text.trim();
+    if (address.isNotEmpty) {
+      setState(() => _loadingLocation = true);
+      try {
+        final result = await LocationService.geocodeAddress(address);
+        if (result == null) {
+          _msg('No se pudo ubicar esa dirección, revisa que esté bien escrita', error: true);
+          return;
+        }
+        setState(() {
+          _detectedLat = result.lat;
+          _detectedLng = result.lng;
+        });
+        _msg('Dirección ubicada correctamente');
+      } catch (e) {
+        _msg('Error al ubicar la dirección: $e', error: true);
+      } finally {
+        if (mounted) setState(() => _loadingLocation = false);
+      }
+      return;
+    }
+
     setState(() => _loadingLocation = true);
     try {
       var permission = await Geolocator.checkPermission();
@@ -171,9 +196,11 @@ class _RegistroRestauranteScreenState extends State<RegistroRestauranteScreen> {
           addr['suburb'] ?? addr['neighbourhood'] ?? addr['quarter'] ?? '',
           addr['city'] ?? addr['town'] ?? addr['village'] ?? '',
         ].where((s) => (s as String).isNotEmpty).join(', ');
-        _addressCtrl.text = parts.isNotEmpty ? parts : json['display_name'] ?? '';
-        _detectedLat = pos.latitude;
-        _detectedLng = pos.longitude;
+        setState(() {
+          _addressCtrl.text = parts.isNotEmpty ? parts : json['display_name'] ?? '';
+          _detectedLat = pos.latitude;
+          _detectedLng = pos.longitude;
+        });
       } else {
         _msg('No se pudo obtener la dirección', error: true);
       }

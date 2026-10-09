@@ -149,6 +149,15 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   LatLng? _geocodedCustomerPos;
   bool _geocodeFailed = false;
 
+  // Llamadas de un dueño desde la app de escritorio (botón azul) — a
+  // diferencia de los pedidos normales, se avisan TODAS las pendientes al
+  // abrir la app (no solo las nuevas), porque una llamada sin responder
+  // sigue siendo urgente aunque el rider acabe de entrar.
+  final Set<String> _dismissedCallIds = {};
+  final Set<String> _alertingCallIds = {};
+  RealtimeChannel? _callChannel;
+  Timer? _callPollTimer;
+
   // Ruta azul/amarilla en el mapa
   List<LatLng> _routePoints = [];
   Color _routeColor = const Color(0xFFFFB300);
@@ -163,6 +172,75 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     _pollTimer = Timer.periodic(const Duration(seconds: 8), (_) => _loadOrders());
     AuthService.getDisplayName().then((n) { if (mounted) setState(() => _displayName = n); });
     AuthService.getProfilePhoto().then((p) { if (mounted) setState(() => _photoPath = p); });
+    _loadRiderCalls();
+    _callChannel = SupabaseService.subscribeToRiderCalls(_loadRiderCalls);
+    _callPollTimer = Timer.periodic(const Duration(seconds: 5), (_) => _loadRiderCalls());
+  }
+
+  Future<void> _loadRiderCalls() async {
+    try {
+      final calls = await SupabaseService.getPendingRiderCalls();
+      if (!mounted) return;
+      for (final call in calls) {
+        final id = call['id'] as String;
+        if (_dismissedCallIds.contains(id) || _alertingCallIds.contains(id)) continue;
+        _alertingCallIds.add(id);
+        _showRiderCallAlert(call);
+      }
+    } catch (_) {}
+  }
+
+  void _showRiderCallAlert(Map<String, dynamic> call) {
+    final id = call['id'] as String;
+    final restaurantName = call['restaurant_name'] as String? ?? 'Un restaurante';
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: AppConstants.surfaceColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(children: [
+          const Icon(Icons.delivery_dining_rounded, color: Color(0xFF2196F3), size: 26),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text('¡Te están llamando!',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ]),
+        content: Text(
+          '$restaurantName necesita un repartidor ahora mismo. ¿Quieres ir?',
+          style: TextStyle(color: Colors.white.withValues(alpha: 0.75), height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(dialogCtx);
+              _dismissedCallIds.add(id);
+              _alertingCallIds.remove(id);
+              await SupabaseService.respondRiderCall(id, false);
+            },
+            child: Text('No puedo', style: TextStyle(color: Colors.white.withValues(alpha: 0.6))),
+          ),
+          TextButton(
+            onPressed: () async {
+              final ganaste = await SupabaseService.respondRiderCall(id, true);
+              if (dialogCtx.mounted) Navigator.pop(dialogCtx);
+              _dismissedCallIds.add(id);
+              _alertingCallIds.remove(id);
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text(ganaste
+                    ? '¡Listo! Ve a $restaurantName por el pedido.'
+                    : 'Ya se lo llevó otro repartidor.'),
+                backgroundColor: ganaste ? Colors.green : Colors.orange,
+              ));
+            },
+            child: const Text('Sí, voy',
+                style: TextStyle(color: Color(0xFF2196F3), fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _loadOrders() async {
@@ -251,6 +329,8 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     _broadcastTimer?.cancel();
     _pollTimer?.cancel();
     _ordersChannel?.unsubscribe();
+    _callPollTimer?.cancel();
+    _callChannel?.unsubscribe();
     SupabaseService.stopLocationBroadcast();
     _mapCtrl.dispose();
     super.dispose();

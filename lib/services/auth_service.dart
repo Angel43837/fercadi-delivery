@@ -43,6 +43,7 @@ class AuthService {
   static const _keyRestPhoto       = 'restaurant_photo';
   static const _keyRestEmoji       = 'restaurant_emoji';
   static const _keyRestaurantId    = 'restaurant_id';
+  static const _keyOnboardingSeenPrefix = 'dueno_onboarding_seen_';
 
   // Claves que antes vivían bajo '<email>:...' y que _migrateLegacyEmailKeyedData
   // copia a '<uid>:...' la primera vez que una cuenta existente inicia sesión.
@@ -463,6 +464,19 @@ class AuthService {
       'photo':   prefs.getString(_keyRestPhoto)   ?? '',
       'emoji':   prefs.getString(_keyRestEmoji)   ?? '🍴',
     };
+  }
+
+  // Tutoriales de onboarding del dueño (pantalla de "restaurante apagado" y
+  // tutorial de Platillos) — guardados por restaurante, para que se muestren
+  // de verdad solo la primera vez y no cada vez que se reabra la app.
+  static Future<bool> hasSeenDuenoOnboarding(String key, String restaurantId) async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('$_keyOnboardingSeenPrefix$key:$restaurantId') ?? false;
+  }
+
+  static Future<void> markDuenoOnboardingSeen(String key, String restaurantId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('$_keyOnboardingSeenPrefix$key:$restaurantId', true);
   }
 
   static Future<void> saveRestaurantSettings({

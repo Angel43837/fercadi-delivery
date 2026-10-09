@@ -232,6 +232,7 @@ Para eliminar restaurante desde admin: `SupabaseService.deleteRestaurant(id)` �
 - Centro Morelia: `19.7059° N, 101.1949° W` (Catedral), su propio radio de 50 km — está a ~80 km de Maravatío, fuera de su radio, así que se revisa aparte (agregado septiembre 2026, a petición del dueño)
 - Mock siempre simula estar dentro del radio
 - El geocoding de direcciones (`LocationService.geocodeAddress`) ya no fuerza "Maravatío" en la búsqueda — usa "Michoacán, México" como pista, para que funcione igual de bien en Morelia (antes solo funcionaba bien en Maravatío/Acámbaro)
+- **"Detectar mi ubicación" en el registro de restaurante hacía lo contrario de lo que decía** (`registro_restaurante_screen.dart`, corregido oct 2026): ignoraba el texto del campo "Dirección" por completo y sobreescribía con el GPS del dispositivo — si el GPS fallaba (común en pruebas), no pasaba nada sin ningún aviso. Ahora, si ya hay texto escrito, lo geocodifica de verdad con `LocationService.geocodeAddress` y solo cae al GPS si el campo está vacío.
 
 ---
 
@@ -516,6 +517,11 @@ documentos) — el campo `drivers.status` por default queda en `'aprobado'`
 automático (ver nota en `~/Pagina_web_GoGo/documentos` del otro repo), sin
 que nadie los revise de verdad antes de activarse.
 
+## Correo y teléfono del dueño — dos huecos chicos corregidos — oct 2026
+
+- **Admin nunca mostraba el correo con el que un dueño inicia sesión** (solo nombre/teléfono del dueño) — se conectó `SupabaseService.lookupAuthUser(ownerId)` (ya existía, la usa "Ver documentos" de repartidor) a `_RestaurantDetailSheet`, agregando "Correo de acceso".
+- **El teléfono del restaurante se guardaba y leía solo del caché local del celular** (`SharedPreferences`), nunca de Supabase — un comentario viejo en `getRestaurantProfile` decía que la columna no existía todavía, pero sí existe (la usa Admin y el registro web). Para una cuenta registrada desde la web, sin ese caché local en el teléfono del dueño, esto se veía como "el teléfono no se guardó". Corregido: `getRestaurantProfile`/`updateRestaurantProfile` ahora leen/escriben `phone` igual que nombre/descripción/dirección.
+
 ## Registro web (restaurantes y repartidores) — bug real que rompía TODO el registro — oct 2026
 
 **Este bug vive en el repo separado `~/Pagina_web_GoGo`** (sitio oficial,
@@ -541,6 +547,31 @@ desconectadas** sobre la misma tabla `restaurants`: el sitio web usa
 `read_restaurants` y lo que ve Admin) — aprobar un restaurante desde un
 lado no se refleja en el otro. Sin resolver todavía, pendiente de
 decisión del negocio sobre cuál columna es la fuente de verdad.
+
+## GOGO Food y GOGO Pruebas — ahora con bases de datos separadas (oct 2026)
+
+Hasta el 7 de octubre de 2026, **todos** los flavors de iOS/Android usaban la misma base (`ymztoayxzewghbethahv`, "GOGO-Pruebas"), sin importar el nombre del build — ver la auditoría de aislamiento más abajo. Eso cambió: el flavor por default (`com.fercadi.app`, "GOGO Food") ahora apunta a su propia base, **`dlukaxbcyetcdbdjjgct`**, compilando con:
+
+```
+flutter build ios --release \
+  --dart-define=SUPABASE_URL=https://dlukaxbcyetcdbdjjgct.supabase.co \
+  --dart-define=SUPABASE_ANON_KEY=sb_publishable_MH72EXetLYHXKgklsUJ2Lw_zGLRohVY
+```
+
+**Admin y Flota necesitan el mismo `--dart-define`** si deben administrar la base real de GOGO Food — de lo contrario siguen apuntando a Pruebas por default (`lib/core/constants.dart`) sin que nadie lo note, y Admin queda ciego a lo que pasa en la app real. GOGO Pruebas se sigue compilando sin ningún `--dart-define` (usa el default de `constants.dart`).
+
+`dlukaxbcyetcdbdjjgct` ya tiene las 15 migraciones de `supabase/migrations/` aplicadas, el trigger de auto-confirmación de correo, `admin@fercadi.com` creado, la Edge Function `admin-user-lookup` desplegada en su versión actual, y las políticas de Storage de los 3 buckets propios de la app puestas a mano por el dashboard (ver nota de `storage_objects_disable_rls` más abajo — no se puede por SQL). También es la base a la que ahora apunta el registro web (`~/Pagina_web_GoGo`, desplegado en `pagina-web-gogo-rho.vercel.app`).
+
+**Un restaurante recién registrado por la web empieza con `is_open = false` a propósito** (`realSubmission.ts`, repo de la web) — para que no le salga vacío (sin platillos) a un cliente. El dueño lo prende él mismo con el switch "Abierto/Cerrado" del header en `dueno_screen.dart`. **Pendiente:** no hay ningún aviso explicándole esto al dueño nuevo — agregar mensaje en la pantalla de éxito de la web y/o cerca del switch en la app.
+
+## Login con Google/Facebook — nombres de flavor invertidos + redirect fijo (corregido oct 2026)
+
+Dos bugs reales en la configuración nativa de iOS, no en Dart, causaban que "Continuar con Google" fallara con "la dirección no es válida" / "no se pudo abrir la aplicación":
+
+1. **`ios/Runner/Info.plist` e `ios/Runner/Info-Pruebas.plist` tenían el `CFBundleDisplayName` invertido** — el flavor por default (`com.fercadi.app`) decía "GOGO Pruebas" y el flavor `pruebas` (`com.fercadi.app.pruebas`) decía "GOGO Food". Ya corregido.
+2. **El redirect de OAuth estaba fijo** a `fercadi://login-callback` en `login_screen.dart`, sin importar qué flavor corriera — pero cada flavor ya tenía su propio esquema en su `Info-*.plist` (`fercadi`/`fercadipruebas`/`fercadiadmin`/`fercadiflota`), pensado justo para que no choquen si hay varios instalados en el mismo teléfono. Se agregó `package_info_plus` (dependencia directa) y `_resolveRedirectUrl()` (`login_screen.dart`), que lee el bundle id real en tiempo de ejecución y arma el enlace correcto.
+
+**Cada proyecto de Supabase necesita su propia configuración de Google OAuth** (Authentication → Providers → Google, con el mismo Client ID/Secret de Google Cloud) y su propia lista de **Redirect URLs** con los 4 esquemas — no se comparte entre proyectos aunque sea el mismo Google Cloud OAuth Client. Si se agrega un proyecto nuevo (como pasó con `dlukaxbcyetcdbdjjgct`), hay que repetir ambos pasos ahí, y agregar el nuevo `https://<project-ref>.supabase.co/auth/v1/callback` a "Authorized redirect URIs" en Google Cloud Console (mismo Client ID para todos los proyectos).
 
 ## Seguimiento del pedido — ya existía, solo se corrigieron bugs de UI/GPS
 
