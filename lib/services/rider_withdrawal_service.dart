@@ -34,6 +34,10 @@ class RiderWithdrawalService {
 
   Future<List<RiderWithdrawal>> fetchHistory() => _repo.fetchMyWithdrawals();
 
+  Future<String> fetchConnectStatus() => _repo.fetchConnectStatus();
+
+  Future<String> startConnectOnboarding() => _repo.startConnectOnboarding();
+
   Future<RiderWithdrawal> requestWithdrawal(double amount, RiderBalance balance) async {
     if (amount <= 0) {
       throw const WithdrawalException(WithdrawalErrorCode.montoInvalido, 'Ingresa un monto válido.');

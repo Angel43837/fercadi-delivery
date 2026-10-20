@@ -6,6 +6,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -34,6 +35,8 @@ class TrackingScreen extends StatefulWidget {
   final String orderId;
   final double? lat;
   final double? lng;
+  final double? restaurantLat;
+  final double? restaurantLng;
   final String? restaurantImageUrl;
   // Todos los restaurantes del pedido (si el carrito tenía varios a la vez)
   // — se manda al widget nativo para que muestre el logo de cada uno, no
@@ -49,6 +52,8 @@ class TrackingScreen extends StatefulWidget {
     this.orderId = 'o1',
     this.lat,
     this.lng,
+    this.restaurantLat,
+    this.restaurantLng,
     this.restaurantImageUrl,
     this.restaurants,
   });
@@ -70,6 +75,11 @@ class _TrackingScreenState extends State<TrackingScreen> {
   // 4s, sin Timer aparte).
   final DateTime _startedAt = DateTime.now();
 
+  // _kRestaurantPos es solo un relleno hasta que se sepa la posición real
+  // del restaurante — antes se usaba siempre ese valor fijo sin importar de
+  // qué restaurante fuera el pedido, así que el mapa mandaba al cliente a
+  // un lugar que no tenía nada que ver con el restaurante real.
+  ll.LatLng _restaurantPos = _kRestaurantPos;
   ll.LatLng _motoPos     = _kRestaurantPos;
   ll.LatLng _customerPos = _kCustomerPos;
   String _orderStatus = 'pending';
@@ -82,6 +92,15 @@ class _TrackingScreenState extends State<TrackingScreen> {
   int _repartidorRepartos = 0;
   int _repartidorNivel = 1;
   List<ll.LatLng> _routePoints = [];
+
+  // Ángulo de brújula (0°=Norte) hacia el que avanza el repartidor — se usa
+  // para rotar su icono en el mapa como la flecha de navegación de Google
+  // Maps. Se guarda "desenrollado" (sin limitar a 0-360, puede crecer o
+  // bajar de esos límites con el tiempo) para que la animación en
+  // _PulsingPin siempre gire por el camino más corto, nunca de golpe de
+  // 359° a 0°.
+  double _motoHeading = 90;
+  bool _motoHeadingInit = false;
 
   int get _step {
     switch (_orderStatus) {
@@ -106,6 +125,10 @@ class _TrackingScreenState extends State<TrackingScreen> {
   @override
   void initState() {
     super.initState();
+    if (widget.restaurantLat != null && widget.restaurantLng != null) {
+      _restaurantPos = ll.LatLng(widget.restaurantLat!, widget.restaurantLng!);
+      _motoPos = _restaurantPos;
+    }
     _pollStatus();
     _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) {
       _pollStatus();
@@ -143,9 +166,52 @@ class _TrackingScreenState extends State<TrackingScreen> {
     final loc = await SupabaseService.getRepartidorLocation(widget.orderId);
     if (!mounted || loc == null) return;
     final pos = ll.LatLng(loc.lat, loc.lng);
-    setState(() => _motoPos = pos);
+    setState(() {
+      _updateMotoHeading(_motoPos, pos);
+      _motoPos = pos;
+    });
     if (_step >= 1) _mapCtrl.move(pos, 15.5);
     _pushWidgetData();
+  }
+
+  double _distanceMeters(ll.LatLng a, ll.LatLng b) {
+    const r = 6371000.0;
+    final dLat = (b.latitude - a.latitude) * math.pi / 180;
+    final dLon = (b.longitude - a.longitude) * math.pi / 180;
+    final lat1 = a.latitude * math.pi / 180;
+    final lat2 = b.latitude * math.pi / 180;
+    final h = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(lat1) * math.cos(lat2) * math.sin(dLon / 2) * math.sin(dLon / 2);
+    return r * 2 * math.atan2(math.sqrt(h), math.sqrt(1 - h));
+  }
+
+  double _bearingDeg(ll.LatLng from, ll.LatLng to) {
+    final lat1 = from.latitude * math.pi / 180;
+    final lat2 = to.latitude * math.pi / 180;
+    final dLon = (to.longitude - from.longitude) * math.pi / 180;
+    final y = math.sin(dLon) * math.cos(lat2);
+    final x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dLon);
+    return (math.atan2(y, x) * 180 / math.pi + 360) % 360;
+  }
+
+  // Actualiza _motoHeading hacia la nueva posición, girando siempre por el
+  // camino más corto (ej. de 350° a 10° suma +20°, nunca -340°) — así
+  // AnimatedRotation en _PulsingPin nunca da un giro brusco al cruzar
+  // 359°→0°. Se ignoran movimientos menores a 3m (ruido normal del GPS en
+  // reposo) para que el icono no tiemble de dirección cuando el repartidor
+  // está parado/semáforo.
+  void _updateMotoHeading(ll.LatLng from, ll.LatLng to) {
+    if (_distanceMeters(from, to) < 3) return;
+    final target = _bearingDeg(from, to);
+    if (!_motoHeadingInit) {
+      _motoHeading = target;
+      _motoHeadingInit = true;
+      return;
+    }
+    var delta = (target - _motoHeading % 360) % 360;
+    if (delta > 180) delta -= 360;
+    if (delta < -180) delta += 360;
+    _motoHeading += delta;
   }
 
   Future<void> _geocodeAddress() async {
@@ -185,7 +251,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
         }
         if (s == 'accepted') {
           setState(() => _routePoints = []);
-          _fetchRoute(_motoPos, _kRestaurantPos);
+          _fetchRoute(_motoPos, _restaurantPos);
         }
         if (s == 'delivering') {
           NotificationService.repartidorEnCamino();
@@ -341,8 +407,8 @@ class _TrackingScreenState extends State<TrackingScreen> {
       await HomeWidget.saveWidgetData<String>('restaurantsJson', jsonEncode(restaurantsForWidget));
       await HomeWidget.saveWidgetData<String>('address', widget.address);
       await HomeWidget.saveWidgetData<double>('total', widget.total);
-      await HomeWidget.saveWidgetData<double>('restaurantLat', _kRestaurantPos.latitude);
-      await HomeWidget.saveWidgetData<double>('restaurantLng', _kRestaurantPos.longitude);
+      await HomeWidget.saveWidgetData<double>('restaurantLat', _restaurantPos.latitude);
+      await HomeWidget.saveWidgetData<double>('restaurantLng', _restaurantPos.longitude);
       await HomeWidget.saveWidgetData<double>('customerLat', _customerPos.latitude);
       await HomeWidget.saveWidgetData<double>('customerLng', _customerPos.longitude);
       await HomeWidget.saveWidgetData<double>('motoLat', _motoPos.latitude);
@@ -441,7 +507,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
               ]),
             MarkerLayer(markers: [
               Marker(
-                point: _kRestaurantPos,
+                point: _restaurantPos,
                 child: const _MapPin(icon: Icons.storefront_rounded, color: AppConstants.primaryColor),
               ),
               // Solo mostrar pin del cliente si tenemos coordenadas exactas
@@ -458,7 +524,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
                   point: _motoPos,
                   width: 72,
                   height: 72,
-                  child: _PulsingPin(color: const Color(0xFFFF6D00)),
+                  child: _PulsingPin(color: const Color(0xFFFF6D00), headingDegrees: _motoHeading),
                 ),
             ]),
           ],
@@ -765,7 +831,13 @@ class _TrackingScreenState extends State<TrackingScreen> {
                         Icon(Icons.location_on, size: 13, color: Colors.white.withValues(alpha: 0.75)),
                         const SizedBox(width: 3),
                         Expanded(
-                          child: Text(widget.address,
+                          // Esta es la dirección de ENTREGA del cliente (la que
+                          // escribió en checkout), no la del restaurante — sin
+                          // aclararlo aquí, se veía como si fuera la misma
+                          // dirección del restaurante y pareciera un error de
+                          // datos cuando en realidad son dos lugares distintos
+                          // a propósito (recoger vs. entregar).
+                          child: Text('Entregar en: ${widget.address}',
                               style: TextStyle(
                                   color: Colors.white.withValues(alpha: 0.75), fontSize: 12),
                               maxLines: 2,
@@ -977,7 +1049,11 @@ class _MapPin extends StatelessWidget {
 // ── Pin pulsante para el repartidor ──────────────────────────────────────────
 class _PulsingPin extends StatefulWidget {
   final Color color;
-  const _PulsingPin({required this.color});
+  // Ángulo de brújula (0°=Norte) hacia el que avanza el repartidor —
+  // "desenrollado" (ver _TrackingScreenState._motoHeading), no limitado a
+  // 0-360, para que AnimatedRotation siempre gire por el camino más corto.
+  final double headingDegrees;
+  const _PulsingPin({required this.color, this.headingDegrees = 90});
 
   @override
   State<_PulsingPin> createState() => _PulsingPinState();
@@ -1006,7 +1082,15 @@ class _PulsingPinState extends State<_PulsingPin> with SingleTickerProviderState
   Widget build(BuildContext context) {
     return ScaleTransition(
       scale: _scale,
-      child: Image.asset('assets/images/moto_repartidor.png', width: 72, height: 72),
+      child: AnimatedRotation(
+        // La imagen viene dibujada mirando al Este (90° en brújula) — se
+        // resta ese ángulo para que, sin movimiento todavía, se vea igual
+        // que antes (sin rotación).
+        turns: (widget.headingDegrees - 90) / 360,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeOut,
+        child: Image.asset('assets/images/moto_repartidor.png', width: 72, height: 72),
+      ),
     );
   }
 }

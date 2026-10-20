@@ -14,6 +14,11 @@ class RiderWithdrawalController extends ChangeNotifier {
   bool loading = false;
   String? error;
 
+  // 'not_started' | 'pending' | 'completed' — cuenta de Stripe Connect para
+  // que el retiro se pague de verdad (ver rider-stripe-connect).
+  String connectStatus = 'not_started';
+  bool connectLoading = false;
+
   Future<void> load() async {
     loading = true;
     error = null;
@@ -27,6 +32,33 @@ class RiderWithdrawalController extends ChangeNotifier {
     } finally {
       loading = false;
       notifyListeners();
+    }
+  }
+
+  Future<void> loadConnectStatus() async {
+    connectLoading = true;
+    notifyListeners();
+    try {
+      connectStatus = await _service.fetchConnectStatus();
+    } catch (_) {
+      // Se deja el valor anterior — no es crítico, el repartidor puede
+      // reintentar abriendo la hoja de retiros de nuevo.
+    } finally {
+      connectLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Regresa la URL de registro de Stripe para abrirla en el navegador, o
+  /// null si falló (el mensaje queda en [error]).
+  Future<String?> startConnectOnboarding() async {
+    error = null;
+    try {
+      return await _service.startConnectOnboarding();
+    } catch (e) {
+      error = 'No se pudo abrir el registro de Stripe. Intenta de nuevo.';
+      notifyListeners();
+      return null;
     }
   }
 

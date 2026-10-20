@@ -87,4 +87,48 @@ class RiderWithdrawalRepository {
       return null;
     }
   }
+
+  // ── Stripe Connect (pago real del retiro) ──────────────────────────────────
+  // functions.invoke() lanza FunctionException (no regresa el body) en
+  // cualquier respuesta fuera de 2xx — las 3 Edge Functions de abajo
+  // regresan su mensaje de error real en el campo 'error' de ese body.
+
+  String _functionErrorMessage(Object e) {
+    if (e is FunctionException) {
+      final details = e.details;
+      if (details is Map && details['error'] != null) return details['error'].toString();
+      return e.reasonPhrase ?? 'Error de Stripe';
+    }
+    return e.toString();
+  }
+
+  Future<String> fetchConnectStatus() async {
+    try {
+      final res = await _client.functions.invoke('rider-stripe-connect', body: {'action': 'status'});
+      final data = res.data as Map<String, dynamic>;
+      return data['status'] as String? ?? 'not_started';
+    } catch (e) {
+      throw Exception(_functionErrorMessage(e));
+    }
+  }
+
+  Future<String> startConnectOnboarding() async {
+    try {
+      final res = await _client.functions.invoke('rider-stripe-connect', body: {'action': 'onboard'});
+      final data = res.data as Map<String, dynamic>;
+      return data['url'] as String;
+    } catch (e) {
+      throw Exception(_functionErrorMessage(e));
+    }
+  }
+
+  // Admin: aprueba el retiro y, si el repartidor ya terminó su registro con
+  // Stripe, transfiere el dinero de verdad (ver rider-withdrawal-transfer).
+  Future<void> approveAndTransfer(String withdrawalId) async {
+    try {
+      await _client.functions.invoke('rider-withdrawal-transfer', body: {'withdrawalId': withdrawalId});
+    } catch (e) {
+      throw Exception(_functionErrorMessage(e));
+    }
+  }
 }

@@ -19,9 +19,12 @@ import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/constants.dart';
 import '../../core/restaurant_categories.dart';
 import '../../providers/app_data_provider.dart';
+import '../../controllers/restaurant_withdrawal_controller.dart';
+import '../../models/withdrawal_status.dart';
 import 'package:go_router/go_router.dart';
 import '../../models/restaurant_banner.dart';
 import '../../services/auth_service.dart';
@@ -68,6 +71,17 @@ class _Category {
   const _Category({required this.id, required this.name, required this.emoji});
 }
 
+// Un pedido que llegó escrito por WhatsApp (fuera de la app) — cada uno con
+// su propio número y mensaje, para contestarle a varios a la vez.
+class _WaMessageCard {
+  final TextEditingController phoneCtrl = TextEditingController();
+  final TextEditingController messageCtrl = TextEditingController();
+  void dispose() {
+    phoneCtrl.dispose();
+    messageCtrl.dispose();
+  }
+}
+
 class DuenoScreen extends StatefulWidget {
   const DuenoScreen({super.key});
 
@@ -75,7 +89,7 @@ class DuenoScreen extends StatefulWidget {
   State<DuenoScreen> createState() => _DuenoScreenState();
 }
 
-class _DuenoScreenState extends State<DuenoScreen> {
+class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
   int _tab = 0;
   AppOrderStatus? _filterStatus;
   bool _isDark = false;
@@ -97,6 +111,16 @@ class _DuenoScreenState extends State<DuenoScreen> {
   // ID del restaurante de este dueño
   String _restaurantId = '1';
   bool   _isPremium    = false;
+  // _initRestaurant() todavía no ha hecho su primera consulta real de
+  // is_premium cuando esto es false — sin este candado, _checkPremiumActivated
+  // (disparado por didChangeAppLifecycleState) podía ganarle la carrera a
+  // _initRestaurant: la app pasa por AppLifecycleState.resumed casi
+  // inmediatamente al abrirse/reanudarse (ej. al cerrar sesión y volver a
+  // entrar), y si ese resume llegaba antes de que _initRestaurant hubiera
+  // puesto _isPremium en true, _checkPremiumActivated lo veía todavía en su
+  // valor por default (false) y mostraba "¡ya eres Premium!" como si
+  // acabara de activarse, aunque el restaurante ya era Premium desde antes.
+  bool   _premiumChecked = false;
 
   // Estado de aprobación (fase 1 del sistema de registro/aprobación de restaurantes)
   String  _approvalStatus   = 'aprobado';
@@ -161,7 +185,58 @@ class _DuenoScreenState extends State<DuenoScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initRestaurant();
+  }
+
+  // El dueño paga Premium en el navegador (Stripe Checkout, fuera de la
+  // app) y el webhook puede tardar unos segundos en marcarlo — revisar
+  // justo cuando regresa a la app (en vez de solo una vez al abrir) es lo
+  // que de verdad agarra el momento en que ya se activó, para felicitarlo.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _checkPremiumActivated();
+  }
+
+  Future<void> _checkPremiumActivated() async {
+    // Sin este candado, un resume que llega antes de que _initRestaurant
+    // termine su primera consulta compara contra _isPremium todavía en su
+    // valor por default (false) y dispara el diálogo por error.
+    if (SupabaseService.useMock || _restaurantId.isEmpty || !_premiumChecked) return;
+    final premium = await SupabaseService.getRestaurantIsPremium(_restaurantId);
+    if (!mounted) return;
+    final justActivated = premium && !_isPremium;
+    setState(() => _isPremium = premium);
+    if (justActivated) _showPremiumWelcomeDialog();
+  }
+
+  void _showPremiumWelcomeDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppConstants.surfaceColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(children: [
+          const Icon(Icons.workspace_premium, color: Colors.amber, size: 28),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text('¡Felicidades, ya eres Premium!',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+          ),
+        ]),
+        content: Text(
+          'Ya puedes disfrutar de las funciones nuevas de GOGO: banners promocionales, descuentos y 2x1 por platillo, y hasta 20 platillos en tu menú.',
+          style: TextStyle(color: Colors.white.withValues(alpha: 0.8), height: 1.4),
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx),
+            style: ElevatedButton.styleFrom(backgroundColor: AppConstants.primaryColor),
+            child: const Text('Disfrutar GOGO Premium', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _initRestaurant() async {
@@ -185,7 +260,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
       final categorias = await SupabaseService.getRestaurantCategorias(_restaurantId);
       if (mounted) setState(() { _restCategorias.clear(); _restCategorias.addAll(categorias); });
       final premium = await SupabaseService.getRestaurantIsPremium(_restaurantId);
-      if (mounted) setState(() => _isPremium = premium);
+      if (mounted) setState(() { _isPremium = premium; _premiumChecked = true; });
     }
     _loadRealOrders();
     _ordersChannel = SupabaseService.subscribeToOrders(_loadRealOrders);
@@ -213,7 +288,13 @@ class _DuenoScreenState extends State<DuenoScreen> {
   // platillos de restaurantes con categorías propias (ej. Tacos Chuy) no
   // coincidían con ningún ID, así que no se mostraban.
   Future<void> _loadCategories() async {
-    final cats = await SupabaseService.getCategories(_restaurantId);
+    var cats = await SupabaseService.getCategories(_restaurantId);
+    if (cats.isEmpty) {
+      // Restaurante nuevo, sin categorías todavía — se siembran las
+      // genéricas una sola vez (ver nota en createDefaultCategories).
+      await SupabaseService.createDefaultCategories(_restaurantId);
+      cats = await SupabaseService.getCategories(_restaurantId);
+    }
     if (!mounted || cats.isEmpty) return;
     setState(() {
       _categories = cats
@@ -254,13 +335,49 @@ class _DuenoScreenState extends State<DuenoScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _orderPollTimer?.cancel();
     _ordersChannel?.unsubscribe();
     _restNameCtrl.dispose();
     _restDescCtrl.dispose();
     _restPhoneCtrl.dispose();
     _restAddressCtrl.dispose();
+    for (final card in _waMessages) {
+      card.dispose();
+    }
     super.dispose();
+  }
+
+  // ── Pedidos por WhatsApp (mismo feature que ya tenía la app de escritorio,
+  // ahora también aquí) ────────────────────────────────────────────────────
+  // Falta la API de Meta para que los pedidos por WhatsApp lleguen solos —
+  // esto es para cuando un pedido llega escrito directo por WhatsApp (fuera
+  // de la app) y el dueño quiere responder rápido sin escribir nada.
+  bool _showWhatsAppTab = false;
+  final List<_WaMessageCard> _waMessages = [];
+
+  void _addWaMessage() {
+    setState(() => _waMessages.add(_WaMessageCard()));
+  }
+
+  void _removeWaMessage(_WaMessageCard card) {
+    card.dispose();
+    setState(() => _waMessages.remove(card));
+  }
+
+  Future<void> _sendWhatsAppGeneric(String message) async {
+    final uri = Uri.parse('https://api.whatsapp.com/send?text=${Uri.encodeComponent(message)}');
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _sendWhatsAppTo(String phone, String message) async {
+    final digits = phone.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.isEmpty) return;
+    // Los teléfonos se guardan a 10 dígitos locales — wa.me necesita el
+    // código de país (52, México) adelante para abrir el chat correcto.
+    final full = digits.length == 10 ? '52$digits' : digits;
+    final uri = Uri.parse('https://wa.me/$full?text=${Uri.encodeComponent(message)}');
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
   Future<void> _loadRealOrders() async {
@@ -542,6 +659,11 @@ class _DuenoScreenState extends State<DuenoScreen> {
             ]),
           ),
           IconButton(
+            icon: Icon(Icons.account_balance_wallet_outlined, color: _textMid, size: 20),
+            tooltip: 'Retiros',
+            onPressed: _showRetiros,
+          ),
+          IconButton(
             icon: Icon(
               _isDark ? Icons.wb_sunny_rounded : Icons.nightlight_round,
               color: _isDark ? const Color(0xFFFFB300) : const Color(0xFF5C6BC0),
@@ -594,6 +716,307 @@ class _DuenoScreenState extends State<DuenoScreen> {
             ),
           ),
         ]),
+      ),
+    );
+  }
+
+  // ── Retiros del restaurante ──────────────────────────────────────────────
+  // Antes no existía NINGUNA forma de que el restaurante pidiera su dinero
+  // desde la app — mismo patrón ya probado con repartidor_plus_screen.dart
+  // (saldo en vivo, un retiro abierto a la vez, pago real por Stripe Connect
+  // una vez que Admin aprueba).
+  static const _retirosOrange = Color(0xFFFF5722);
+
+  void _showRetiros() {
+    final wc = context.read<RestaurantWithdrawalController>();
+    wc.load(_restaurantId);
+    wc.loadConnectStatus();
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.75,
+        maxChildSize: 0.92,
+        minChildSize: 0.4,
+        builder: (_, ctrl) => Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF1A1A1A),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Consumer<RestaurantWithdrawalController>(
+            builder: (context, wc, _) {
+              final saldoDisponible = wc.balance.saldoDisponible;
+              final cargando = wc.loading && wc.history.isEmpty;
+              return ListView(
+                controller: ctrl,
+                padding: const EdgeInsets.all(20),
+                children: [
+                  Center(child: Container(width: 40, height: 4,
+                      decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)))),
+                  const SizedBox(height: 18),
+                  Row(children: [
+                    Container(padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(color: _retirosOrange.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(10)),
+                        child: const Icon(Icons.account_balance_wallet_rounded, color: _retirosOrange, size: 22)),
+                    const SizedBox(width: 12),
+                    const Text('Retiros', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                  ]),
+                  const SizedBox(height: 20),
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(colors: [_retirosOrange, Color(0xFF2A2A2A)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('Saldo disponible', style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 13)),
+                      const SizedBox(height: 6),
+                      cargando
+                          ? const SizedBox(height: 36, width: 36, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                          : Text('\$${saldoDisponible.floor()} MXN',
+                              style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: cargando ? null : () => _requireStripeThen(wc, () => _showSolicitarRetiroDialog(wc, saldoDisponible)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: _retirosOrange,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: const StadiumBorder(),
+                          ),
+                          child: const Text('Solicitar retiro', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                        ),
+                      ),
+                    ]),
+                  ),
+                  const SizedBox(height: 8),
+                  Text('Mínimo de retiro: \$200 MXN · Sujeto a revisión',
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 11), textAlign: TextAlign.center),
+                  const SizedBox(height: 16),
+                  _buildConnectCard(wc),
+                  const SizedBox(height: 24),
+                  const Text('Historial', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+                  const SizedBox(height: 12),
+                  if (cargando)
+                    const Padding(padding: EdgeInsets.symmetric(vertical: 20), child: Center(child: CircularProgressIndicator(color: _retirosOrange)))
+                  else if (wc.history.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 20),
+                      child: Center(child: Text('Todavía no has solicitado ningún retiro',
+                          style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 13))),
+                    )
+                  else
+                    ...wc.history.map((w) {
+                      final (label, color) = WithdrawalStatus.styleFor(w.status);
+                      final f = w.createdAt;
+                      final fecha = '${f.day.toString().padLeft(2, '0')}/${f.month.toString().padLeft(2, '0')}/${f.year}';
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF242424),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Row(children: [
+                          Container(
+                            width: 40, height: 40,
+                            decoration: BoxDecoration(color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
+                            child: Icon(Icons.account_balance_wallet_outlined, color: color, size: 20),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(fecha, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+                            if (w.rejectionReason != null && w.rejectionReason!.isNotEmpty)
+                              Text(w.rejectionReason!, style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11)),
+                          ])),
+                          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                            Text('-\$${w.amount.toStringAsFixed(0)}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                            Text(label, style: TextStyle(color: color, fontSize: 11)),
+                          ]),
+                        ]),
+                      );
+                    }),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildConnectCard(RestaurantWithdrawalController wc) {
+    if (wc.connectStatus == 'completed') {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(12)),
+        child: const Row(children: [
+          Icon(Icons.verified_rounded, color: Colors.greenAccent, size: 20),
+          SizedBox(width: 10),
+          Expanded(child: Text('Cuenta de cobro con Stripe verificada',
+              style: TextStyle(color: Colors.greenAccent, fontSize: 13, fontWeight: FontWeight.w600))),
+        ]),
+      );
+    }
+    final pendiente = wc.connectStatus == 'pending';
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.06), borderRadius: BorderRadius.circular(12)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.account_balance_outlined, color: _retirosOrange, size: 20),
+          const SizedBox(width: 8),
+          Expanded(child: Text(
+            pendiente ? 'Tu registro con Stripe quedó incompleto' : 'Para cobrar tus retiros, registra tu cuenta bancaria con Stripe',
+            style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+          )),
+        ]),
+        const SizedBox(height: 10),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton(
+            onPressed: wc.connectLoading ? null : () => _openStripeOnboarding(wc),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: _retirosOrange,
+              side: const BorderSide(color: _retirosOrange),
+              padding: const EdgeInsets.symmetric(vertical: 10),
+            ),
+            child: wc.connectLoading
+                ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                : Text(pendiente ? 'Continuar registro' : 'Configurar cuenta de cobro',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+          ),
+        ),
+        // Temporal, para diagnosticar por qué Stripe no marca la cuenta
+        // como completa aunque el registro se haya terminado — sin esto no
+        // hay forma de ver, desde el celular, qué sigue pendiente de verdad.
+        if (pendiente && wc.connectDebugInfo != null) ...[
+          const SizedBox(height: 10),
+          SelectableText(
+            const JsonEncoder.withIndent('  ').convert(wc.connectDebugInfo),
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 10, fontFamily: 'monospace'),
+          ),
+        ],
+      ]),
+    );
+  }
+
+  Future<void> _openStripeOnboarding(RestaurantWithdrawalController wc) async {
+    final url = await wc.startConnectOnboarding();
+    if (url == null) {
+      // Diálogo, no snackbar — un snackbar se puede perder fácil si el
+      // usuario ya estaba viendo otra parte de la hoja de Retiros.
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: const Color(0xFF1E1E1E),
+            title: const Text('No se pudo abrir el registro', style: TextStyle(color: Colors.white)),
+            content: Text(wc.error ?? 'Error desconocido', style: const TextStyle(color: Colors.white70)),
+            actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Entendido'))],
+          ),
+        );
+      }
+      return;
+    }
+    final opened = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('No se pudo abrir el navegador. Copia este enlace: $url'),
+          backgroundColor: Colors.red[700], duration: const Duration(seconds: 8)));
+    }
+    await wc.loadConnectStatus();
+  }
+
+  // Antes se podía solicitar el retiro sin tener la cuenta de Stripe
+  // configurada — el retiro quedaba pendiente para siempre, Admin lo
+  // descubría hasta intentar aprobarlo. Ahora se avisa aquí mismo, antes de
+  // dejar pedirlo.
+  void _requireStripeThen(RestaurantWithdrawalController wc, VoidCallback action) {
+    if (wc.connectStatus == 'completed') {
+      action();
+      return;
+    }
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Configura tu cuenta de cobro primero', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'Antes de poder pedir un retiro, necesitas registrar tu cuenta bancaria con Stripe — es el botón "Configurar cuenta de cobro" de aquí abajo.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Entendido'))],
+      ),
+    );
+  }
+
+  Future<void> _showSolicitarRetiroDialog(RestaurantWithdrawalController wc, double saldoDisponible) async {
+    final amountCtrl = TextEditingController(text: saldoDisponible.floor().toString());
+    String? localError;
+    bool submitting = false;
+
+    await showDialog(
+      context: context,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (dialogCtx, setS) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E1E),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('Solicitar retiro', style: TextStyle(color: Colors.white)),
+          content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            TextField(
+              controller: amountCtrl,
+              keyboardType: TextInputType.number,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                prefixText: '\$ ',
+                prefixStyle: const TextStyle(color: Colors.white),
+                labelText: 'Monto a retirar',
+                labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
+                filled: true,
+                fillColor: const Color(0xFF2A2A2A),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+              ),
+            ),
+            if (localError != null) ...[
+              const SizedBox(height: 10),
+              Text(localError!, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+            ],
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogCtx), child: Text('Cancelar', style: TextStyle(color: Colors.white.withValues(alpha: 0.6)))),
+            ElevatedButton(
+              onPressed: submitting ? null : () async {
+                final amount = double.tryParse(amountCtrl.text.trim());
+                if (amount == null) {
+                  setS(() => localError = 'Ingresa un monto válido.');
+                  return;
+                }
+                setS(() { submitting = true; localError = null; });
+                final ok = await wc.submitWithdrawal(amount);
+                if (!dialogCtx.mounted) return;
+                if (!ok) {
+                  setS(() { submitting = false; localError = wc.error ?? 'No se pudo procesar el retiro.'; });
+                  return;
+                }
+                Navigator.pop(dialogCtx);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('Retiro solicitado — quedará pendiente de revisión')));
+                }
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: _retirosOrange),
+              child: submitting
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : const Text('Confirmar', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -687,14 +1110,49 @@ class _DuenoScreenState extends State<DuenoScreen> {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
         child: Row(children: [
-          _FilterChip('Todos',     null,                      _filterStatus, (v) => setState(() => _filterStatus = v)),
-          _FilterChip('Pendiente', AppOrderStatus.pendiente,  _filterStatus, (v) => setState(() => _filterStatus = v)),
-          _FilterChip('En camino', AppOrderStatus.enCamino,   _filterStatus, (v) => setState(() => _filterStatus = v)),
-          _FilterChip('Entregado', AppOrderStatus.entregado,  _filterStatus, (v) => setState(() => _filterStatus = v)),
+          _FilterChip('Todos',     null,                      _filterStatus, (v) => setState(() { _filterStatus = v; _showWhatsAppTab = false; })),
+          _FilterChip('Pendiente', AppOrderStatus.pendiente,  _filterStatus, (v) => setState(() { _filterStatus = v; _showWhatsAppTab = false; })),
+          _FilterChip('En camino', AppOrderStatus.enCamino,   _filterStatus, (v) => setState(() { _filterStatus = v; _showWhatsAppTab = false; })),
+          _FilterChip('Entregado', AppOrderStatus.entregado,  _filterStatus, (v) => setState(() { _filterStatus = v; _showWhatsAppTab = false; })),
+          GestureDetector(
+            onTap: () => setState(() => _showWhatsAppTab = true),
+            child: Container(
+              margin: const EdgeInsets.only(right: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: _showWhatsAppTab ? const Color(0xFF25D366) : _surface2,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.chat_bubble_rounded, size: 14, color: _showWhatsAppTab ? Colors.white : const Color(0xFF25D366)),
+                const SizedBox(width: 5),
+                Text('WhatsApp', style: TextStyle(
+                    color: _showWhatsAppTab ? Colors.white : _textMid, fontSize: 13, fontWeight: FontWeight.w600)),
+              ]),
+            ),
+          ),
         ]),
       ),
       Expanded(
-        child: filtered.isEmpty
+        child: _showWhatsAppTab
+            ? ListView(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                children: [
+                  _buildWhatsAppPreview(),
+                  const SizedBox(height: 16),
+                  Text('Pedidos por WhatsApp (${_waMessages.length})',
+                      style: TextStyle(color: _text, fontWeight: FontWeight.bold, fontSize: 13)),
+                  const SizedBox(height: 8),
+                  ..._waMessages.map(_buildWaMessageCard),
+                  OutlinedButton.icon(
+                    onPressed: _addWaMessage,
+                    icon: Icon(Icons.add_rounded, size: 16, color: _text),
+                    label: Text('Agregar mensaje', style: TextStyle(color: _text, fontSize: 12)),
+                    style: OutlinedButton.styleFrom(side: BorderSide(color: _textLow)),
+                  ),
+                ],
+              )
+            : filtered.isEmpty
             ? Center(
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
                   Icon(Icons.receipt_long_outlined, size: 56, color: _textLow),
@@ -729,6 +1187,153 @@ class _DuenoScreenState extends State<DuenoScreen> {
               ),
       ),
     ]);
+  }
+
+  // El mensaje de ejemplo de arriba sigue siendo solo eso, un ejemplo (falta
+  // la API de Meta para que los pedidos por WhatsApp lleguen solos aquí) —
+  // pero los botones de abajo sí funcionan de verdad.
+  Widget _buildWhatsAppPreview() {
+    const whatsappGreen = Color(0xFF25D366);
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(color: whatsappGreen, borderRadius: BorderRadius.circular(12)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          runSpacing: 4,
+          children: [
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.chat_bubble_rounded, color: Colors.white, size: 15),
+              const SizedBox(width: 6),
+              const Text('Pedidos por WhatsApp',
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11)),
+              const SizedBox(width: 6),
+            ]),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(6)),
+              child: const Text('VISTA PREVIA',
+                  style: TextStyle(color: whatsappGreen, fontSize: 8, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(color: _surface2, borderRadius: BorderRadius.circular(8)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Ejemplo — 55 1234 5678', style: TextStyle(color: _textLow, fontSize: 9, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 3),
+            Text('Hola, quiero 2 tacos de asada y una coca, mi domicilio es Calle Falsa 123',
+                style: TextStyle(color: _text, fontSize: 11)),
+          ]),
+        ),
+        const SizedBox(height: 10),
+        // Pedidos que llegan escritos directo por WhatsApp (no por la app)
+        // no tienen un número guardado en ningún lado de nuestra base — por
+        // eso estos botones no mandan a un número fijo: abren WhatsApp con
+        // el mensaje ya escrito y el propio dueño elige a quién, desde su
+        // conversación real.
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          _whatsAppPreviewChip('Preparando', () => _sendWhatsAppGeneric('Tu pedido ya se está preparando 👨‍🍳')),
+          _whatsAppPreviewChip('Recibido', () => _sendWhatsAppGeneric('Ya recibimos tu pedido, gracias por tu compra 👍')),
+          _whatsAppPreviewChip('Ya va para allá', () => _sendWhatsAppGeneric('Tu pedido ya va en camino 🛵')),
+        ]),
+        const SizedBox(height: 6),
+        const Text('Mensajes predeterminados — ábrelos y elige la conversación en WhatsApp.',
+            style: TextStyle(color: Colors.white70, fontSize: 9)),
+      ]),
+    );
+  }
+
+  Widget _whatsAppPreviewChip(String label, VoidCallback onTap) {
+    const whatsappGreen = Color(0xFF25D366);
+    return OutlinedButton.icon(
+      onPressed: onTap,
+      icon: const Icon(Icons.chat, size: 14, color: whatsappGreen),
+      label: Text(label, style: const TextStyle(fontSize: 11, color: whatsappGreen, fontWeight: FontWeight.bold)),
+      style: OutlinedButton.styleFrom(
+        backgroundColor: Colors.white,
+        side: BorderSide.none,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+    );
+  }
+
+  // Un rectángulo por cada pedido que llega por WhatsApp — cada uno con su
+  // propio número, para que "enviar" le llegue directo a ese cliente sin
+  // tener que elegir la conversación a mano cada vez.
+  Widget _buildWaMessageCard(_WaMessageCard card) {
+    const whatsappGreen = Color(0xFF25D366);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: _surface2,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: whatsappGreen.withValues(alpha: 0.4)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Expanded(
+            child: TextField(
+              controller: card.phoneCtrl,
+              keyboardType: TextInputType.phone,
+              style: TextStyle(color: _text, fontSize: 12, fontWeight: FontWeight.bold),
+              decoration: InputDecoration(
+                hintText: 'Número de WhatsApp',
+                hintStyle: TextStyle(color: _textLow, fontSize: 12),
+                isDense: true,
+                prefixIcon: const Icon(Icons.phone, size: 16, color: whatsappGreen),
+                prefixIconConstraints: const BoxConstraints(minWidth: 30),
+                contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                border: InputBorder.none,
+              ),
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.close_rounded, size: 16, color: _textLow),
+            tooltip: 'Quitar',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            onPressed: () => _removeWaMessage(card),
+          ),
+        ]),
+        const Divider(height: 14),
+        Row(children: [
+          Expanded(
+            child: TextField(
+              controller: card.messageCtrl,
+              style: TextStyle(color: _text, fontSize: 13),
+              decoration: InputDecoration(
+                hintText: 'Escribe tu mensaje…',
+                hintStyle: TextStyle(color: _textLow, fontSize: 12),
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                filled: true,
+                fillColor: _inputFill,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton.filled(
+            onPressed: () {
+              final phone = card.phoneCtrl.text.trim();
+              final msg = card.messageCtrl.text.trim();
+              if (phone.isEmpty || msg.isEmpty) return;
+              _sendWhatsAppTo(phone, msg);
+              card.messageCtrl.clear();
+            },
+            icon: const Icon(Icons.send_rounded, size: 16),
+            style: IconButton.styleFrom(backgroundColor: whatsappGreen, foregroundColor: Colors.white),
+          ),
+        ]),
+      ]),
+    );
   }
 
   Widget _buildMenu(AppDataProvider appData) {
@@ -844,7 +1449,13 @@ class _DuenoScreenState extends State<DuenoScreen> {
   // Tarjeta del tour paso a paso del formulario de "Nuevo platillo" — se
   // coloca justo junto al campo que explica, así no depende de calcular
   // coordenadas (que se desalinean entre tamaños de pantalla distintos).
-  Widget _tourCard({required List<String> lines, required String body, required String buttonLabel, required VoidCallback onNext}) {
+  Widget _tourCard({
+    required List<String> lines,
+    required String body,
+    required String buttonLabel,
+    required VoidCallback onNext,
+    VoidCallback? onSkip,
+  }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.symmetric(vertical: 18),
@@ -869,6 +1480,17 @@ class _DuenoScreenState extends State<DuenoScreen> {
             child: Text(buttonLabel, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
           ),
         ),
+        // Si algo del tour se traba (o ya sabe usarlo y no quiere verlo),
+        // esta es la única salida real — antes, quedarse a medias del tour
+        // dejaba el botón de "Agregar platillo" inerte para siempre, sin
+        // ningún aviso de por qué no pasaba nada.
+        if (onSkip != null) ...[
+          const SizedBox(height: 6),
+          TextButton(
+            onPressed: onSkip,
+            child: Text('Saltar tutorial', style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12)),
+          ),
+        ],
       ]),
     );
   }
@@ -1053,6 +1675,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 body: 'Toca el cuadro de abajo para tomarla con la cámara o elegirla de tu galería.',
                 buttonLabel: 'Siguiente',
                 onNext: () => setModal(() => tourStep = 2),
+                onSkip: () => setModal(() => tourStep = 0),
               ),
             AnimatedOpacity(
               duration: const Duration(milliseconds: 200),
@@ -1370,8 +1993,9 @@ class _DuenoScreenState extends State<DuenoScreen> {
               _tourCard(
                 lines: const ['Elige la', 'categoría'],
                 body: 'Toca las que apliquen a este platillo — puedes elegir más de una.',
-                buttonLabel: 'Entendido',
-                onNext: () => setModal(() => tourStep = 0),
+                buttonLabel: 'Siguiente',
+                onNext: () => setModal(() => tourStep = 3),
+                onSkip: () => setModal(() => tourStep = 0),
               ),
             AnimatedOpacity(
               duration: const Duration(milliseconds: 200),
@@ -1433,6 +2057,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 body: 'Cómo se va a llamar en el menú (máximo 15 caracteres).',
                 buttonLabel: 'Siguiente',
                 onNext: () => setModal(() => tourStep = 4),
+                onSkip: () => setModal(() => tourStep = 0),
               ),
             AnimatedOpacity(
               duration: const Duration(milliseconds: 200),
@@ -1450,6 +2075,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 body: 'Cuenta brevemente qué trae o cómo está preparado.',
                 buttonLabel: 'Siguiente',
                 onNext: () => setModal(() => tourStep = 5),
+                onSkip: () => setModal(() => tourStep = 0),
               ),
             AnimatedOpacity(
               duration: const Duration(milliseconds: 200),
@@ -1467,6 +2093,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 body: 'En pesos mexicanos (MXN), sin el símbolo \$.',
                 buttonLabel: 'Siguiente',
                 onNext: () => setModal(() => tourStep = 6),
+                onSkip: () => setModal(() => tourStep = 0),
               ),
             AnimatedOpacity(
               duration: const Duration(milliseconds: 200),
@@ -1484,6 +2111,7 @@ class _DuenoScreenState extends State<DuenoScreen> {
                 body: 'Actívalo cuando esté listo para vender — si se te acaba, apágalo aquí mismo.',
                 buttonLabel: 'Siguiente',
                 onNext: () => setModal(() => tourStep = 7),
+                onSkip: () => setModal(() => tourStep = 0),
               ),
             AnimatedOpacity(
               duration: const Duration(milliseconds: 200),
@@ -1593,16 +2221,28 @@ class _DuenoScreenState extends State<DuenoScreen> {
                         : null;
                   }
 
-                  await SupabaseService.saveProduct(
-                    id: newId, name: name, description: desc,
-                    price: price, isAvailable: available,
-                    categoryId: selectedCatIds.first,
-                    restaurantId: _restaurantId,
-                    imageUrl: urlForDb,
-                    promoDiscountPercent: promoDiscount,
-                    promoIs2x1: promo2x1,
-                    promoExpiresAt: promoExpires,
-                  );
+                  try {
+                    await SupabaseService.saveProduct(
+                      id: newId, name: name, description: desc,
+                      price: price, isAvailable: available,
+                      categoryId: selectedCatIds.first,
+                      restaurantId: _restaurantId,
+                      imageUrl: urlForDb,
+                      promoDiscountPercent: promoDiscount,
+                      promoIs2x1: promo2x1,
+                      promoExpiresAt: promoExpires,
+                    );
+                  } catch (e) {
+                    // Antes, un error aquí (ej. categoría inválida) se
+                    // perdía en silencio — el botón parecía no hacer nada.
+                    if (ctx.mounted) {
+                      ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                        content: Text('No se pudo guardar el platillo: $e'),
+                        backgroundColor: Colors.redAccent,
+                      ));
+                    }
+                    return;
+                  }
                   if (!SupabaseService.useMock) await _loadProductsFromSupabase();
 
                   if (ctx.mounted) Navigator.pop(ctx);
@@ -1631,6 +2271,40 @@ class _DuenoScreenState extends State<DuenoScreen> {
     setState(() { _bannerList = banners; _loadingBanners = false; });
   }
 
+  bool _launchingPremiumFlow = false;
+
+  Future<void> _upgradeToPremium() async {
+    if (_launchingPremiumFlow) return;
+    setState(() => _launchingPremiumFlow = true);
+    final url = await SupabaseService.createPremiumCheckoutUrl(_restaurantId);
+    if (mounted) setState(() => _launchingPremiumFlow = false);
+    if (url == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('No se pudo abrir el pago. Intenta de nuevo en un momento.'),
+        backgroundColor: Colors.red,
+      ));
+      return;
+    }
+    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _manageSubscription() async {
+    if (_launchingPremiumFlow) return;
+    setState(() => _launchingPremiumFlow = true);
+    final url = await SupabaseService.createBillingPortalUrl(_restaurantId);
+    if (mounted) setState(() => _launchingPremiumFlow = false);
+    if (url == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('No se pudo abrir tu suscripción. Intenta de nuevo en un momento.'),
+        backgroundColor: Colors.red,
+      ));
+      return;
+    }
+    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  }
+
   // Pantalla de "función bloqueada" para lo que solo viene con GOGO Premium.
   Widget _buildPremiumLocked({required IconData icon, required String title, required String description}) {
     return Center(
@@ -1651,18 +2325,30 @@ class _DuenoScreenState extends State<DuenoScreen> {
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 13, height: 1.4)),
           const SizedBox(height: 24),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(24),
+          InkWell(
+            borderRadius: BorderRadius.circular(24),
+            onTap: _launchingPremiumFlow ? null : _upgradeToPremium,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                if (_launchingPremiumFlow)
+                  const SizedBox(
+                    width: 16, height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: AppConstants.primaryColor),
+                  )
+                else
+                  const Icon(Icons.workspace_premium, color: AppConstants.primaryColor, size: 18),
+                const SizedBox(width: 8),
+                Text(
+                  _launchingPremiumFlow ? 'Abriendo pago…' : 'Hazte Premium — \$99 MXN/mes',
+                  style: const TextStyle(color: AppConstants.primaryColor, fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+              ]),
             ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              const Icon(Icons.workspace_premium, color: AppConstants.primaryColor, size: 18),
-              const SizedBox(width: 8),
-              Text('Disponible con GOGO Premium',
-                  style: TextStyle(color: AppConstants.primaryColor, fontWeight: FontWeight.bold, fontSize: 13)),
-            ]),
           ),
         ]),
       ),
@@ -2217,6 +2903,34 @@ class _DuenoScreenState extends State<DuenoScreen> {
             ),
           ),
         const SizedBox(height: 20),
+
+        // ── GOGO Premium — contratar o administrar la suscripción ──────────────
+        Row(children: [
+          Icon(Icons.workspace_premium,
+              color: _isPremium ? Colors.amber : _textMid, size: 18),
+          const SizedBox(width: 6),
+          Text(_isPremium ? 'Ya eres GOGO Premium' : 'GOGO Premium',
+              style: TextStyle(color: _textMid, fontSize: 13, fontWeight: FontWeight.w600)),
+        ]),
+        const SizedBox(height: 4),
+        Text(
+          _isPremium
+              ? 'Puedes ver o cancelar tu suscripción cuando quieras.'
+              : 'Banners, promos y hasta 20 platillos por \$99 MXN/mes.',
+          style: TextStyle(color: _textLow, fontSize: 11),
+        ),
+        const SizedBox(height: 10),
+        OutlinedButton.icon(
+          onPressed: _launchingPremiumFlow
+              ? null
+              : (_isPremium ? _manageSubscription : _upgradeToPremium),
+          icon: _launchingPremiumFlow
+              ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+              : Icon(_isPremium ? Icons.settings : Icons.workspace_premium, size: 16),
+          label: Text(_isPremium ? 'Administrar mi suscripción' : 'Hazte Premium — \$99 MXN/mes'),
+          style: OutlinedButton.styleFrom(foregroundColor: AppConstants.primaryColor),
+        ),
+        const SizedBox(height: 24),
 
         // ── Zona — se detecta sola según la dirección, no se elige a mano ──────
         Row(children: [
@@ -2909,8 +3623,12 @@ class _FormField extends StatelessWidget {
       keyboardType: keyboardType,
       style: TextStyle(color: text),
       decoration: InputDecoration(
-        labelText: label,
-        labelStyle: TextStyle(color: textMid),
+        // hintText en vez de labelText — antes el label flotaba arriba del
+        // cuadro al escribir (comportamiento normal de Material), y eso se
+        // veía mal encimado. Como texto guía, solo se ve vacío y desaparece
+        // al escribir, sin moverse a ningún lado.
+        hintText: label,
+        hintStyle: TextStyle(color: textMid),
         prefixIcon: Icon(icon, color: textMid, size: 20),
         counterStyle: TextStyle(color: textMid, fontSize: 11),
         filled: true,
@@ -3007,11 +3725,6 @@ class _OutlinedTutorialText extends StatelessWidget {
       ]);
     }
 
-    return DecoratedBox(
-      decoration: BoxDecoration(boxShadow: [
-        BoxShadow(color: Colors.black.withValues(alpha: 0.6), blurRadius: 12, offset: const Offset(0, 4)),
-      ]),
-      child: Column(mainAxisSize: MainAxisSize.min, children: lines.map(line).toList()),
-    );
+    return Column(mainAxisSize: MainAxisSize.min, children: lines.map(line).toList());
   }
 }

@@ -257,7 +257,17 @@ Plan por restaurante, columna `restaurants.is_premium` (sin UI de cobro todavía
 
 Todo en `dueno_screen.dart`, gateado con `_isPremium` (leído de `SupabaseService.getRestaurantIsPremium`).
 
+**Diálogo "¡ya eres Premium!" disparándose solo (corregido oct 2026):** salía incluso al cerrar sesión y volver a entrar sin que nada hubiera cambiado. Causa: `didChangeAppLifecycleState` dispara `_checkPremiumActivated()` en cuanto la app pasa a `resumed` — algo que ocurre casi de inmediato al abrir/reabrir la pantalla — y eso podía ganarle la carrera a `_initRestaurant()` (que todavía no había puesto `_isPremium` en `true`, seguía en su valor por default `false`). Con el restaurante ya Premium de antes, esa comparación veía `premium=true && !_isPremium(false)` y lo trataba como "recién activado". Corregido con el candado `_premiumChecked` — `_checkPremiumActivated()` no hace nada hasta que `_initRestaurant()` haya completado su primera consulta real.
+
 ---
+
+## Envío gratis (promos) dejaba al repartidor sin cobrar ese pedido — corregido oct 2026
+
+Un promo con `applies_to_shipping=true` (incluye el tipo `free_shipping`) descuenta el `delivery_fee` del pedido hasta dejarlo en 0 — correcto para lo que ve el CLIENTE (debe verse "envío gratis"), pero **todo** lo que calcula ganancias de repartidor leía ese mismo `delivery_fee` ya descontado: `get_rider_balance()` (saldo retirable real), y las pantallas `repartidor_screen.dart`, `repartidor_plus_screen.dart`, `flota_screen.dart`/`flota_rider_detail_screen.dart` (gráficas/listas de "cuánto ganó"). Resultado real: un repartidor que entregaba un pedido con envío gratis hacía el mismo recorrido pero cobraba **$0** por esa entrega — el costo de la promo lo terminaba absorbiendo el repartidor, no la plataforma/restaurante (que es quien decide ofrecer la promo).
+
+Corrección: nueva columna `orders.rider_delivery_fee` (migración `20261015000000_rider_delivery_fee.sql`) que guarda el envío **nominal**, calculado ANTES de cualquier descuento de promoción — es el que de verdad se le paga al repartidor. `delivery_fee` se queda igual (lo que se le cobró al cliente, puede ser $0 con envío gratis). `checkout_screen.dart` manda ambos valores a `SupabaseService.createOrder` (`deliveryFee` = post-descuento, `riderDeliveryFee` = `perOrderFee` pre-descuento); `get_rider_balance()` y las 4 pantallas de arriba ahora suman `coalesce(rider_delivery_fee, delivery_fee)` en vez de solo `delivery_fee`.
+
+De paso se encontró que `create-payment-intent` nunca recibe `orderId` desde `checkout_screen.dart` (el único lugar que lo manda es `_payWithStripe`, que no lo incluye en el body) — así que la verificación "monto real contra la BD" de esa Edge Function nunca se activa en la práctica; hoy el único candado real contra manipulación del monto es el de abajo (promoción) y el tope de $50,000. Sin corregir todavía — no es lo que se reportó esta vez, pero es la causa de que el monto de Stripe dependa 100% de lo que calcula el celular.
 
 ## Retiros de repartidores (base, sin Stripe Connect todavía)
 

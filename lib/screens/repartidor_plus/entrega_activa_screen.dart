@@ -11,6 +11,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/constants.dart';
 import '../../services/location_service.dart';
@@ -254,6 +255,21 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
       _broadcastTimer?.cancel();
       await SupabaseService.updateOrderStatus(widget.orderId, 'delivered');
       SupabaseService.stopLocationBroadcast();
+      // Coins/repartos/dinero se dan aquí, al completar de verdad la
+      // entrega — antes se daban desde que el rider le daba "Aceptar", así
+      // que se los quedaba aunque después cancelara y nunca entregara.
+      // También se bajó el monto de coins (era 500 por pedido, demasiado
+      // considerando que la tienda de premios ni precios tiene definidos
+      // todavía).
+      final uid = Supabase.instance.client.auth.currentUser?.id;
+      if (uid != null) {
+        await SupabaseService.incrementRiderStats(
+          uid,
+          coinsAdd:    100,
+          repartosAdd: 1,
+          dineroAdd:   widget.total,
+        );
+      }
       NotificationService.entregaCompletada(widget.total * 0.15);
       if (!mounted) return;
       await showRatingDialog(context, orderId: widget.orderId, isDriver: true);

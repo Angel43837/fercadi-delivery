@@ -14,6 +14,7 @@ import '../models/app_promo.dart';
 import '../models/order_message.dart';
 import '../models/promotion.dart';
 import '../models/promotion_claim.dart';
+import '../core/product_categories.dart';
 
 // supabase_service.dart
 // Capa de acceso a datos — conecta la app con la base de datos de Supabase.
@@ -322,6 +323,24 @@ class SupabaseService {
         .select()
         .eq('restaurant_id', restaurantId);
     return (data as List).map((e) => Category.fromJson(e)).toList();
+  }
+
+  // Un restaurante recién registrado por la web no trae ninguna categoría de
+  // menú — la pantalla de "Agregar platillo" caía entonces a una lista de
+  // ids de ejemplo (c1, c2...) que nunca existieron de verdad en esta
+  // tabla, así que guardar un platillo nuevo fallaba en silencio por la
+  // llave foránea hacia categories. Esto le pone, una sola vez, las
+  // categorías genéricas reales para que el restaurante quede usable.
+  static Future<void> createDefaultCategories(String restaurantId) async {
+    if (useMock) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final rows = kProductCategories.asMap().entries.map((e) => {
+          'id': 'cat_${now}_${e.key}',
+          'restaurant_id': restaurantId,
+          'name': e.value,
+          'emoji_icon': kProductCategoryIcons[e.value] ?? '🍽️',
+        }).toList();
+    await _client.from('categories').insert(rows);
   }
 
   // Imágenes override para productos cuya URL en la BD no carga en Flutter web
@@ -897,7 +916,7 @@ class SupabaseService {
       ).toUtc().toIso8601String();
       final data = await _client
           .from('orders')
-          .select('id, total, delivery_fee, status, created_at')
+          .select('id, total, delivery_fee, rider_delivery_fee, status, created_at')
           .eq('repartidor_id', riderId)
           .gte('created_at', start)
           .order('created_at', ascending: false);
@@ -935,7 +954,7 @@ class SupabaseService {
     try {
       final data = await _client
           .from('orders')
-          .select('id, total, delivery_fee, status, created_at')
+          .select('id, total, delivery_fee, rider_delivery_fee, status, created_at')
           .eq('repartidor_id', riderId)
           .order('created_at', ascending: false)
           .limit(200);
@@ -1425,6 +1444,37 @@ class SupabaseService {
     }
   }
 
+  // Arma el link de pago real (Stripe Checkout, suscripción mensual) para
+  // que el dueño contrate GOGO Premium — antes "Disponible con GOGO
+  // Premium" era solo una etiqueta, Premium se prendía a mano por SQL.
+  static Future<String?> createPremiumCheckoutUrl(String restaurantId) async {
+    try {
+      final res = await _client.functions
+          .invoke('create-premium-checkout', body: {'restaurantId': restaurantId})
+          .timeout(const Duration(seconds: 15));
+      final data = res.data;
+      if (data is Map && data['url'] is String) return data['url'] as String;
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Portal de Stripe para que un dueño ya Premium vea/cancele su propia
+  // suscripción, sin que haya que construir esa pantalla a mano.
+  static Future<String?> createBillingPortalUrl(String restaurantId) async {
+    try {
+      final res = await _client.functions
+          .invoke('create-billing-portal-session', body: {'restaurantId': restaurantId})
+          .timeout(const Duration(seconds: 15));
+      final data = res.data;
+      if (data is Map && data['url'] is String) return data['url'] as String;
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<List<String>> getRestaurantCategorias(String restaurantId) async {
     if (useMock) return [];
     try {
@@ -1733,6 +1783,11 @@ class SupabaseService {
     double? lat,
     double? lng,
     double deliveryFee = 0,
+    // Envío NOMINAL, antes de cualquier descuento de promoción — lo que de
+    // verdad se le paga al repartidor (ver nota en la migración
+    // 20261015000000_rider_delivery_fee.sql). Si no se manda, se usa
+    // deliveryFee tal cual (mismo valor, sin descuento que restar).
+    double? riderDeliveryFee,
     String? clientFcmToken,
     String? paymentStatus,
     String? stripePaymentIntentId,
@@ -1751,6 +1806,7 @@ class SupabaseService {
       'restaurant_id': restaurantId,
       'total': total,
       'delivery_fee': deliveryFee,
+      'rider_delivery_fee': riderDeliveryFee ?? deliveryFee,
       'status': 'pending',
       'customer_name': deliveryJson,
       'customer_id': _client.auth.currentUser?.id,

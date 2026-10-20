@@ -98,8 +98,11 @@ class _RiderDetailScreenState extends State<RiderDetailScreen> {
 
   int get _totalEntregas => _entregados.length;
 
+  // rider_delivery_fee = envío nominal antes de descuento de promoción — lo
+  // que de verdad se le paga al repartidor (ver migración
+  // 20261015000000_rider_delivery_fee.sql).
   double get _totalRecaudado => _entregados.fold(
-      0.0, (s, o) => s + ((o['delivery_fee'] as num?)?.toDouble() ?? 0));
+      0.0, (s, o) => s + (((o['rider_delivery_fee'] ?? o['delivery_fee']) as num?)?.toDouble() ?? 0));
 
   List<Map<String, dynamic>> get _semanaPasada {
     final weekAgo = DateTime.now().subtract(const Duration(days: 7));
@@ -112,7 +115,7 @@ class _RiderDetailScreenState extends State<RiderDetailScreen> {
   int get _entregasSemana => _semanaPasada.length;
 
   double get _recaudadoSemana => _semanaPasada.fold(
-      0.0, (s, o) => s + ((o['delivery_fee'] as num?)?.toDouble() ?? 0));
+      0.0, (s, o) => s + (((o['rider_delivery_fee'] ?? o['delivery_fee']) as num?)?.toDouble() ?? 0));
 
   // kIsWeb: false en la app nativa (Android/iOS) -> layout móvil sin cambios.
   // true en el deploy de Vercel -> layout de escritorio (placeholder por
@@ -275,7 +278,7 @@ class _RiderDetailScreenState extends State<RiderDetailScreen> {
   Widget _buildHistoryRow(Map<String, dynamic> o) {
     final status  = o['status'] as String? ?? '';
     final total   = (o['total'] as num?)?.toDouble() ?? 0;
-    final fee     = (o['delivery_fee'] as num?)?.toDouble() ?? 0;
+    final fee     = ((o['rider_delivery_fee'] ?? o['delivery_fee']) as num?)?.toDouble() ?? 0;
     final created = DateTime.tryParse(o['created_at'] as String? ?? '')?.toLocal();
     final (label, color) = switch (status) {
       'delivered'  => ('Entregado', const Color(0xFF22C55E)),

@@ -16,6 +16,7 @@ import 'providers/cart_provider.dart';
 import 'providers/app_data_provider.dart';
 import 'providers/theme_provider.dart';
 import 'controllers/rider_withdrawal_controller.dart';
+import 'controllers/restaurant_withdrawal_controller.dart';
 import 'router.dart';
 import 'services/supabase_service.dart';
 import 'services/notification_service.dart';
@@ -89,6 +90,7 @@ class FercadiApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => CartProvider()),
         ChangeNotifierProvider(create: (_) => AppDataProvider()),
         ChangeNotifierProvider(create: (_) => RiderWithdrawalController()),
+        ChangeNotifierProvider(create: (_) => RestaurantWithdrawalController()),
       ],
       child: Consumer<ThemeProvider>(
         builder: (ctx, themeProvider, child) => MaterialApp.router(

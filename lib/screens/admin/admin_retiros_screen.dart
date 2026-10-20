@@ -114,6 +114,37 @@ class _AdminRetirosScreenState extends State<AdminRetirosScreen> {
     await _load();
   }
 
+  // "Aprobar" ya no solo cambia el estatus — intenta pagar de verdad por
+  // Stripe Connect. Si el repartidor no terminó su registro bancario, el
+  // retiro queda en "en proceso" igual que antes (se puede completar a
+  // mano desde ahí) y se avisa por qué no se pudo pagar solo.
+  Future<void> _approveWithTransfer(RiderWithdrawal w) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator(color: AdminColors.accent)),
+    );
+    String? errorMsg;
+    try {
+      await _repo.approveAndTransfer(w.id);
+    } catch (e) {
+      errorMsg = e.toString().replaceFirst('Exception: ', '');
+    }
+    if (mounted) Navigator.pop(context); // cierra el loading
+    await _load();
+    if (errorMsg != null && mounted) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AdminColors.surface,
+          title: const Text('No se pudo pagar por Stripe', style: TextStyle(color: AdminColors.textPrimary)),
+          content: Text(errorMsg!, style: TextStyle(color: AdminColors.textSecondary)),
+          actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Entendido'))],
+        ),
+      );
+    }
+  }
+
   Future<void> _promptTexto(RiderWithdrawal w, {required String titulo, required String hint, required String newStatus, bool esReferencia = false}) async {
     final ctrl = TextEditingController();
     final value = await showDialog<String>(
@@ -159,7 +190,7 @@ class _AdminRetirosScreenState extends State<AdminRetirosScreen> {
         riderName: _nameFor(w.riderId),
         riderInfo: _riderInfo[w.riderId],
         repo: _repo,
-        onApprove: () => _transition(w, WithdrawalStatus.enProceso),
+        onApprove: () => _approveWithTransfer(w),
         onReject: () => _promptTexto(w, titulo: 'Rechazar retiro', hint: 'Motivo del rechazo', newStatus: WithdrawalStatus.rechazado),
         onCancel: () => _transition(w, WithdrawalStatus.cancelado),
         onComplete: () => _promptTexto(w, titulo: 'Marcar como completado', hint: 'Referencia de la transacción', newStatus: WithdrawalStatus.completado, esReferencia: true),
@@ -564,7 +595,7 @@ class _RetiroDetailSheetState extends State<_RetiroDetailSheet> {
     switch (widget.withdrawal.status) {
       case WithdrawalStatus.pendiente:
         return [
-          AdminPrimaryButton(label: 'Aprobar (pasar a en proceso)', onPressed: () => run(widget.onApprove)),
+          AdminPrimaryButton(label: 'Aprobar y pagar por Stripe', onPressed: () => run(widget.onApprove)),
           const SizedBox(height: 10),
           _actionButton('Rechazar', AdminColors.statusCancelled, () => run(widget.onReject)),
           const SizedBox(height: 10),

@@ -112,7 +112,11 @@ class _Order {
       hasExactCoords: hasCoords,
       items: itemStrings.isEmpty ? ['Pedido #${m['id'].toString().substring(0, 6)}'] : itemStrings,
       total: (m['total'] as num).toDouble(),
-      deliveryFee: (m['delivery_fee'] as num?)?.toDouble() ?? 0.0,
+      // rider_delivery_fee es el envío nominal, antes de descuentos de
+      // promoción (ver 20261015000000_rider_delivery_fee.sql) — lo que de
+      // verdad se le paga al repartidor, nunca lo que el cliente pagó con
+      // descuento.
+      deliveryFee: ((m['rider_delivery_fee'] ?? m['delivery_fee']) as num?)?.toDouble() ?? 0.0,
     );
   }
 }
@@ -149,12 +153,11 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   LatLng? _geocodedCustomerPos;
   bool _geocodeFailed = false;
 
-  // Llamadas de un dueño desde la app de escritorio (botón azul) — a
-  // diferencia de los pedidos normales, se avisan TODAS las pendientes al
-  // abrir la app (no solo las nuevas), porque una llamada sin responder
-  // sigue siendo urgente aunque el rider acabe de entrar.
+  // Llamadas de un dueño desde la app de escritorio (botón azul) — se ven
+  // como una tarjeta más en la lista de pedidos (Aceptar/No puedo), no como
+  // un popup aparte.
+  List<Map<String, dynamic>> _pendingRiderCalls = [];
   final Set<String> _dismissedCallIds = {};
-  final Set<String> _alertingCallIds = {};
   RealtimeChannel? _callChannel;
   Timer? _callPollTimer;
 
@@ -181,65 +184,98 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     try {
       final calls = await SupabaseService.getPendingRiderCalls();
       if (!mounted) return;
-      for (final call in calls) {
-        final id = call['id'] as String;
-        if (_dismissedCallIds.contains(id) || _alertingCallIds.contains(id)) continue;
-        _alertingCallIds.add(id);
-        _showRiderCallAlert(call);
-      }
+      setState(() {
+        _pendingRiderCalls = calls.where((c) => !_dismissedCallIds.contains(c['id'])).toList();
+      });
     } catch (_) {}
   }
 
-  void _showRiderCallAlert(Map<String, dynamic> call) {
-    final id = call['id'] as String;
+  Future<void> _responderLlamada(String callId, bool accept) async {
+    setState(() {
+      _dismissedCallIds.add(callId);
+      _pendingRiderCalls.removeWhere((c) => c['id'] == callId);
+    });
+    final ganaste = await SupabaseService.respondRiderCall(callId, accept);
+    if (!accept || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(ganaste ? '¡Listo! Ve por el pedido.' : 'Ya se lo llevó otro repartidor.'),
+      backgroundColor: ganaste ? Colors.green : Colors.orange,
+    ));
+  }
+
+  Widget _buildRiderCallCard(Map<String, dynamic> call, bool isDark) {
+    final cardBg = isDark ? AppConstants.surfaceColor : Colors.white;
+    final textMain = isDark ? Colors.white : Colors.black87;
+    final textSub = isDark ? Colors.white.withValues(alpha: 0.45) : Colors.black54;
     final restaurantName = call['restaurant_name'] as String? ?? 'Un restaurante';
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogCtx) => AlertDialog(
-        backgroundColor: AppConstants.surfaceColor,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Row(children: [
-          const Icon(Icons.delivery_dining_rounded, color: Color(0xFF2196F3), size: 26),
-          const SizedBox(width: 8),
-          const Expanded(
-            child: Text('¡Te están llamando!',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-          ),
-        ]),
-        content: Text(
-          '$restaurantName necesita un repartidor ahora mismo. ¿Quieres ir?',
-          style: TextStyle(color: Colors.white.withValues(alpha: 0.75), height: 1.4),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(dialogCtx);
-              _dismissedCallIds.add(id);
-              _alertingCallIds.remove(id);
-              await SupabaseService.respondRiderCall(id, false);
-            },
-            child: Text('No puedo', style: TextStyle(color: Colors.white.withValues(alpha: 0.6))),
-          ),
-          TextButton(
-            onPressed: () async {
-              final ganaste = await SupabaseService.respondRiderCall(id, true);
-              if (dialogCtx.mounted) Navigator.pop(dialogCtx);
-              _dismissedCallIds.add(id);
-              _alertingCallIds.remove(id);
-              if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content: Text(ganaste
-                    ? '¡Listo! Ve a $restaurantName por el pedido.'
-                    : 'Ya se lo llevó otro repartidor.'),
-                backgroundColor: ganaste ? Colors.green : Colors.orange,
-              ));
-            },
-            child: const Text('Sí, voy',
-                style: TextStyle(color: Color(0xFF2196F3), fontWeight: FontWeight.bold)),
-          ),
-        ],
+    final id = call['id'] as String;
+    const callBlue = Color(0xFF2196F3);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: cardBg,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: callBlue.withValues(alpha: 0.5), width: 1.5),
       ),
+      child: Column(children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(children: [
+            const Icon(Icons.delivery_dining_rounded, color: callBlue, size: 28),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('¡Te están llamando!',
+                    style: TextStyle(color: textMain, fontWeight: FontWeight.bold, fontSize: 15)),
+                Text('$restaurantName necesita un repartidor ahora mismo',
+                    style: TextStyle(color: textSub, fontSize: 12)),
+              ]),
+            ),
+          ]),
+        ),
+        ClipRRect(
+          borderRadius: const BorderRadius.vertical(bottom: Radius.circular(15)),
+          child: Row(children: [
+            Expanded(
+              flex: 2,
+              child: InkWell(
+                onTap: () => _responderLlamada(id, false),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  color: isDark ? AppConstants.surface2Color : Colors.grey.shade200,
+                  child: Center(
+                    child: Text('NO PUEDO',
+                        style: TextStyle(
+                            color: isDark ? Colors.white.withValues(alpha: 0.5) : Colors.black45,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                            letterSpacing: 0.5)),
+                  ),
+                ),
+              ),
+            ),
+            Expanded(
+              flex: 3,
+              child: InkWell(
+                onTap: () => _responderLlamada(id, true),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  color: callBlue,
+                  child: const Center(
+                    child: Text('ACEPTAR',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                            letterSpacing: 0.5)),
+                  ),
+                ),
+              ),
+            ),
+          ]),
+        ),
+      ]),
     );
   }
 
@@ -474,7 +510,10 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   // ── Lista de pedidos ──────────────────────────────────────────────────────────
 
   Widget _buildOrderList(bool isDark) {
-    return CustomScrollView(
+    return RefreshIndicator(
+      onRefresh: _loadOrders,
+      color: AppConstants.primaryColor,
+      child: CustomScrollView(
       slivers: [
         SliverToBoxAdapter(child: _buildHeader(isDark)),
 
@@ -493,6 +532,20 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         // Nota: esta pantalla es siempre para repartidores de flota — sus
         // ganancias/entregas las administra su jefe de flota desde su
         // propio panel, por eso aquí nunca se muestra esa tarjeta.
+
+        // Llamadas de un dueño desde la app de escritorio — se ven como
+        // una tarjeta de pedido más (Aceptar/No puedo), no como un popup
+        // aparte, para que se sienta igual que aceptar cualquier pedido.
+        if (_pendingRiderCalls.isNotEmpty)
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+            sliver: SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (ctx, i) => _buildRiderCallCard(_pendingRiderCalls[i], isDark),
+                childCount: _pendingRiderCalls.length,
+              ),
+            ),
+          ),
 
         // Título lista
         SliverToBoxAdapter(
@@ -539,6 +592,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
             ),
           ),
       ],
+      ),
     );
   }
 

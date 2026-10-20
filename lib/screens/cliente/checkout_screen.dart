@@ -517,6 +517,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           restaurantId: rid,
           total: rSubtotalAfterDiscount + rFeeAfterDiscount,
           deliveryFee: rFeeAfterDiscount,
+          // Al repartidor se le paga el envío NOMINAL (perOrderFee, antes de
+          // cualquier descuento de promoción) — un pedido con "envío
+          // gratis" no debe dejarlo trabajando sin cobrar; ese costo lo
+          // absorbe la plataforma/restaurante, no el repartidor.
+          riderDeliveryFee: perOrderFee,
           customerName: _nameCtrl.text.trim(),
           // Ya no se pide de nuevo en el checkout — se usa el que la cuenta
           // ya tiene asociado (login por teléfono, o vinculado después desde
@@ -589,10 +594,14 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       'restaurants': restaurantsList,
       if (_selectedPos != null) 'lat': _selectedPos!.latitude,
       if (_selectedPos != null) 'lng': _selectedPos!.longitude,
-      // Solo con un restaurante hay un logo claro que mostrar — con
+      // Solo con un restaurante hay un logo/posición clara que mostrar — con
       // "Varios restaurantes" no hay uno solo que tenga sentido elegir.
       if (byRestaurant.length == 1 && _primaryRestaurant?.imageUrl != null)
         'restaurantImageUrl': _primaryRestaurant!.imageUrl,
+      if (byRestaurant.length == 1 && _primaryRestaurant?.lat != null)
+        'restaurantLat': _primaryRestaurant!.lat,
+      if (byRestaurant.length == 1 && _primaryRestaurant?.lng != null)
+        'restaurantLng': _primaryRestaurant!.lng,
     };
     await OrderHistoryService.add(
       orderId: firstOrderId,
@@ -613,6 +622,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       address: _addressCtrl.text.trim(),
       lat: _selectedPos?.latitude,
       lng: _selectedPos?.longitude,
+      restaurantLat: byRestaurant.length == 1 ? _primaryRestaurant?.lat : null,
+      restaurantLng: byRestaurant.length == 1 ? _primaryRestaurant?.lng : null,
+      restaurantImageUrl: byRestaurant.length == 1 ? _primaryRestaurant?.imageUrl : null,
     );
     cart.clear();
     _showSuccess(orderData);

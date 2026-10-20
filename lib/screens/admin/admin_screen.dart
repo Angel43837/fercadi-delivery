@@ -15,6 +15,7 @@ import '../../providers/app_data_provider.dart';
 import '../../services/auth_service.dart';
 import '../../models/withdrawal_status.dart';
 import '../../repositories/rider_withdrawal_repository.dart';
+import '../../repositories/restaurant_withdrawal_repository.dart';
 import '../../services/location_service.dart';
 import '../../services/supabase_service.dart';
 import '../../theme/admin_theme.dart';
@@ -142,7 +143,9 @@ class _AdminScreenState extends State<AdminScreen> {
 
   // Retiros (solo el conteo de pendientes, para el badge en "Más")
   int _retirosPendientes = 0;
+  int _retirosRestaurantesPendientes = 0;
   final _withdrawalRepo = RiderWithdrawalRepository();
+  final _restaurantWithdrawalRepo = RestaurantWithdrawalRepository();
 
   @override
   void initState() {
@@ -154,6 +157,7 @@ class _AdminScreenState extends State<AdminScreen> {
     _loadAlerts();
     _loadStats();
     _loadRetirosPendientes();
+    _loadRetirosRestaurantesPendientes();
     _loadPendingDrivers();
     _pollTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       _loadOrders();
@@ -161,6 +165,7 @@ class _AdminScreenState extends State<AdminScreen> {
       _loadAlerts();
       _loadStats();
       _loadRetirosPendientes();
+      _loadRetirosRestaurantesPendientes();
       _loadPendingDrivers();
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -252,6 +257,14 @@ class _AdminScreenState extends State<AdminScreen> {
       final data = await _withdrawalRepo.fetchAllForAdmin();
       final count = data.where((w) => w['status'] == WithdrawalStatus.pendiente).length;
       if (mounted) setState(() => _retirosPendientes = count);
+    } catch (_) {}
+  }
+
+  Future<void> _loadRetirosRestaurantesPendientes() async {
+    try {
+      final data = await _restaurantWithdrawalRepo.fetchAllForAdmin();
+      final count = data.where((w) => w['status'] == WithdrawalStatus.pendiente).length;
+      if (mounted) setState(() => _retirosRestaurantesPendientes = count);
     } catch (_) {}
   }
 
@@ -1192,6 +1205,13 @@ class _AdminScreenState extends State<AdminScreen> {
         'Solicitudes de pago a repartidores',
         _retirosPendientes,
         () => context.push('/admin/retiros'),
+      ),
+      (
+        Icons.storefront_outlined,
+        'Retiros de restaurantes',
+        'Solicitudes de pago a restaurantes',
+        _retirosRestaurantesPendientes,
+        () => context.push('/admin/retiros-restaurantes'),
       ),
       (
         Icons.local_offer_outlined,

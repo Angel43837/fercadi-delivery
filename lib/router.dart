@@ -12,7 +12,7 @@ import 'models/product.dart';
 import 'screens/splash_screen.dart';
 import 'screens/welcome_screen.dart';
 import 'screens/cliente/login_screen.dart';
-import 'screens/cliente/complete_profile_screen.dart';
+import 'screens/cliente/onboarding_screen.dart';
 import 'screens/cliente/reset_password_screen.dart';
 import 'screens/legal_document_screen.dart';
 import 'core/legal_content.dart';
@@ -27,9 +27,7 @@ import 'screens/cliente/order_history_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/avisos_screen.dart';
 import 'screens/dueno/dueno_login_screen.dart';
-import 'screens/dueno/registro_restaurante_screen.dart';
 import 'screens/repartidor_login_screen.dart';
-import 'screens/repartidor_plus/registro_rider_plus_screen.dart';
 import 'screens/repartidor_plus/repartidor_plus_screen.dart';
 import 'screens/cliente/my_promotions_screen.dart';
 import 'screens/cliente/promotion_detail_screen.dart';
@@ -82,8 +80,7 @@ final appRouter = GoRouter(
     // Rutas públicas sin restricción
     const open = {
       '/', '/welcome', '/login', '/moto', '/repartidor-login', '/dueno-login',
-      '/restaurante', '/reset-password', '/privacy-policy', '/terms',
-      '/registro-restaurante', '/registro-rider',
+      '/restaurante', '/reset-password', '/privacy-policy', '/terms', '/onboarding',
     };
     if (open.contains(loc)) return null;
 
@@ -97,6 +94,14 @@ final appRouter = GoRouter(
     }
 
     final role = ((user.appMetadata['role'] ?? user.userMetadata?['role']) as String?) ?? 'cliente';
+
+    // Cuenta de cliente nueva (por teléfono, correo, Google o Facebook —
+    // cualquier método de alta cae aquí igual) que todavía no pasó por el
+    // onboarding de nombre/edad/dirección/género/pago — se manda ahí antes
+    // de dejarla entrar a cualquier otra pantalla.
+    if (role == 'cliente' && user.userMetadata?['onboarding_completed'] != true) {
+      return '/onboarding';
+    }
 
     // Bloquear rutas de cliente a usuarios con otro rol
     if (_clientRoutes.contains(loc) &&
@@ -126,10 +131,10 @@ final appRouter = GoRouter(
     ),
     GoRoute(path: '/reset-password', builder: (_, _) => const ResetPasswordScreen()),
     GoRoute(
-      path: '/complete-profile',
+      path: '/onboarding',
       builder: (_, state) {
         final extra = state.extra as Map<String, dynamic>?;
-        return CompleteProfileScreen(returnTo: extra?['returnTo'] as String?);
+        return OnboardingScreen(returnTo: extra?['returnTo'] as String?);
       },
     ),
     GoRoute(
@@ -177,10 +182,8 @@ final appRouter = GoRouter(
     GoRoute(path: '/avisos',    builder: (_, _) => const AvisosScreen()),
     GoRoute(path: '/restaurante',  builder: (_, _) => const DuenoLoginScreen()),
     GoRoute(path: '/dueno-login',  builder: (_, _) => const DuenoLoginScreen()),
-    GoRoute(path: '/registro-restaurante', builder: (_, _) => const RegistroRestauranteScreen()),
     GoRoute(path: '/moto',         builder: (_, _) => const RepartidorLoginScreen()),
     GoRoute(path: '/repartidor-login', builder: (_, _) => const RepartidorLoginScreen()),
-    GoRoute(path: '/registro-rider', builder: (_, _) => const RegistroRiderPlusScreen()),
     GoRoute(path: '/rider',        builder: (_, _) => const RepartidorPlusScreen()),
     GoRoute(
       path: '/tracking',
@@ -194,6 +197,8 @@ final appRouter = GoRouter(
           orderId: extra['orderId'] as String? ?? 'o1',
           lat: extra['lat'] as double?,
           lng: extra['lng'] as double?,
+          restaurantLat: extra['restaurantLat'] as double?,
+          restaurantLng: extra['restaurantLng'] as double?,
           restaurantImageUrl: extra['restaurantImageUrl'] as String?,
           restaurants: (extra['restaurants'] as List?)?.cast<Map<String, String>>(),
         );

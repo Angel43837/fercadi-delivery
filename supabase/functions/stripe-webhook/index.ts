@@ -1,6 +1,8 @@
 // Supabase Edge Function — recibe eventos de Stripe (webhook) para confirmar
-// pagos asíncronos (OXXO Pay). El pago con tarjeta ya se confirma al instante
-// en la app (PaymentSheet), así que este webhook solo importa para OXXO.
+// pagos asíncronos (OXXO Pay) y para prender/apagar GOGO Premium según el
+// estado real de la suscripción de cada restaurante (nunca se confía en que
+// el pago "se vio bien" del lado del cliente — Premium solo se activa
+// cuando Stripe confirma aquí que la suscripción está activa).
 //
 // Deploy: supabase functions deploy stripe-webhook --no-verify-jwt
 // (--no-verify-jwt porque Stripe llama a esta URL sin el JWT de Supabase)
@@ -8,7 +10,9 @@
 // Configuración manual necesaria en el Dashboard de Stripe:
 //   Developers → Webhooks → Add endpoint
 //   URL: https://<tu-proyecto>.supabase.co/functions/v1/stripe-webhook
-//   Eventos a escuchar: payment_intent.succeeded, payment_intent.payment_failed, payment_intent.canceled
+//   Eventos a escuchar: payment_intent.succeeded, payment_intent.payment_failed,
+//   payment_intent.canceled, customer.subscription.created,
+//   customer.subscription.updated, customer.subscription.deleted
 //   Copiar el "Signing secret" (empieza con whsec_...) y guardarlo como variable
 //   de entorno STRIPE_WEBHOOK_SECRET en Supabase → Edge Functions → Secrets.
 
@@ -71,6 +75,35 @@ Deno.serve(async (req) => {
   )
 
   try {
+    // Suscripciones de GOGO Premium — el restaurant_id va en metadata desde
+    // que se crea la sesión de checkout (create-premium-checkout), así que
+    // no hace falta adivinar a quién pertenece por el customer de Stripe.
+    if (
+      event.type === 'customer.subscription.created' ||
+      event.type === 'customer.subscription.updated' ||
+      event.type === 'customer.subscription.deleted'
+    ) {
+      const subscription = event.data?.object
+      const restaurantId = subscription?.metadata?.restaurant_id as string | undefined
+      if (restaurantId) {
+        // "active"/"trialing" es Premium de verdad; cualquier otro estado
+        // (cancelada, venció el pago, etc.) lo apaga — sin periodo de
+        // gracia especial por ahora, se puede ajustar después si hace falta.
+        const isActive = subscription.status === 'active' || subscription.status === 'trialing'
+        await supabase
+          .from('restaurants')
+          .update({
+            is_premium: isActive,
+            stripe_subscription_id: event.type === 'customer.subscription.deleted' ? null : subscription.id,
+          })
+          .eq('id', restaurantId)
+      }
+
+      return new Response(JSON.stringify({ received: true }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
     const intent = event.data?.object
     const paymentIntentId = intent?.id
 

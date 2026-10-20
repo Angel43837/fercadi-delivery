@@ -75,6 +75,14 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
   final Set<String> _aceptandoIds   = {};
   Timer? _orderTimer;
 
+  // Llamadas de un dueño desde la app de escritorio (botón azul) — se ven
+  // como una tarjeta de pedido más (Aceptar/No puedo), no como un popup
+  // aparte, igual que en repartidor_screen.dart (flota).
+  List<Map<String, dynamic>> _pendingRiderCalls = [];
+  final Set<String> _dismissedCallIds = {};
+  RealtimeChannel? _callChannel;
+  Timer? _callPollTimer;
+
   bool _statsExpanded = false;
 
   @override
@@ -105,6 +113,9 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
     ).animate(CurvedAnimation(parent: _logroController, curve: Curves.elasticOut));
     _loadOrders();
     _orderTimer = Timer.periodic(const Duration(seconds: 10), (_) => _loadOrders());
+    _loadRiderCalls();
+    _callChannel = SupabaseService.subscribeToRiderCalls(_loadRiderCalls);
+    _callPollTimer = Timer.periodic(const Duration(seconds: 5), (_) => _loadRiderCalls());
   }
 
   @override
@@ -116,7 +127,98 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
     _logroTimer?.cancel();
     _gpsSub?.cancel();
     _orderTimer?.cancel();
+    _callChannel?.unsubscribe();
+    _callPollTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _loadRiderCalls() async {
+    try {
+      final calls = await SupabaseService.getPendingRiderCalls();
+      if (!mounted) return;
+      setState(() {
+        _pendingRiderCalls = calls.where((c) => !_dismissedCallIds.contains(c['id'])).toList();
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _responderLlamada(String callId, bool accept) async {
+    setState(() {
+      _dismissedCallIds.add(callId);
+      _pendingRiderCalls.removeWhere((c) => c['id'] == callId);
+    });
+    final ganaste = await SupabaseService.respondRiderCall(callId, accept);
+    if (!accept || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(ganaste ? '¡Listo! Ve por el pedido.' : 'Ya se lo llevó otro repartidor.'),
+      backgroundColor: ganaste ? Colors.green : Colors.orange,
+    ));
+  }
+
+  Widget _buildRiderCallCard(Map<String, dynamic> call) {
+    final restaurantName = call['restaurant_name'] as String? ?? 'Un restaurante';
+    final id = call['id'] as String;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: _bg,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _blue, width: 1.5),
+      ),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+          child: Row(children: [
+            const Icon(Icons.delivery_dining_rounded, color: _blue, size: 28),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('¡Te están llamando!',
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                Text('$restaurantName necesita un repartidor ahora mismo',
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 12)),
+              ]),
+            ),
+          ]),
+        ),
+        Divider(height: 1, color: Colors.white.withValues(alpha: 0.3)),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+          child: Row(children: [
+            Expanded(
+              child: GestureDetector(
+                onTap: () => _responderLlamada(id, false),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                  decoration: BoxDecoration(color: const Color(0xFFE53935), borderRadius: BorderRadius.circular(12)),
+                  child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    Icon(Icons.close_rounded, color: Colors.white, size: 18),
+                    SizedBox(width: 5),
+                    Text('NO PUEDO', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 0.4)),
+                  ]),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              flex: 2,
+              child: GestureDetector(
+                onTap: () => _responderLlamada(id, true),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: _bg)),
+                  child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    Icon(Icons.check_rounded, color: _bg, size: 18),
+                    SizedBox(width: 5),
+                    Text('ACEPTAR', style: TextStyle(color: _bg, fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 0.4)),
+                  ]),
+                ),
+              ),
+            ),
+          ]),
+        ),
+      ]),
+    );
   }
 
   @override
@@ -168,22 +270,10 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
       final pedido = _pedidosPendientes.firstWhere((o) => o['id'] == orderId);
       final total  = (pedido['total'] as num?)?.toDouble() ?? 0.0;
       await SupabaseService.updateOrderStatus(orderId, 'accepted');
-      final uid = Supabase.instance.client.auth.currentUser?.id ?? '';
-      if (uid.isNotEmpty) {
-        await SupabaseService.incrementRiderStats(
-          uid,
-          coinsAdd:    500,
-          repartosAdd: 1,
-          dineroAdd:   total,
-        );
-        final prev = _repartos;
-        setState(() {
-          _coins    += 500;
-          _repartos += 1;
-          _dinero   += total;
-        });
-        _checkLogros(prev);
-      }
+      // Coins/repartos/dinero ya NO se dan aquí (aceptar) — se mueven a
+      // cuando el pedido de verdad se entrega (ver entrega_activa_screen.dart,
+      // _avanzarStep): antes se los quedaba el rider aunque después
+      // cancelara la entrega y nunca la completara.
       setState(() => _pedidosPendientes.removeWhere((o) => o['id'] == orderId));
 
       final restaurantData = pedido['restaurants'] as Map<String, dynamic>?;
@@ -217,6 +307,15 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
             items: itemStrings.isEmpty ? ['Pedido #${orderId.substring(0, 6)}'] : itemStrings,
           ),
         ));
+        // Al volver de la entrega (completada o cancelada), se refresca
+        // coins/repartos/dinero desde el servidor — si sí se completó,
+        // entrega_activa_screen.dart ya los incrementó allá.
+        final uid = Supabase.instance.client.auth.currentUser?.id;
+        if (uid != null && mounted) {
+          final prev = _repartos;
+          await _loadStats(uid);
+          _checkLogros(prev);
+        }
       }
     } catch (_) {
       if (mounted) {
@@ -712,7 +811,10 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
         // a insertar solo (su padding automático por defecto), dejando ver
         // el negro del Scaffold arriba del card naranja — que ya maneja
         // ese espacio a mano en su propio padding (línea de abajo).
-        child: ListView(
+        child: RefreshIndicator(
+          onRefresh: _loadOrders,
+          color: _blue,
+          child: ListView(
           padding: EdgeInsets.zero,
           children: [
             // ── Card naranja con esquinas redondeadas abajo ───────────────
@@ -760,6 +862,10 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Llamadas de un dueño desde la app de escritorio — se ven
+                  // como una tarjeta de pedido más (Aceptar/No puedo), no
+                  // como un popup aparte.
+                  ..._pendingRiderCalls.map(_buildRiderCallCard),
                   Text(
                     _pedidosPendientes.isEmpty
                         ? 'Esperando pedidos...'
@@ -791,6 +897,7 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
           ],
         ),
       ),
+        ),
         ),
         _buildLogroBanner(),
       ],
@@ -1088,10 +1195,73 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
     );
   }
 
+  // Cuenta de Stripe Connect para que el retiro se pague de verdad — sin
+  // esto, Admin no tiene a dónde transferir aunque apruebe el retiro.
+  Widget _buildConnectCard(RiderWithdrawalController wc, Color orange) {
+    if (wc.connectStatus == 'completed') {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(12)),
+        child: const Row(children: [
+          Icon(Icons.verified_rounded, color: Colors.greenAccent, size: 20),
+          SizedBox(width: 10),
+          Expanded(child: Text('Cuenta de cobro con Stripe verificada',
+              style: TextStyle(color: Colors.greenAccent, fontSize: 13, fontWeight: FontWeight.w600))),
+        ]),
+      );
+    }
+    final pendiente = wc.connectStatus == 'pending';
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.06), borderRadius: BorderRadius.circular(12)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(Icons.account_balance_outlined, color: orange, size: 20),
+          const SizedBox(width: 8),
+          Expanded(child: Text(
+            pendiente ? 'Tu registro con Stripe quedó incompleto' : 'Para cobrar tus retiros, registra tu cuenta bancaria con Stripe',
+            style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+          )),
+        ]),
+        const SizedBox(height: 10),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton(
+            onPressed: wc.connectLoading ? null : () => _openStripeOnboarding(wc),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: orange,
+              side: BorderSide(color: orange),
+              padding: const EdgeInsets.symmetric(vertical: 10),
+            ),
+            child: wc.connectLoading
+                ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                : Text(pendiente ? 'Continuar registro' : 'Configurar cuenta de cobro',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  Future<void> _openStripeOnboarding(RiderWithdrawalController wc) async {
+    final url = await wc.startConnectOnboarding();
+    if (url == null) {
+      if (mounted && wc.error != null) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(wc.error!), backgroundColor: Colors.red[700]));
+      }
+      return;
+    }
+    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    // Al volver de Stripe no hay forma de saber si ya terminó (sin webhook
+    // ni deep link propio) — se vuelve a preguntar directo a Stripe.
+    await wc.loadConnectStatus();
+  }
+
   void _showRetiros() {
     const orange = _bg;
     final withdrawalController = context.read<RiderWithdrawalController>();
     withdrawalController.load();
+    withdrawalController.loadConnectStatus();
 
     showModalBottomSheet(
       context: context,
@@ -1137,13 +1307,13 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
                       const SizedBox(height: 6),
                       cargando
                           ? const SizedBox(height: 36, width: 36, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                          : Text('\$${saldoDisponible.toStringAsFixed(0)} MXN',
+                          : Text('\$${saldoDisponible.floor()} MXN',
                               style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 16),
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
-                          onPressed: cargando ? null : () => _showSolicitarRetiroDialog(wc, saldoDisponible),
+                          onPressed: cargando ? null : () => _requireStripeThen(wc, () => _showSolicitarRetiroDialog(wc, saldoDisponible)),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.white,
                             foregroundColor: orange,
@@ -1158,6 +1328,8 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
                   const SizedBox(height: 8),
                   Text('Mínimo de retiro: \$200 MXN · Sujeto a revisión',
                       style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 11), textAlign: TextAlign.center),
+                  const SizedBox(height: 16),
+                  _buildConnectCard(wc, orange),
                   const SizedBox(height: 24),
                   const Text('Historial', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
                   const SizedBox(height: 12),
@@ -1209,8 +1381,32 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
     );
   }
 
+  // Antes se podía solicitar el retiro sin tener la cuenta de Stripe
+  // configurada — el retiro quedaba pendiente para siempre, Admin lo
+  // descubría hasta intentar aprobarlo. Ahora se avisa aquí mismo, antes de
+  // dejar pedirlo.
+  void _requireStripeThen(RiderWithdrawalController wc, VoidCallback action) {
+    if (wc.connectStatus == 'completed') {
+      action();
+      return;
+    }
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Configura tu cuenta de cobro primero', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'Antes de poder pedir un retiro, necesitas registrar tu cuenta bancaria con Stripe — es el botón "Configurar cuenta de cobro" de aquí abajo.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Entendido'))],
+      ),
+    );
+  }
+
   Future<void> _showSolicitarRetiroDialog(RiderWithdrawalController wc, double saldoDisponible) async {
-    final amountCtrl = TextEditingController(text: saldoDisponible.toStringAsFixed(0));
+    final amountCtrl = TextEditingController(text: saldoDisponible.floor().toString());
     String? localError;
     bool submitting = false;
 
@@ -1237,7 +1433,7 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
               ),
             ),
             const SizedBox(height: 8),
-            Text('Disponible: \$${saldoDisponible.toStringAsFixed(0)} MXN · Mínimo \$200 MXN',
+            Text('Disponible: \$${saldoDisponible.floor()} MXN · Mínimo \$200 MXN',
                 style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 12)),
             if (localError != null) ...[
               const SizedBox(height: 10),
@@ -1804,7 +2000,11 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
         customerLng: cLng,
       );
     }
-    final deliveryFee = (pedido['delivery_fee'] as num?)?.toDouble() ?? 0.0;
+    // rider_delivery_fee = envío nominal antes de descuento de promoción —
+    // lo que de verdad se le paga al repartidor (ver nota de
+    // estimarGananciaRepartidor arriba y la migración
+    // 20261015000000_rider_delivery_fee.sql).
+    final deliveryFee = ((pedido['rider_delivery_fee'] ?? pedido['delivery_fee']) as num?)?.toDouble() ?? 0.0;
     final montoAMostrar = gananciaEstimada ??
         (deliveryFee * (1 - LocationService.comisionRepartidorPct / 100));
 

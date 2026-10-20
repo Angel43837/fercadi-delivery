@@ -167,19 +167,6 @@ class _DuenoLoginScreenState extends State<DuenoLoginScreen> {
                 ),
               ),
               const SizedBox(height: 20),
-              Center(
-                child: TextButton(
-                  // El registro vive DENTRO de la app (restaurado sept 2026
-                  // — el sitio externo gogo-registro.vercel.app creaba
-                  // cuentas en otro proyecto de Supabase distinto al que
-                  // usa esta app, y esas cuentas nunca podían iniciar
-                  // sesión aquí).
-                  onPressed: () => context.push('/registro-restaurante'),
-                  child: const Text('¿Nuevo restaurante? Regístrate aquí',
-                      style: TextStyle(color: Colors.white70, fontSize: 13)),
-                ),
-              ),
-              const SizedBox(height: 20),
             ],
           ),
         ),

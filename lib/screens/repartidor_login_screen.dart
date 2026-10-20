@@ -170,24 +170,6 @@ class _RepartidorLoginScreenState extends State<RepartidorLoginScreen> {
                 ),
               ),
               const SizedBox(height: 20),
-              // El registro vive DENTRO de la app (restaurado sept 2026 — el
-              // sitio externo gogo-registro.vercel.app creaba cuentas en
-              // otro proyecto de Supabase distinto al que usa esta app, y
-              // esas cuentas nunca podían iniciar sesión aquí). Antes había
-              // dos botones que llevaban a dos formularios distintos pero
-              // redundantes (creaban la misma cuenta 'repartidor_plus') —
-              // se restauró solo uno, ya consolidado.
-              Center(
-                child: TextButton(
-                  onPressed: () => context.push('/registro-rider'),
-                  child: const Text('¿Nuevo repartidor? Únete a GOGO Riders',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600)),
-                ),
-              ),
-              const SizedBox(height: 20),
             ],
           ),
         ),

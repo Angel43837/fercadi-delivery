@@ -34,6 +34,8 @@ class AuthService {
   static const _keyAvatarColor  = 'profile_avatar_color';
   static const _keyProfilePhoto = 'profile_photo_path';
   static const _keyZona         = 'profile_zona';
+  static const _keyAge          = 'profile_age';
+  static const _keyGender       = 'profile_gender';
   static const _keyCLABE          = 'bank_clabe';
   static const _keySavedAddresses  = 'saved_addresses';
   static const _keyRestName        = 'restaurant_name';
@@ -43,6 +45,10 @@ class AuthService {
   static const _keyRestPhoto       = 'restaurant_photo';
   static const _keyRestEmoji       = 'restaurant_emoji';
   static const _keyRestaurantId    = 'restaurant_id';
+  // A propósito sin prefijo de UID (_userKey) — se acepta una sola vez por
+  // dispositivo, no por cuenta: el checkbox de términos gatea los botones
+  // de login/registro ANTES de que exista cualquier sesión o UID.
+  static const _keyTermsAcceptedOnce = 'terms_accepted_once';
   static const _keyOnboardingSeenPrefix = 'dueno_onboarding_seen_';
 
   // Claves que antes vivían bajo '<email>:...' y que _migrateLegacyEmailKeyedData
@@ -228,13 +234,55 @@ class AuthService {
   static Future<String> getPreferredPayment() async {
     final prefs = await SharedPreferences.getInstance();
     final key   = await _userKey(_keyPayment);
-    return prefs.getString(key) ?? 'cash';
+    final local = prefs.getString(key);
+    if (local != null) return local;
+    try {
+      final metaPayment = Supabase.instance.client.auth.currentUser?.userMetadata?['preferred_payment'] as String?;
+      if (metaPayment != null && metaPayment.isNotEmpty) return metaPayment;
+    } catch (_) {}
+    return 'cash';
   }
 
   static Future<void> savePreferredPayment(String method) async {
     final prefs = await SharedPreferences.getInstance();
     final key   = await _userKey(_keyPayment);
     await prefs.setString(key, method);
+    try {
+      await Supabase.instance.client.auth.updateUser(UserAttributes(data: {'preferred_payment': method}))
+          .timeout(const Duration(seconds: 8));
+    } catch (_) {}
+  }
+
+  // ── Edad y género (onboarding) ─────────────────────────────────────────────────
+  // Opcionales a propósito (se pueden omitir en el onboarding) — null significa
+  // "nunca se contestó", no lo mismo que un valor guardado vacío.
+
+  static Future<int?> getAge() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt(await _userKey(_keyAge));
+  }
+
+  static Future<void> saveAge(int age) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(await _userKey(_keyAge), age);
+    try {
+      await Supabase.instance.client.auth.updateUser(UserAttributes(data: {'age': age}))
+          .timeout(const Duration(seconds: 8));
+    } catch (_) {}
+  }
+
+  static Future<String?> getGender() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(await _userKey(_keyGender));
+  }
+
+  static Future<void> saveGender(String gender) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(await _userKey(_keyGender), gender);
+    try {
+      await Supabase.instance.client.auth.updateUser(UserAttributes(data: {'gender': gender}))
+          .timeout(const Duration(seconds: 8));
+    } catch (_) {}
   }
 
   // ── Zona (Maravatío / Acámbaro) ───────────────────────────────────────────────
@@ -296,10 +344,29 @@ class AuthService {
         await prefs.setString(key, metaUrl);
         return metaUrl;
       }
+      // Google a veces puebla 'avatar_url' y a veces 'picture' (o ambos) —
+      // se revisan los dos por separado en vez de confiar en uno solo.
       final picture = user?.userMetadata?['picture'] as String?;
       if (picture != null && picture.startsWith('http')) return picture;
+      final avatarUrl = user?.userMetadata?['avatar_url'] as String?;
+      if (avatarUrl != null && avatarUrl.startsWith('http')) return avatarUrl;
     } catch (_) {}
     return null;
+  }
+
+  // ── Aceptación de Términos y Aviso de Privacidad ───────────────────────────────
+  // Una sola vez por dispositivo: antes el checkbox de login_screen.dart
+  // empezaba siempre destapado (bool de widget, sin persistir), así que
+  // cerrar sesión y volver a entrar obligaba a aceptar otra vez.
+
+  static Future<bool> hasAcceptedTermsOnce() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_keyTermsAcceptedOnce) ?? false;
+  }
+
+  static Future<void> markTermsAcceptedOnce() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyTermsAcceptedOnce, true);
   }
 
   // Regresa false si la foto (siendo una URL real, ya subida) no se pudo

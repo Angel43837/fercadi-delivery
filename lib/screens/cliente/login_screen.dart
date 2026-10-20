@@ -92,6 +92,11 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     super.initState();
     _isSignUp = widget.startInSignUp;
     _shakeController = AnimationController(vsync: this, duration: const Duration(milliseconds: 450));
+    // Si ya se aceptó antes en este dispositivo, no se vuelve a pedir —
+    // cerrar sesión y entrar de nuevo no debe obligar a aceptar otra vez.
+    AuthService.hasAcceptedTermsOnce().then((accepted) {
+      if (accepted && mounted) setState(() => _acceptedTerms = true);
+    });
     _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((data) async {
       if (data.event == AuthChangeEvent.passwordRecovery && mounted) {
         _recovering = true;
@@ -137,8 +142,8 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     _phoneAuthInProgress = false;
     if (!mounted) return;
     if (isNewUser) {
-      // Alta nueva — falta nombre/foto, eso lo pide complete_profile_screen.
-      context.go('/complete-profile', extra: {
+      // Alta nueva — falta todo el onboarding (nombre, edad, dirección...).
+      context.go('/onboarding', extra: {
         if (widget.returnTo != null) 'returnTo': widget.returnTo,
       });
       return;
@@ -210,9 +215,9 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
           data: {'accepted_terms_at': DateTime.now().toIso8601String()},
         );
         if (!mounted) return;
-        // Igual que el alta por teléfono: falta nombre/foto, eso lo pide
-        // complete_profile_screen.dart antes de entrar a la app.
-        context.go('/complete-profile', extra: {
+        // Igual que el alta por teléfono: falta todo el onboarding antes de
+        // entrar a la app.
+        context.go('/onboarding', extra: {
           if (widget.returnTo != null) 'returnTo': widget.returnTo,
         });
       } else {
@@ -549,7 +554,11 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                         width: 24, height: 24,
                         child: Checkbox(
                           value: _acceptedTerms,
-                          onChanged: (v) => setState(() => _acceptedTerms = v ?? false),
+                          onChanged: (v) {
+                            final accepted = v ?? false;
+                            setState(() => _acceptedTerms = accepted);
+                            if (accepted) AuthService.markTermsAcceptedOnce();
+                          },
                           checkColor: Colors.white,
                           fillColor: WidgetStateProperty.resolveWith(
                             (states) => states.contains(WidgetState.selected)

@@ -41,6 +41,9 @@ class OrderHistoryService {
     required String address,
     double? lat,
     double? lng,
+    double? restaurantLat,
+    double? restaurantLng,
+    String? restaurantImageUrl,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_userActiveKey, [
@@ -50,6 +53,12 @@ class OrderHistoryService {
       address,
       (lat ?? '').toString(),
       (lng ?? '').toString(),
+      (restaurantLat ?? '').toString(),
+      (restaurantLng ?? '').toString(),
+      // Agregado al final a propósito — un pedido activo guardado ANTES de
+      // este campo (formato viejo, sin esta posición) debe seguir leyéndose
+      // bien con los primeros 8 campos, solo sin logo.
+      restaurantImageUrl ?? '',
     ].join('||'));
   }
 
@@ -66,6 +75,9 @@ class OrderHistoryService {
       'address':        p.length > 3 ? p[3] : '',
       'lat':            p.length > 4 && p[4].isNotEmpty ? double.tryParse(p[4]) : null,
       'lng':            p.length > 5 && p[5].isNotEmpty ? double.tryParse(p[5]) : null,
+      'restaurantLat':  p.length > 6 && p[6].isNotEmpty ? double.tryParse(p[6]) : null,
+      'restaurantLng':  p.length > 7 && p[7].isNotEmpty ? double.tryParse(p[7]) : null,
+      'restaurantImageUrl': p.length > 8 && p[8].isNotEmpty ? p[8] : null,
     };
   }
 

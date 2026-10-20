@@ -19,3 +19,16 @@ const List<String> kProductCategories = [
   'Postres',
   'Bebidas',
 ];
+
+// Un icono distinto por categoría (no el mismo para todas) para las
+// pestañas de menú — mismo criterio que el resto de la app: emoji plano,
+// nunca una imagen 3D/render.
+const Map<String, String> kProductCategoryIcons = {
+  'Platillos': '🍽️',
+  'Entradas': '🥟',
+  'Ensaladas': '🥗',
+  'Desayunos': '🍳',
+  'Acompañamientos': '🍟',
+  'Postres': '🍰',
+  'Bebidas': '🥤',
+};

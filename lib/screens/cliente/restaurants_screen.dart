@@ -92,6 +92,14 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
   bool _promosExpanded = false;
   final _promosScrollCtrl = ScrollController();
   Timer? _promosAutoScrollTimer;
+  // El carrusel de "Promos" nunca distinguía un toque real del usuario —
+  // el Timer.periodic de abajo seguía llamando animateTo sin importar si
+  // alguien lo estaba arrastrando con el dedo en ese momento. Estos dos
+  // campos se revisan DENTRO de cada tick (no se cancela/recrea el timer)
+  // para no depender de ganarle una carrera a un tick que ya iba a mitad
+  // de camino cuando el dedo tocó la pantalla.
+  bool _userTouchingPromos = false;
+  DateTime? _promosTouchReleasedAt;
 
   // Active order banner
   Map<String, dynamic>? _activeOrder;
@@ -376,6 +384,11 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
   }
 
   void _advancePromosCarousel() {
+    if (_userTouchingPromos) return;
+    if (_promosTouchReleasedAt != null &&
+        DateTime.now().difference(_promosTouchReleasedAt!) < const Duration(seconds: 8)) {
+      return;
+    }
     if (!_promosScrollCtrl.hasClients) return;
     final max = _promosScrollCtrl.position.maxScrollExtent;
     final next = _promosScrollCtrl.offset + _promosCardStride;
@@ -450,12 +463,23 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                   )
                 : SizedBox(
                     height: 190,
-                    child: ListView.builder(
-                      controller: _promosScrollCtrl,
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      itemCount: _allPromos.length,
-                      itemBuilder: (_, i) => _buildPromoCard(_allPromos[i]),
+                    child: Listener(
+                      onPointerDown: (_) => _userTouchingPromos = true,
+                      onPointerUp: (_) {
+                        _userTouchingPromos = false;
+                        _promosTouchReleasedAt = DateTime.now();
+                      },
+                      onPointerCancel: (_) {
+                        _userTouchingPromos = false;
+                        _promosTouchReleasedAt = DateTime.now();
+                      },
+                      child: ListView.builder(
+                        controller: _promosScrollCtrl,
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        itemCount: _allPromos.length,
+                        itemBuilder: (_, i) => _buildPromoCard(_allPromos[i]),
+                      ),
                     ),
                   ),
           ),
@@ -1340,7 +1364,12 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
   Widget _buildRestaurantTile(Restaurant r, AppDataProvider appData) {
     final isExpanded = _expandedIds.contains(r.id);
     final isLoading = _loadingMenu[r.id] == true;
-    final cats = _cats[r.id] ?? [];
+    // Un restaurante nuevo trae categorías genéricas de menú creadas solas
+    // (Platillos, Entradas, Bebidas...), pero normalmente solo carga
+    // platillos en una o dos — al cliente no le sirve ver pestañas vacías
+    // de categorías donde no hay nada que pedir.
+    final allCats = _cats[r.id] ?? [];
+    final cats = allCats.where((c) => (_prods[r.id]?[c.id] ?? []).isNotEmpty).toList();
     final selIdxs = _selCat[r.id] ?? {0};
     const headerColor = AppConstants.primaryColor;
 
@@ -2382,28 +2411,46 @@ class _PromoCarousel extends StatefulWidget {
 class _PromoCarouselState extends State<_PromoCarousel> {
   final _ctrl = PageController();
   int _current = 0;
-  Timer? _timer;
+  // Un solo ticker siempre corriendo (cada 1s) que decide en cada vuelta si
+  // le toca avanzar o no — en vez de cancelar/crear un Timer.periodic de 4s
+  // cada vez que el usuario toca/suelta. Ese enfoque anterior dependía de
+  // ganarle una carrera a un timer que podía ya haber disparado
+  // animateToPage justo antes de cancelarlo, y de ahí el reporte de "sigue
+  // jalando aunque lo toques". Aquí la condición se revisa de nuevo cada
+  // segundo, así que no hay ventana donde un tick viejo se cuele.
+  Timer? _ticker;
+  bool _userTouching = false;
+  DateTime _lastAdvance = DateTime.now();
+  DateTime? _touchReleasedAt;
 
   @override
   void initState() {
     super.initState();
-    _startAutoScroll();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _maybeAdvance());
   }
 
-  void _startAutoScroll() {
-    _timer?.cancel();
-    _timer = Timer.periodic(const Duration(seconds: 4), (_) {
-      if (!mounted) return;
-      final next = (_current + 1) % widget.slides.length;
-      _ctrl.animateToPage(next,
-          duration: const Duration(milliseconds: 500),
-          curve: Curves.easeInOut);
-    });
+  void _maybeAdvance() {
+    if (!mounted || _userTouching) return;
+    final now = DateTime.now();
+    if (_touchReleasedAt != null && now.difference(_touchReleasedAt!) < const Duration(seconds: 8)) return;
+    if (now.difference(_lastAdvance) < const Duration(seconds: 4)) return;
+    _lastAdvance = now;
+    final next = (_current + 1) % widget.slides.length;
+    _ctrl.animateToPage(next, duration: const Duration(milliseconds: 500), curve: Curves.easeInOut);
+  }
+
+  void _onTouchStart() {
+    _userTouching = true;
+  }
+
+  void _onTouchEnd() {
+    _userTouching = false;
+    _touchReleasedAt = DateTime.now();
   }
 
   @override
   void dispose() {
-    _timer?.cancel();
+    _ticker?.cancel();
     _ctrl.dispose();
     super.dispose();
   }
@@ -2415,23 +2462,20 @@ class _PromoCarouselState extends State<_PromoCarousel> {
         borderRadius: BorderRadius.zero,
         child: SizedBox(
           height: 140,
-          child: NotificationListener<ScrollNotification>(
-            // El usuario tocando y arrastrando el carrusel manda un
-            // ScrollStartNotification con dragDetails != null (a diferencia
-            // de nuestro propio animateToPage, que también dispara
-            // notificaciones de scroll pero sin dragDetails) — se usa eso
-            // para pausar el avance automático mientras el dedo está encima
-            // y no le compita al swipe manual. Al soltar, se reinicia el
-            // timer desde cero (mismos 4s) en vez de dejarlo corriendo con
-            // el conteo viejo.
-            onNotification: (n) {
-              if (n is ScrollStartNotification && n.dragDetails != null) {
-                _timer?.cancel();
-              } else if (n is ScrollEndNotification) {
-                _startAutoScroll();
-              }
-              return false;
-            },
+          child: Listener(
+            // Antes esto se detectaba con NotificationListener<ScrollNotification>
+            // (distinguiendo drag real por dragDetails != null) — pero esas
+            // notificaciones dependen de que el PageView gane el "gesture
+            // arena" contra el GestureDetector de cada slide (onTap), y en la
+            // práctica el toque no siempre se detectaba a tiempo, dejando el
+            // carrusel corriendo aunque el usuario lo tocara. Listener.onPointerDown
+            // dispara siempre, para CUALQUIER toque en la zona, sin depender
+            // de qué widget termine ganando ese arbitraje — y el propio
+            // avance (_maybeAdvance) vuelve a revisar _userTouching cada
+            // segundo, así que no hay forma de que un tick viejo se cuele.
+            onPointerDown: (_) => _onTouchStart(),
+            onPointerUp: (_) => _onTouchEnd(),
+            onPointerCancel: (_) => _onTouchEnd(),
             child: PageView.builder(
               controller: _ctrl,
               itemCount: widget.slides.length,

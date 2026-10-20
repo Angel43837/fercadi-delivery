@@ -126,9 +126,11 @@ class _FlotaScreenState extends State<FlotaScreen> {
 
   double _gananciaHoy(String riderId) {
     final orders = _ordersHoy[riderId] ?? [];
+    // rider_delivery_fee = envío nominal antes de descuento de promoción —
+    // lo que de verdad se le paga al repartidor.
     return orders
         .where((o) => o['status'] == 'delivered')
-        .fold(0.0, (sum, o) => sum + ((o['delivery_fee'] as num?)?.toDouble() ?? 0));
+        .fold(0.0, (sum, o) => sum + (((o['rider_delivery_fee'] ?? o['delivery_fee']) as num?)?.toDouble() ?? 0));
   }
 
   int _entregasHoy(String riderId) {
