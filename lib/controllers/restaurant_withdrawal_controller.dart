@@ -15,6 +15,11 @@ class RestaurantWithdrawalController extends ChangeNotifier {
 
   String connectStatus = 'not_started';
   Map<String, dynamic>? connectDebugInfo;
+  // Antes un error aquí se tragaba en silencio (catch (_) {}) — connectStatus
+  // se quedaba en 'not_started' sin ninguna pista de qué pasó de verdad, ni
+  // siquiera cuando SÍ existía una cuenta de Stripe creada. Ahora se guarda
+  // el error real para poder mostrarlo.
+  String? connectStatusError;
   bool connectLoading = false;
   String? _restaurantId;
 
@@ -37,12 +42,14 @@ class RestaurantWithdrawalController extends ChangeNotifier {
 
   Future<void> loadConnectStatus() async {
     connectLoading = true;
+    connectStatusError = null;
     notifyListeners();
     try {
       final result = await _service.fetchConnectStatus();
       connectStatus = result.status;
       connectDebugInfo = result.debugInfo;
-    } catch (_) {
+    } catch (e) {
+      connectStatusError = e.toString().replaceFirst('Exception: ', '');
     } finally {
       connectLoading = false;
       notifyListeners();

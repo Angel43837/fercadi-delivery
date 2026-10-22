@@ -34,7 +34,7 @@ class RiderWithdrawalService {
 
   Future<List<RiderWithdrawal>> fetchHistory() => _repo.fetchMyWithdrawals();
 
-  Future<String> fetchConnectStatus() => _repo.fetchConnectStatus();
+  Future<({String status, Map<String, dynamic>? debugInfo})> fetchConnectStatus() => _repo.fetchConnectStatus();
 
   Future<String> startConnectOnboarding() => _repo.startConnectOnboarding();
 

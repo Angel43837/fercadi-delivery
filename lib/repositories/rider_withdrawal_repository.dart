@@ -102,11 +102,14 @@ class RiderWithdrawalRepository {
     return e.toString();
   }
 
-  Future<String> fetchConnectStatus() async {
+  Future<({String status, Map<String, dynamic>? debugInfo})> fetchConnectStatus() async {
     try {
       final res = await _client.functions.invoke('rider-stripe-connect', body: {'action': 'status'});
       final data = res.data as Map<String, dynamic>;
-      return data['status'] as String? ?? 'not_started';
+      return (
+        status: data['status'] as String? ?? 'not_started',
+        debugInfo: data['debugInfo'] as Map<String, dynamic>?,
+      );
     } catch (e) {
       throw Exception(_functionErrorMessage(e));
     }

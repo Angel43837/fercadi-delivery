@@ -27,6 +27,7 @@ import '../../controllers/restaurant_withdrawal_controller.dart';
 import '../../models/withdrawal_status.dart';
 import 'package:go_router/go_router.dart';
 import '../../models/restaurant_banner.dart';
+import '../../core/stripe_requirements.dart';
 import '../../services/auth_service.dart';
 import '../../services/location_service.dart';
 import '../../services/notification_service.dart';
@@ -93,6 +94,9 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
   int _tab = 0;
   AppOrderStatus? _filterStatus;
   bool _isDark = false;
+  // Oculto por default — el JSON crudo de Stripe es para diagnosticar algo
+  // raro, no para que lo vea un dueño normal cada vez que entra incompleto.
+  bool _showStripeDebug = false;
 
   Color get _bg       => _isDark ? const Color(0xFF121212) : const Color(0xFFFF5722);
   Color get _surface  => _isDark ? const Color(0xFF1E1E1E) : const Color(0xFFE64A19);
@@ -891,18 +895,44 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
           ),
         ),
-        // Temporal, para diagnosticar por qué Stripe no marca la cuenta
-        // como completa aunque el registro se haya terminado — sin esto no
-        // hay forma de ver, desde el celular, qué sigue pendiente de verdad.
-        if (pendiente && wc.connectDebugInfo != null) ...[
+        if (wc.connectStatusError != null) ...[
           const SizedBox(height: 10),
-          SelectableText(
-            const JsonEncoder.withIndent('  ').convert(wc.connectDebugInfo),
-            style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 10, fontFamily: 'monospace'),
+          Text('No se pudo revisar el estado de tu registro. Intenta de nuevo más tarde.',
+              style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+        ],
+        ..._buildStripeRequirementsList(wc.connectDebugInfo),
+        if (wc.connectDebugInfo != null) ...[
+          const SizedBox(height: 8),
+          GestureDetector(
+            onTap: () => setState(() => _showStripeDebug = !_showStripeDebug),
+            child: Text(_showStripeDebug ? 'Ocultar detalles técnicos' : 'Ver detalles técnicos',
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11, decoration: TextDecoration.underline)),
           ),
+          if (_showStripeDebug) ...[
+            const SizedBox(height: 8),
+            SelectableText(
+              const JsonEncoder.withIndent('  ').convert(wc.connectDebugInfo),
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 10, fontFamily: 'monospace'),
+            ),
+          ],
         ],
       ]),
     );
+  }
+
+  List<Widget> _buildStripeRequirementsList(Map<String, dynamic>? debugInfo) {
+    final faltantes = friendlyStripeRequirements(debugInfo);
+    if (faltantes.isEmpty) return const [];
+    return [
+      const SizedBox(height: 10),
+      Text('Para terminar tu registro, Stripe todavía necesita:',
+          style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontSize: 12, fontWeight: FontWeight.w600)),
+      const SizedBox(height: 4),
+      ...faltantes.map((f) => Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text('•  $f', style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 12)),
+          )),
+    ];
   }
 
   Future<void> _openStripeOnboarding(RestaurantWithdrawalController wc) async {

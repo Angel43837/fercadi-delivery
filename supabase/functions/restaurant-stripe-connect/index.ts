@@ -92,7 +92,7 @@ Deno.serve(async (req) => {
       let debugInfo: Record<string, unknown> | undefined
       if (acctId) {
         const acct = await stripeV2Fetch(
-          `/v2/core/accounts/${acctId}?include[]=configuration.recipient&include[]=requirements`, 'GET', stripeSecretKey,
+          `/v2/core/accounts/${acctId}?include[0]=configuration.recipient&include[1]=requirements`, 'GET', stripeSecretKey,
         )
         const cap = acct.configuration?.recipient?.capabilities?.stripe_balance?.stripe_transfers
         status = cap?.status === 'active' ? 'completed' : 'pending'

@@ -17,6 +17,12 @@ class RiderWithdrawalController extends ChangeNotifier {
   // 'not_started' | 'pending' | 'completed' — cuenta de Stripe Connect para
   // que el retiro se pague de verdad (ver rider-stripe-connect).
   String connectStatus = 'not_started';
+  Map<String, dynamic>? connectDebugInfo;
+  // Antes un error aquí se tragaba en silencio — connectStatus se quedaba
+  // en 'not_started' sin ninguna pista de qué pasó, ni siquiera cuando SÍ
+  // existía una cuenta de Stripe creada (mismo bug encontrado del lado de
+  // restaurantes: el query 'include[]' que Stripe rechaza).
+  String? connectStatusError;
   bool connectLoading = false;
 
   Future<void> load() async {
@@ -37,12 +43,14 @@ class RiderWithdrawalController extends ChangeNotifier {
 
   Future<void> loadConnectStatus() async {
     connectLoading = true;
+    connectStatusError = null;
     notifyListeners();
     try {
-      connectStatus = await _service.fetchConnectStatus();
-    } catch (_) {
-      // Se deja el valor anterior — no es crítico, el repartidor puede
-      // reintentar abriendo la hoja de retiros de nuevo.
+      final result = await _service.fetchConnectStatus();
+      connectStatus = result.status;
+      connectDebugInfo = result.debugInfo;
+    } catch (e) {
+      connectStatusError = e.toString().replaceFirst('Exception: ', '');
     } finally {
       connectLoading = false;
       notifyListeners();

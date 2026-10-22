@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "678940292003",
+    "project_id": "gogo-food-a33a4",
+    "storage_bucket": "gogo-food-a33a4.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:678940292003:android:2bbfab25c1e00621c3a016",
+        "android_client_info": {
+          "package_name": "com.fercadi.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBufLiJAuuY5lWd2-P-IUUyVb2p1r2RUqQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

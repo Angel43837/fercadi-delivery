@@ -84,22 +84,28 @@ Deno.serve(async (req) => {
     if (action === 'status') {
       let status = account?.stripe_onboarding_status ?? 'not_started'
       const acctId = account?.stripe_connect_account_id
+      let debugInfo: Record<string, unknown> | undefined
       if (acctId) {
         // Se vuelve a preguntar a Stripe directo (no se confía en el valor
         // guardado) — es la única forma real de saber si ya pasó la
         // verificación o sigue pendiente, sin webhook configurado.
         const acct = await stripeV2Fetch(
-          `/v2/core/accounts/${acctId}?include[]=configuration.recipient`, 'GET', stripeSecretKey,
+          `/v2/core/accounts/${acctId}?include[0]=configuration.recipient&include[1]=requirements`, 'GET', stripeSecretKey,
         )
-        const capStatus = acct.configuration?.recipient?.capabilities?.stripe_balance?.stripe_transfers?.status
-        status = capStatus === 'active' ? 'completed' : 'pending'
+        const cap = acct.configuration?.recipient?.capabilities?.stripe_balance?.stripe_transfers
+        status = cap?.status === 'active' ? 'completed' : 'pending'
+        debugInfo = {
+          capability_status: cap?.status ?? null,
+          capability_status_details: cap?.status_details ?? null,
+          requirements: acct.requirements ?? null,
+        }
         if (status !== account?.stripe_onboarding_status) {
           await admin.from('rider_payout_accounts')
             .update({ stripe_onboarding_status: status, updated_at: new Date().toISOString() })
             .eq('rider_id', rider.id)
         }
       }
-      return new Response(JSON.stringify({ status }), {
+      return new Response(JSON.stringify({ status, debugInfo }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }

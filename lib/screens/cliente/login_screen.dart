@@ -530,10 +530,13 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                   ),
                 ),
               ],
-              const SizedBox(height: 20),
-
               // ── Aceptación de términos y privacidad ───────────────────────────
-              AnimatedBuilder(
+              // Una vez aceptados (esta vez o en una sesión anterior en este
+              // mismo dispositivo), el cuadro desaparece en vez de quedarse
+              // ahí ya marcado — no hay nada más que pedirle al usuario.
+              if (!_acceptedTerms) ...[
+                const SizedBox(height: 20),
+                AnimatedBuilder(
                 animation: _shakeController,
                 builder: (context, child) {
                   final t = _shakeController.value;
@@ -597,8 +600,9 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                     ],
                   ),
                 ),
-              ),
-              const SizedBox(height: 20),
+                ),
+                const SizedBox(height: 20),
+              ],
             ],
           ),
         ),
