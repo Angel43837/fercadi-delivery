@@ -40,6 +40,17 @@ class EntregaActivaScreen extends StatefulWidget {
   final double total;
   final List<String> items;
 
+  // Segunda pierna de un pedido de 2 restaurantes (ver
+  // 20261031000000_multi_restaurant_orders.sql) — todos nulos para un
+  // pedido normal de un solo restaurante (el default, no rompe a ningún
+  // llamador existente).
+  final String? secondOrderId;
+  final String? secondRestaurantName;
+  final String? secondRestaurantAddress;
+  final LatLng? secondRestaurantPos;
+  final double? secondTotal;
+  final List<String>? secondItems;
+
   const EntregaActivaScreen({
     super.key,
     required this.orderId,
@@ -53,7 +64,16 @@ class EntregaActivaScreen extends StatefulWidget {
     required this.customerPos,
     required this.total,
     required this.items,
+    this.secondOrderId,
+    this.secondRestaurantName,
+    this.secondRestaurantAddress,
+    this.secondRestaurantPos,
+    this.secondTotal,
+    this.secondItems,
   });
+
+  bool get isGrouped => secondOrderId != null;
+  double get combinedTotal => total + (secondTotal ?? 0);
 
   @override
   State<EntregaActivaScreen> createState() => _EntregaActivaScreenState();
@@ -68,6 +88,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
   // restaurante real. _defaultRestaurantPos se queda solo como último
   // respaldo si de plano el restaurante no tiene lat/lng guardado.
   LatLng get _restaurantPos => widget.restaurantPos ?? _defaultRestaurantPos;
+  LatLng get _secondRestaurantPos => widget.secondRestaurantPos ?? _restaurantPos;
 
   Position? _myPos;
   StreamSubscription<Position>? _gpsSub;
@@ -103,6 +124,49 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
     'Marcar como entregado',
     'Ver más pedidos',
   ];
+
+  // Pedido de 2 restaurantes: 2 paradas de recogida en vez de 1 — mismo
+  // patrón que repartidor_screen.dart (Motos Flota), ver ese archivo para
+  // el razonamiento completo.
+  List<({IconData icon, String label, Color color})> get _activeSteps {
+    if (!widget.isGrouped) return _steps;
+    return [
+      (icon: Icons.store, label: 'Ve a ${widget.restaurantName}', color: const Color(0xFFFFD600)),
+      (icon: Icons.shopping_bag, label: 'Recoge en ${widget.restaurantName}', color: AppConstants.primaryColor),
+      (icon: Icons.store, label: 'Ve a ${widget.secondRestaurantName}', color: Colors.deepOrange),
+      (icon: Icons.shopping_bag, label: 'Recoge en ${widget.secondRestaurantName}', color: Colors.deepOrangeAccent),
+      (icon: Icons.delivery_dining, label: 'En camino al cliente', color: const Color(0xFF2196F3)),
+      (icon: Icons.check_circle, label: '¡Pedido entregado!', color: Colors.green),
+    ];
+  }
+
+  List<String> get _activeStepActions {
+    if (!widget.isGrouped) return _stepActions;
+    return [
+      'Ya estoy en ${widget.restaurantName}',
+      'Pedido recogido — ir al 2º restaurante',
+      'Ya estoy en ${widget.secondRestaurantName}',
+      'Pedido recogido — ¡en camino al cliente!',
+      'Marcar como entregado',
+      'Ver más pedidos',
+    ];
+  }
+
+  int get _finalizeIndex => _activeSteps.length - 2;
+
+  LatLng _destForStep(int step, LatLng clientPos) {
+    if (!widget.isGrouped) return step >= 2 ? clientPos : _restaurantPos;
+    if (step < 2) return _restaurantPos;
+    if (step < 4) return _secondRestaurantPos;
+    return clientPos;
+  }
+
+  Color _colorForStep(int step) {
+    if (!widget.isGrouped) return step >= 2 ? const Color(0xFF2196F3) : const Color(0xFFFFB300);
+    if (step < 2) return const Color(0xFFFFD600);
+    if (step < 4) return Colors.deepOrange;
+    return const Color(0xFF2196F3);
+  }
 
   @override
   void initState() {
@@ -170,9 +234,10 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
         setState(() { _myPos = pos; _gpsSeemsStuck = false; });
         SupabaseService.broadcastLocation(pos.latitude, pos.longitude);
         try { _mapCtrl.move(LatLng(pos.latitude, pos.longitude), 15.5); } catch (_) {}
-        if (_routePoints.isEmpty && _step < 2) {
-          _fetchRoute(LatLng(pos.latitude, pos.longitude), _restaurantPos,
-              color: const Color(0xFFFFB300));
+        if (_routePoints.isEmpty && _step < _finalizeIndex) {
+          final clientPos = _geocodedCustomerPos ?? widget.customerPos ?? _restaurantPos;
+          _fetchRoute(LatLng(pos.latitude, pos.longitude), _destForStep(_step, clientPos),
+              color: _colorForStep(_step));
         }
       });
     } catch (_) {}
@@ -246,10 +311,25 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
   }
 
   Future<void> _avanzarStep() async {
-    if (_step < 2) {
+    final finalizeIndex = _finalizeIndex;
+    if (_step < finalizeIndex) {
       setState(() => _step++);
-      if (_step == 2) {
+      // Pedido de 2 restaurantes: pasar de "recoge en A" a "ve a B" también
+      // necesita ruta nueva (destino cambia de restaurante), aunque todavía
+      // no sea el tramo final — con un solo restaurante esto solo pasaba en
+      // la transición final.
+      if (_step != finalizeIndex) {
+        final clientPos = _geocodedCustomerPos ?? _restaurantPos;
+        final dest = _destForStep(_step, clientPos);
+        final from = _myPos != null ? LatLng(_myPos!.latitude, _myPos!.longitude) : dest;
+        setState(() => _routePoints = []);
+        _fetchRoute(from, dest, color: _colorForStep(_step));
+      }
+      if (_step == finalizeIndex) {
         await SupabaseService.updateOrderStatus(widget.orderId, 'delivering');
+        if (widget.secondOrderId != null) {
+          await SupabaseService.updateOrderStatus(widget.secondOrderId!, 'delivering');
+        }
         _broadcastTimer = Timer.periodic(const Duration(seconds: 5), (_) {
           if (_myPos != null) {
             SupabaseService.broadcastLocation(_myPos!.latitude, _myPos!.longitude);
@@ -258,30 +338,35 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
         final clientPos = _geocodedCustomerPos ?? _restaurantPos;
         final from = _myPos != null
             ? LatLng(_myPos!.latitude, _myPos!.longitude)
-            : _restaurantPos;
+            : _destForStep(_step - 1, clientPos);
         setState(() => _routePoints = []);
         _fetchRoute(from, clientPos, color: const Color(0xFF2196F3));
       }
     } else {
       _broadcastTimer?.cancel();
       await SupabaseService.updateOrderStatus(widget.orderId, 'delivered');
+      if (widget.secondOrderId != null) {
+        await SupabaseService.updateOrderStatus(widget.secondOrderId!, 'delivered');
+      }
       SupabaseService.stopLocationBroadcast();
       // Coins/repartos/dinero se dan aquí, al completar de verdad la
       // entrega — antes se daban desde que el rider le daba "Aceptar", así
       // que se los quedaba aunque después cancelara y nunca entregara.
       // También se bajó el monto de coins (era 500 por pedido, demasiado
       // considerando que la tienda de premios ni precios tiene definidos
-      // todavía).
+      // todavía). Con 2 restaurantes, dineroAdd/notificación usan el total
+      // COMBINADO (las 2 piernas) — es un solo viaje desde la perspectiva
+      // del rider.
       final uid = Supabase.instance.client.auth.currentUser?.id;
       if (uid != null) {
         await SupabaseService.incrementRiderStats(
           uid,
           coinsAdd:    100,
           repartosAdd: 1,
-          dineroAdd:   widget.total,
+          dineroAdd:   widget.combinedTotal,
         );
       }
-      NotificationService.entregaCompletada(widget.total * 0.15);
+      NotificationService.entregaCompletada(widget.combinedTotal * 0.15);
       if (!mounted) return;
       await showRatingDialog(context, orderId: widget.orderId, isDriver: true);
       if (mounted) Navigator.of(context).pop();
@@ -297,7 +382,9 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
         title: const Text('¿Cancelar esta entrega?',
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         content: Text(
-          'El pedido de ${widget.restaurantName} volverá a estar disponible para otro repartidor.',
+          widget.isGrouped
+              ? 'El pedido de ${widget.restaurantName} y ${widget.secondRestaurantName} volverá a estar disponible para otro repartidor.'
+              : 'El pedido de ${widget.restaurantName} volverá a estar disponible para otro repartidor.',
           style: TextStyle(color: Colors.white.withValues(alpha: 0.75), height: 1.4),
         ),
         actions: [
@@ -311,6 +398,9 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
               _broadcastTimer?.cancel();
               SupabaseService.stopLocationBroadcast();
               await SupabaseService.releaseOrderFromRider(widget.orderId);
+              if (widget.secondOrderId != null) {
+                await SupabaseService.releaseOrderFromRider(widget.secondOrderId!);
+              }
               if (mounted) Navigator.of(context).pop();
             },
             child: const Text('Sí, cancelar',
@@ -323,11 +413,14 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
 
   @override
   Widget build(BuildContext context) {
-    final sd = _steps[_step];
+    final steps = _activeSteps;
+    final stepActions = _activeStepActions;
+    final finalizeIndex = _finalizeIndex;
+    final sd = steps[_step];
     final myLatLng = _myPos != null ? LatLng(_myPos!.latitude, _myPos!.longitude) : null;
     final clientPos = _geocodedCustomerPos ?? _restaurantPos;
-    final showClientPos = _step >= 2;
-    final mapCenter = myLatLng ?? _restaurantPos;
+    final showClientPos = _step >= finalizeIndex;
+    final mapCenter = myLatLng ?? _destForStep(_step, clientPos);
 
     // Bloquea el gesto de deslizar/botón de regreso del sistema — con el
     // pedido ya aceptado, la única salida es cancelar la entrega.
@@ -367,6 +460,12 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
                     width: 44, height: 44,
                     child: _Pin(icon: Icons.storefront, color: AppConstants.primaryColor),
                   ),
+                  if (widget.isGrouped)
+                    Marker(
+                      point: _secondRestaurantPos,
+                      width: 44, height: 44,
+                      child: _Pin(icon: Icons.storefront, color: Colors.deepOrange),
+                    ),
                   if (showClientPos)
                     Marker(
                       point: clientPos,
@@ -384,7 +483,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
             ),
             // Debajo de la fila de arriba (paso + "Cómo llegar"), no encima —
             // antes las dos se dibujaban en la misma franja y se encimaban.
-            if (_step == 2)
+            if (_step == finalizeIndex)
               Positioned(
                 top: 56, left: 0, right: 0,
                 child: SafeArea(
@@ -497,7 +596,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
                     ),
                     GestureDetector(
                       onTap: () {
-                        final dest = _step >= 2 ? clientPos : _restaurantPos;
+                        final dest = _destForStep(_step, clientPos);
                         final url = Uri.parse(
                           'https://www.google.com/maps/dir/?api=1&destination=${dest.latitude},${dest.longitude}&travelmode=driving',
                         );
@@ -567,7 +666,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
                   controller: scrollController,
                   padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              _buildStepper(),
+              _buildStepper(steps),
               const SizedBox(height: 20),
               const Text('Datos del cliente',
                   style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
@@ -624,6 +723,10 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
                 const SizedBox(height: 10),
                 _InfoRow(Icons.storefront_outlined, 'Recoger en: ${widget.restaurantAddress}'),
               ],
+              if (widget.isGrouped && (widget.secondRestaurantAddress ?? '').isNotEmpty) ...[
+                const SizedBox(height: 6),
+                _InfoRow(Icons.storefront_outlined, 'Y en: ${widget.secondRestaurantAddress}'),
+              ],
               const SizedBox(height: 16),
               Text('Productos (${widget.restaurantName})',
                   style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
@@ -651,11 +754,40 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
                   }).toList(),
                 ),
               ),
+              if (widget.isGrouped) ...[
+                const SizedBox(height: 16),
+                Text('Productos (${widget.secondRestaurantName})',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Column(
+                    children: (widget.secondItems ?? const []).asMap().entries.map((e) {
+                      final isLast = e.key == (widget.secondItems?.length ?? 1) - 1;
+                      return Column(children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 6),
+                          child: Row(children: [
+                            const Icon(Icons.fastfood, color: Colors.deepOrange, size: 16),
+                            const SizedBox(width: 10),
+                            Expanded(child: Text(e.value, style: const TextStyle(color: Colors.black87, fontSize: 14))),
+                          ]),
+                        ),
+                        if (!isLast) Divider(height: 1, color: Colors.black12),
+                      ]);
+                    }).toList(),
+                  ),
+                ),
+              ],
               const SizedBox(height: 8),
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                 Text('Total del pedido',
                     style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13)),
-                Text('\$${widget.total.toStringAsFixed(0)} MXN',
+                Text('\$${widget.combinedTotal.toStringAsFixed(0)} MXN',
                     style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
               ]),
               const SizedBox(height: 20),
@@ -675,10 +807,10 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
                       child: ElevatedButton.icon(
                         onPressed: _avanzarStep,
                         icon: const Icon(Icons.check, size: 20),
-                        label: Text(_stepActions[_step],
+                        label: Text(stepActions[_step],
                             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: _steps[_step].color,
+                          backgroundColor: steps[_step].color,
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 15),
                         ),
@@ -711,12 +843,12 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
     );
   }
 
-  Widget _buildStepper() {
+  Widget _buildStepper(List<({IconData icon, String label, Color color})> steps) {
     return Row(
-      children: List.generate(_steps.length, (i) {
+      children: List.generate(steps.length, (i) {
         final done = i < _step;
         final active = i == _step;
-        final sd = _steps[i];
+        final sd = steps[i];
         // Mismo esquema que tracking_screen.dart (cliente): un paso ya
         // completado siempre se ve azul, sin importar su color propio —
         // solo el paso activo usa el color propio de sd.
@@ -757,7 +889,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
                 ),
               ]),
             ),
-            if (i < _steps.length - 1)
+            if (i < steps.length - 1)
               Expanded(
                 child: Container(
                   height: 2,

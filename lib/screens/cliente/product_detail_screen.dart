@@ -32,6 +32,28 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 
   void _addToCart() {
     final cart = context.read<CartProvider>();
+    // Mismo tope de 2 restaurantes por pedido que restaurants_screen.dart —
+    // este es un segundo punto de entrada al carrito (detalle de un
+    // platillo) que antes no tenía NINGUNA restricción de restaurante,
+    // bueno o malo (ni siquiera el diálogo viejo de "¿cambiar
+    // restaurante?"). checkout_screen.dart ya bloquea de todos modos un
+    // carrito de 3+ restaurantes como candado final, pero sin este aviso
+    // aquí el cliente se enteraría hasta llegar al checkout.
+    final existingRestaurants = cart.itemsByRestaurant.keys.toSet();
+    if (existingRestaurants.isNotEmpty &&
+        !existingRestaurants.contains(widget.restaurantId) &&
+        existingRestaurants.length >= 2) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text(
+          'Ya tienes productos de 2 restaurantes en tu carrito — es el máximo '
+          'por pedido. Quita los de uno de ellos antes de agregar uno de un '
+          'tercer restaurante.',
+        ),
+        backgroundColor: Colors.redAccent,
+        duration: Duration(seconds: 4),
+      ));
+      return;
+    }
     for (int i = 0; i < _quantity; i++) {
       cart.addProduct(widget.product, widget.restaurantId, widget.restaurantName);
     }

@@ -1052,9 +1052,15 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     // Lo que va a ganar el repartidor por ENTREGAR este pedido (no el total
     // del pedido, que incluye la comida) — cuenta la distancia desde donde
     // está parado ahorita hasta el restaurante y de ahí a la casa del
-    // cliente, ya con la comisión de la plataforma descontada.
-    double montoAMostrar = order.deliveryFee * (1 - LocationService.comisionRepartidorPct / 100);
-    if (_myPos != null && order.hasExactRestaurantCoords && order.hasExactCoords) {
+    // cliente, ya con la comisión de la plataforma descontada. Para un
+    // pedido de 2 restaurantes se usa la estimación "en vivo" GPS solo si
+    // hay una, y si no, la suma de las 2 tarifas nominales ya con comisión
+    // — estimar la ruta en vivo rider→A→B→cliente es un cálculo mucho más
+    // grande que no se justifica solo para un número aproximado en la
+    // lista (alcance reducido a propósito, ver CLAUDE.md).
+    double montoAMostrar = (order.deliveryFee + (order.secondDeliveryFee ?? 0)) *
+        (1 - LocationService.comisionRepartidorPct / 100);
+    if (!order.isGrouped && _myPos != null && order.hasExactRestaurantCoords && order.hasExactCoords) {
       montoAMostrar = LocationService.estimarGananciaRepartidor(
         riderLat: _myPos!.latitude,
         riderLng: _myPos!.longitude,
@@ -1064,6 +1070,9 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         customerLng: order.customerPos.longitude,
       );
     }
+    final cardRestaurantName =
+        order.isGrouped ? '${order.restaurantName} + ${order.secondRestaurantName}' : order.restaurantName;
+    final cardItemCount = order.items.length + (order.secondItems?.length ?? 0);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -1081,9 +1090,10 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
               const SizedBox(width: 10),
               Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(order.restaurantName,
+                  Text(cardRestaurantName,
                       style: TextStyle(color: textMain, fontWeight: FontWeight.bold, fontSize: 15)),
-                  Text('${order.items.length} producto${order.items.length != 1 ? 's' : ''}',
+                  Text('$cardItemCount producto${cardItemCount != 1 ? 's' : ''}'
+                      '${order.isGrouped ? ' — 2 restaurantes' : ''}',
                       style: TextStyle(color: textSub, fontSize: 12)),
                 ]),
               ),

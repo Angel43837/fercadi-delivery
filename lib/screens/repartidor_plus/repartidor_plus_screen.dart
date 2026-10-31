@@ -413,60 +413,107 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
     } catch (_) {}
   }
 
+  // Extrae nombre/dirección/posición/total/productos de UNA fila cruda de
+  // "orders" — factorizado para poder leer tanto la pierna principal como
+  // la hermana (pedido de 2 restaurantes) con el mismo código.
+  ({String name, String? address, LatLng? pos, double total, List<String> items}) _legFields(
+      Map<String, dynamic> m) {
+    final restaurantData = m['restaurants'] as Map<String, dynamic>?;
+    final name = restaurantData?['name'] as String? ?? 'Restaurante';
+    final address = restaurantData?['address'] as String?;
+    final restLat = restaurantData?['lat'];
+    final restLng = restaurantData?['lng'];
+    // Antes nunca se mandaba la ubicación real del restaurante — la
+    // pantalla de entrega usaba un punto genérico del centro de Maravatío
+    // para TODOS los restaurantes.
+    final pos = (restLat != null && restLng != null)
+        ? LatLng((restLat as num).toDouble(), (restLng as num).toDouble())
+        : null;
+    final total = (m['total'] as num?)?.toDouble() ?? 0.0;
+    final orderItems = (m['order_items'] as List<dynamic>? ?? []);
+    final items = orderItems.map((i) {
+      final qty = i['quantity'] as int? ?? 1;
+      final product = i['products'] as Map<String, dynamic>?;
+      final pname = product?['name'] as String? ?? 'Producto';
+      return '$qty× $pname';
+    }).toList();
+    return (name: name, address: address, pos: pos, total: total, items: items);
+  }
+
   Future<void> _aceptarPedido(String orderId) async {
     if (_aceptandoIds.contains(orderId)) return;
     _aceptandoIds.add(orderId);
     try {
       final pedido = _pedidosPendientes.firstWhere((o) => o['id'] == orderId);
-      final total  = (pedido['total'] as num?)?.toDouble() ?? 0.0;
-      await SupabaseService.updateOrderStatus(orderId, 'accepted');
+      final groupId = pedido['group_id'] as String?;
+      Map<String, dynamic>? siblingRaw;
+      if (groupId != null) {
+        for (final o in _pedidosPendientes) {
+          if (o['id'] != orderId && o['group_id'] == groupId) { siblingRaw = o; break; }
+        }
+      }
+      final siblingId = siblingRaw?['id'] as String?;
+
+      List<String> claimedIds;
+      if (groupId == null) {
+        await SupabaseService.updateOrderStatus(orderId, 'accepted');
+        claimedIds = [orderId];
+      } else {
+        // Reclama ambas piernas del grupo en una sola transacción
+        // (claim_group_order) — si una carrera de reclamo deja solo una
+        // disponible, se avisa y se sigue solo con esa.
+        claimedIds = await SupabaseService.claimGroupOrder(orderId);
+      }
+
       // Coins/repartos/dinero ya NO se dan aquí (aceptar) — se mueven a
       // cuando el pedido de verdad se entrega (ver entrega_activa_screen.dart,
       // _avanzarStep): antes se los quedaba el rider aunque después
       // cancelara la entrega y nunca la completara.
-      setState(() => _pedidosPendientes.removeWhere((o) => o['id'] == orderId));
+      setState(() => _pedidosPendientes.removeWhere((o) => o['id'] == orderId || o['id'] == siblingId));
 
-      final restaurantData = pedido['restaurants'] as Map<String, dynamic>?;
-      final restaurantName = restaurantData?['name'] as String? ?? 'Restaurante';
-      final restaurantAddress = restaurantData?['address'] as String?;
-      final restLat = restaurantData?['lat'];
-      final restLng = restaurantData?['lng'];
-      // Antes nunca se mandaba la ubicación real del restaurante — la
-      // pantalla de entrega usaba un punto genérico del centro de
-      // Maravatío para TODOS los restaurantes, así que el rider "llegaba"
-      // a un lugar que no era el restaurante de verdad.
-      final restaurantPos = (restLat != null && restLng != null)
-          ? LatLng((restLat as num).toDouble(), (restLng as num).toDouble())
-          : null;
+      final gotPrimary = claimedIds.contains(orderId);
+      final gotSibling = siblingId != null && claimedIds.contains(siblingId);
+      if (groupId != null && gotPrimary != gotSibling && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('El otro restaurante de este pedido ya se lo llevó otro repartidor — sigues solo con este.'),
+          backgroundColor: Colors.orange,
+        ));
+      }
+
+      final primaryRaw = gotPrimary ? pedido : siblingRaw!;
+      final secondRaw = (gotPrimary && gotSibling) ? siblingRaw : null;
+      final primaryId = primaryRaw['id'] as String;
+      final primaryLeg = _legFields(primaryRaw);
+      final secondLeg = secondRaw != null ? _legFields(secondRaw) : null;
+
       Map<String, dynamic> delivery = {};
-      try { delivery = jsonDecode(pedido['customer_name'] as String? ?? '{}') as Map<String, dynamic>; } catch (_) {}
+      try { delivery = jsonDecode(primaryRaw['customer_name'] as String? ?? '{}') as Map<String, dynamic>; } catch (_) {}
       final rawLat = delivery['lat'];
       final rawLng = delivery['lng'];
       final customerPos = (rawLat != null && rawLng != null)
           ? LatLng((rawLat as num).toDouble(), (rawLng as num).toDouble())
           : null;
-      final orderItems = (pedido['order_items'] as List<dynamic>? ?? []);
-      final itemStrings = orderItems.map((i) {
-        final qty = i['quantity'] as int? ?? 1;
-        final product = i['products'] as Map<String, dynamic>?;
-        final name = product?['name'] as String? ?? 'Producto';
-        return '$qty× $name';
-      }).toList();
 
       if (mounted) {
         await Navigator.of(context).push(MaterialPageRoute(
           builder: (_) => EntregaActivaScreen(
-            orderId: orderId,
-            restaurantName: restaurantName,
-            restaurantAddress: restaurantAddress,
-            restaurantPos: restaurantPos,
+            orderId: primaryId,
+            restaurantName: primaryLeg.name,
+            restaurantAddress: primaryLeg.address,
+            restaurantPos: primaryLeg.pos,
             customerName: delivery['name'] as String? ?? 'Cliente',
-            customerId: pedido['customer_id'] as String?,
+            customerId: primaryRaw['customer_id'] as String?,
             customerPhone: delivery['phone'] as String? ?? '',
             address: delivery['address'] as String? ?? 'Dirección no especificada',
             customerPos: customerPos,
-            total: total,
-            items: itemStrings.isEmpty ? ['Pedido #${orderId.substring(0, 6)}'] : itemStrings,
+            total: primaryLeg.total,
+            items: primaryLeg.items.isEmpty ? ['Pedido #${primaryId.substring(0, 6)}'] : primaryLeg.items,
+            secondOrderId: secondRaw?['id'] as String?,
+            secondRestaurantName: secondLeg?.name,
+            secondRestaurantAddress: secondLeg?.address,
+            secondRestaurantPos: secondLeg?.pos,
+            secondTotal: secondLeg?.total,
+            secondItems: secondLeg?.items,
           ),
         ));
         // Al volver de la entrega (completada o cancelada), se refresca
@@ -479,23 +526,28 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
           _checkLogros(prev);
         }
       }
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Error al aceptar el pedido. Intenta de nuevo.'),
-          backgroundColor: Color(0xFFE53935),
-          duration: Duration(seconds: 3),
+        final yaNoDisponible = e.toString().contains('Ya se lo llevó otro repartidor');
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(yaNoDisponible
+              ? 'Ya se lo llevó otro repartidor.'
+              : 'Error al aceptar el pedido. Intenta de nuevo.'),
+          backgroundColor: const Color(0xFFE53935),
+          duration: const Duration(seconds: 3),
         ));
+        _loadOrders();
       }
     } finally {
       _aceptandoIds.remove(orderId);
     }
   }
 
-  void _rechazarPedido(String orderId) {
+  void _rechazarPedido(String orderId, {String? siblingId}) {
     setState(() {
       _rechazadosIds.add(orderId);
-      _pedidosPendientes.removeWhere((o) => o['id'] == orderId);
+      if (siblingId != null) _rechazadosIds.add(siblingId);
+      _pedidosPendientes.removeWhere((o) => o['id'] == orderId || o['id'] == siblingId);
     });
   }
 
@@ -1053,7 +1105,10 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
                       ),
                     )
                   else
-                    ..._pedidosPendientes.map((p) => _buildOrderCard(p)),
+                    // Un pedido de 2 restaurantes llega aquí como 2 filas —
+                    // se combinan en una sola tarjeta (mergeGroupedOrders)
+                    // antes de mostrarlas.
+                    ...SupabaseService.mergeGroupedOrders(_pedidosPendientes).map((p) => _buildOrderCard(p)),
                 ],
               ),
             ),
@@ -2168,11 +2223,19 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
   Widget _buildOrderCard(Map<String, dynamic> pedido) {
     final orderId     = pedido['id'] as String;
     final restData    = pedido['restaurants'] as Map?;
-    final restaurante = restData?['name'] as String? ?? 'Restaurante';
+    // Pedido de 2 restaurantes (ver mergeGroupedOrders): group_sibling trae
+    // la segunda fila — se muestra como UNA sola tarjeta con los 2 nombres,
+    // nunca 2 tarjetas separadas.
+    final sibling      = pedido['group_sibling'] as Map<String, dynamic>?;
+    final siblingRest  = sibling?['restaurants'] as Map?;
+    final restaurante = sibling != null
+        ? '${restData?['name'] as String? ?? 'Restaurante'} + ${siblingRest?['name'] as String? ?? 'Restaurante'}'
+        : (restData?['name'] as String? ?? 'Restaurante');
     final logoUrl     = restData?['image_url'] as String?;
     final cliente     = _safeField(pedido['customer_name'], 'name');
     final direccion   = _safeField(pedido['address'], 'address');
-    final items       = (pedido['order_items'] as List?)?.length ?? 1;
+    final items       = ((pedido['order_items'] as List?)?.length ?? 1) +
+        ((sibling?['order_items'] as List?)?.length ?? 0);
 
     // Lo que va a ganar el repartidor por ENTREGAR este pedido (no el total
     // del pedido, que incluye la comida) — cuenta la distancia desde donde
@@ -2189,7 +2252,12 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
       cLat = (custJson['lat'] as num?)?.toDouble();
       cLng = (custJson['lng'] as num?)?.toDouble();
     } catch (_) {}
-    if (_lastPos != null && rLat != null && rLng != null && cLat != null && cLng != null) {
+    // La estimación GPS en vivo solo cubre UN restaurante → cliente — para
+    // un pedido de 2 restaurantes estimar la ruta real rider→A→B→cliente es
+    // un cálculo mucho más grande que no se justifica solo para un número
+    // aproximado en la lista (alcance reducido a propósito, ver CLAUDE.md);
+    // se usa la suma de las 2 tarifas nominales con comisión en su lugar.
+    if (sibling == null && _lastPos != null && rLat != null && rLng != null && cLat != null && cLng != null) {
       gananciaEstimada = LocationService.estimarGananciaRepartidor(
         riderLat: _lastPos!.latitude,
         riderLng: _lastPos!.longitude,
@@ -2204,8 +2272,10 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
     // estimarGananciaRepartidor arriba y la migración
     // 20261015000000_rider_delivery_fee.sql).
     final deliveryFee = ((pedido['rider_delivery_fee'] ?? pedido['delivery_fee']) as num?)?.toDouble() ?? 0.0;
+    final siblingDeliveryFee =
+        ((sibling?['rider_delivery_fee'] ?? sibling?['delivery_fee']) as num?)?.toDouble() ?? 0.0;
     final montoAMostrar = gananciaEstimada ??
-        (deliveryFee * (1 - LocationService.comisionRepartidorPct / 100));
+        ((deliveryFee + siblingDeliveryFee) * (1 - LocationService.comisionRepartidorPct / 100));
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -2287,7 +2357,7 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
             child: Row(children: [
               Expanded(
                 child: GestureDetector(
-                  onTap: () => _rechazarPedido(orderId),
+                  onTap: () => _rechazarPedido(orderId, siblingId: sibling?['id'] as String?),
                   child: Container(
                     padding: const EdgeInsets.symmetric(vertical: 11),
                     decoration: BoxDecoration(

@@ -65,6 +65,16 @@ begin
     raise exception 'no_autenticado';
   end if;
 
+  -- SECURITY DEFINER bypasa RLS por completo — a diferencia de un
+  -- updateOrderStatus(id, 'accepted') normal desde Dart (que sí pasa por la
+  -- política "update_orders", acotada a is_admin()/is_repartidor()/dueño
+  -- del restaurante), este RPC necesita repetir ese mismo candado a mano,
+  -- o cualquier usuario autenticado podría asignarse repartidor_id en
+  -- cualquier pedido con solo llamar a esta función.
+  if not (coalesce(is_repartidor(), false) or coalesce(is_admin(), false)) then
+    raise exception 'no_autorizado';
+  end if;
+
   select group_id into v_group_id from public.orders where id = p_order_id;
   if not found then
     raise exception 'Este pedido ya no existe.';
