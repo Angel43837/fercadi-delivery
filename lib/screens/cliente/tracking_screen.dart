@@ -69,6 +69,12 @@ class _TrackingScreenState extends State<TrackingScreen> {
   // como bloque) — antes la tarjeta ya "parecía" un sheet (traía su propia
   // manija dibujada) pero estaba fija, sin gesto real de arrastre.
   double _panelHeightFraction = 0.32;
+  // 1 = panel en su tamaño de reposo (todo visible); 0 = completamente
+  // encogido. El header (logo/nombre/dirección/precio) y el botón de abajo
+  // (cancelar/pedir de nuevo) se encogen con este mismo valor — los pasos y
+  // "Rastrea tu pedido" nunca se encogen, siempre quedan visibles.
+  double get _collapseVisibleFraction =>
+      ((_panelHeightFraction - 0.16) / (0.32 - 0.16)).clamp(0.0, 1.0);
   Timer? _pollTimer;
   // No hay ETA real del backend todavía — se muestra el tiempo transcurrido
   // desde que se abrió esta pantalla (se refresca solo con cada sondeo de
@@ -455,9 +461,20 @@ class _TrackingScreenState extends State<TrackingScreen> {
           TextButton(
             onPressed: () async {
               Navigator.pop(dialogCtx);
-              await SupabaseService.updateOrderStatus(widget.orderId, 'cancelled');
-              await OrderHistoryService.clearActiveOrder();
-              if (mounted) context.go('/restaurants');
+              try {
+                await SupabaseService.cancelMyOrder(widget.orderId);
+                await OrderHistoryService.clearActiveOrder();
+                if (mounted) context.go('/restaurants');
+              } catch (e) {
+                if (!mounted) return;
+                final message = e.toString().contains('ya está siendo preparado')
+                    ? 'Tu pedido ya está siendo preparado, ya no se puede cancelar.'
+                    : 'No se pudo cancelar el pedido. Intenta de nuevo.';
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text(message),
+                  backgroundColor: Colors.red[700],
+                ));
+              }
             },
             child: const Text('Sí, cancelar',
                 style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
@@ -792,6 +809,16 @@ class _TrackingScreenState extends State<TrackingScreen> {
               ),
               Expanded(
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
+              // Al arrastrar la manija hacia abajo, esta parte (logo +
+              // nombre + dirección + precio) se encoge primero y
+              // desaparece — los pasos y el botón de abajo (siempre
+              // importantes: cancelar, ver en qué va el pedido) se quedan
+              // fijos y nunca se cortan.
+              ClipRect(
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  heightFactor: _collapseVisibleFraction,
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
               const SizedBox(height: 4),
               Image.asset('assets/images/gogofood_wordmark.png', width: 93, height: 11),
               const SizedBox(height: 10),
@@ -826,6 +853,21 @@ class _TrackingScreenState extends State<TrackingScreen> {
                               color: Colors.white,
                               fontWeight: FontWeight.bold,
                               fontSize: 16)),
+                      // Pedido de 2 restaurantes (ver checkout_screen.dart /
+                      // orderToTrackingExtra) — resumen combinado: un solo
+                      // estado/ETA compartido para las 2 piernas, sin
+                      // rehacer el mapa en vivo con 2 pines de recogida
+                      // distintos (alcance reducido a propósito para esta
+                      // primera versión, ver CLAUDE.md).
+                      if (widget.restaurants != null && widget.restaurants!.length > 1)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text('Pedido combinado de 2 restaurantes',
+                              style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.75),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600)),
+                        ),
                       const SizedBox(height: 3),
                       Row(children: [
                         Icon(Icons.location_on, size: 13, color: Colors.white.withValues(alpha: 0.75)),
@@ -863,6 +905,9 @@ class _TrackingScreenState extends State<TrackingScreen> {
                 ]),
               ]),
               const SizedBox(height: 10),
+                  ]),
+                ),
+              ),
               // Riel conectando los 4 pasos a la altura del centro de las
               // bolitas — mismo look que GOGOTrackingWidget.swift. El inset
               // izq/der se calcula del ancho real (ancho/8 = centro del
@@ -945,75 +990,82 @@ class _TrackingScreenState extends State<TrackingScreen> {
                   style: TextStyle(
                       color: Color(0xFF0CB6F4), fontWeight: FontWeight.bold, fontSize: 12)),
               const SizedBox(height: 6),
-              if (_isCancelled) ...[
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: ElevatedButton.icon(
-                    onPressed: () => context.go('/restaurants'),
-                    icon: const Icon(Icons.storefront),
-                    label: const Text('Pedir de nuevo',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: AppConstants.primaryColor,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-                    ),
-                  ),
-                ),
-              ] else if (_step == 0) ...[
-                SizedBox(
-                  width: double.infinity,
-                  height: 50,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [Color(0xFFF4510C), Color(0xFFB53F0E)],
-                        stops: [0.4327, 1.0],
-                      ),
-                      borderRadius: BorderRadius.circular(24),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0x70 / 255),
-                          offset: const Offset(0, 3),
-                          blurRadius: 6.4,
-                          spreadRadius: 3,
-                        ),
-                      ],
-                    ),
-                    child: Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(24),
-                        onTap: _confirmarCancelacion,
-                        child: const Center(
-                          child: Text('Cancelar pedido',
-                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              ClipRect(
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  heightFactor: _collapseVisibleFraction,
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    if (_isCancelled) ...[
+                      SizedBox(
+                        width: double.infinity,
+                        height: 48,
+                        child: ElevatedButton.icon(
+                          onPressed: () => context.go('/restaurants'),
+                          icon: const Icon(Icons.storefront),
+                          label: const Text('Pedir de nuevo',
+                              style: TextStyle(fontWeight: FontWeight.bold)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: AppConstants.primaryColor,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                          ),
                         ),
                       ),
-                    ),
-                  ),
+                    ] else if (_step == 0) ...[
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [Color(0xFFF4510C), Color(0xFFB53F0E)],
+                              stops: [0.4327, 1.0],
+                            ),
+                            borderRadius: BorderRadius.circular(24),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0x70 / 255),
+                                offset: const Offset(0, 3),
+                                blurRadius: 6.4,
+                              ),
+                            ],
+                          ),
+                          child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(24),
+                              onTap: _confirmarCancelacion,
+                              child: const Center(
+                                child: Text('Cancelar pedido',
+                                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                    if (!_isCancelled && _step == 3) ...[
+                      SizedBox(
+                        width: double.infinity,
+                        height: 48,
+                        child: ElevatedButton.icon(
+                          onPressed: () => context.go('/restaurants'),
+                          icon: const Icon(Icons.storefront),
+                          label: const Text('Pedir de nuevo',
+                              style: TextStyle(fontWeight: FontWeight.bold)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ]),
                 ),
-              ],
-              if (!_isCancelled && _step == 3) ...[
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: ElevatedButton.icon(
-                    onPressed: () => context.go('/restaurants'),
-                    icon: const Icon(Icons.storefront),
-                    label: const Text('Pedir de nuevo',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ]),
           ),
           ]),

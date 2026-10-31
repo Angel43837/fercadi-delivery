@@ -64,8 +64,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     return byRestaurant.length == 1 ? byRestaurant.keys.first : null;
   }
 
-  double get _deliveryFee {
-    final r = _primaryRestaurant;
+  // Envío de UN restaurante en concreto, con la misma fórmula de siempre
+  // (tarifaBase + tarifaPorKm*distancia) — sin recargo todavía, eso se suma
+  // aparte en _deliveryFeesByRestaurant solo para una de las 2 piernas de
+  // un pedido de 2 restaurantes.
+  double _soloDeliveryFee(Restaurant? r) {
     if (r?.lat == null || r?.lng == null || _selectedPos == null) {
       return LocationService.calcularCostoEnvio(null);
     }
@@ -78,6 +81,28 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         1000;
     return LocationService.calcularCostoEnvio(distanciaKm);
   }
+
+  // Envío independiente de CADA restaurante del carrito (clave =
+  // restaurantId). Con 2 restaurantes, el recargo fijo de pedido combinado
+  // (LocationService.multiRestaurantSurcharge) se suma a UNA sola pierna —
+  // siempre la primera en el orden de iteración de itemsByRestaurant, de
+  // forma determinista — para que cada fila de "orders" quede completa y
+  // correcta por sí sola sin depender de la otra (ver nota de la
+  // migración 20261031000000_multi_restaurant_orders.sql).
+  Map<String, double> get _deliveryFeesByRestaurant {
+    final ids = context.read<CartProvider>().itemsByRestaurant.keys.toList();
+    final fees = <String, double>{};
+    for (final id in ids) {
+      fees[id] = _soloDeliveryFee(_restaurants[id]);
+    }
+    if (ids.length == 2) {
+      fees[ids.first] = fees[ids.first]! + LocationService.multiRestaurantSurcharge;
+    }
+    return fees;
+  }
+
+  double get _deliveryFee =>
+      _deliveryFeesByRestaurant.values.fold(0.0, (a, b) => a + b);
 
   @override
   void initState() {
@@ -427,9 +452,23 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       _scrollCtrl.animateTo(0, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
       return;
     }
+    // Tope de 2 restaurantes por pedido — ya se bloquea en
+    // restaurants_screen.dart al agregar el 3ro, esto es solo un candado
+    // defensivo por si el carrito llegara aquí de otra forma (ej. "volver a
+    // pedir" desde el historial).
+    final byRestaurantCheck = context.read<CartProvider>().itemsByRestaurant;
+    if (byRestaurantCheck.length > 2) {
+      setState(() => _loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Un pedido solo puede tener hasta 2 restaurantes. Quita los de uno de ellos.'),
+        backgroundColor: Colors.redAccent,
+      ));
+      return;
+    }
     setState(() => _loading = true);
     final cart = context.read<CartProvider>();
-    final deliveryFee = _deliveryFee;
+    final feesByRestaurant = _deliveryFeesByRestaurant;
+    final deliveryFee = feesByRestaurant.values.fold(0.0, (a, b) => a + b);
     // El descuento SIEMPRE es el que ya validó el servidor (ver
     // _revalidatePromo) — nunca se calcula aquí. Si por algún motivo no hay
     // una validación vigente y "válida" en este momento, no se aplica nada.
@@ -454,28 +493,37 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         }
         return;
       }
-      // Si hay una promoción aplicada, el backend la vuelve a validar por su
-      // cuenta antes de crear el cobro — así aunque alguien manipulara la
-      // app, no podría pagar de menos usando un descuento inventado.
-      Map<String, dynamic>? promoBody;
-      if (promoValid && promoClaim != null) {
-        final rid = cart.itemsByRestaurant.keys.first;
-        final rItems = cart.itemsByRestaurant[rid] ?? [];
-        promoBody = {
-          'promotionClaimId': promoClaim.id,
-          'cartSummary': {
-            'restaurantId': rid,
-            'items': rItems.map((i) => {
-              'product_id': i.product.id,
-              'category_id': i.product.categoryId,
-              'quantity': i.quantity,
-              'unit_price': i.product.price,
-            }).toList(),
-            'subtotal': rItems.fold(0.0, (s, i) => s + i.total),
-            'deliveryFee': deliveryFee,
-          },
-        };
-      }
+      // El backend SIEMPRE recalcula el precio real del carrito antes de
+      // cobrar (con o sin promoción) — cartSummary.items solo manda
+      // product_id/quantity, nunca se confía en ningún precio que mande
+      // el celular. Antes esto solo se armaba si había una promoción
+      // aplicada; el caso sin promoción (el más común) no se verificaba.
+      //
+      // Con 2 restaurantes, cartSummary.items incluye los productos de
+      // AMBOS (compute_cart_subtotal/validate_promotion_for_order ya
+      // funcionan genéricamente por product_id, sin asumir un solo
+      // restaurante — ver 20261026020000_verify_cart_prices_server_side.sql)
+      // y cartSummary.deliveryFee es la suma de las 2 piernas (ya con el
+      // recargo incluido) — antes esto solo mandaba los items/el
+      // restaurantId del PRIMER restaurante, así que el monto a cobrar
+      // (que sí suma todo el carrito) nunca iba a coincidir con lo que el
+      // servidor recalculaba para un carrito de 2 restaurantes.
+      final rid = cart.itemsByRestaurant.keys.first;
+      final allItems = cart.itemsByRestaurant.values.expand((items) => items).toList();
+      final cartSummary = {
+        'restaurantId': rid,
+        'items': allItems.map((i) => {
+          'product_id': i.product.id,
+          'category_id': i.product.categoryId,
+          'quantity': i.quantity,
+        }).toList(),
+        'subtotal': allItems.fold(0.0, (s, i) => s + i.total),
+        'deliveryFee': deliveryFee,
+      };
+      final promoBody = {
+        if (promoValid && promoClaim != null) 'promotionClaimId': promoClaim.id,
+        'cartSummary': cartSummary,
+      };
       stripePaymentIntentId = await _payWithStripe(orderTotal, promoBody: promoBody);
       if (stripePaymentIntentId == null) {
         if (mounted) setState(() => _loading = false);
@@ -495,8 +543,14 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       return;
     }
 
-    // Create one order per restaurant; share the same delivery fee split equally
-    final perOrderFee = deliveryFee / byRestaurant.length;
+    // Un pedido por restaurante, cada uno con SU PROPIO envío (calculado
+    // independientemente arriba en feesByRestaurant, no una división
+    // pareja del total) — ligados por el mismo group_id cuando son 2, para
+    // que el repartidor los vea/reclame como un solo viaje (ver
+    // claim_group_order) pero cada fila siga siendo, por sí sola, un
+    // pedido normal y completo (dueño, pago, reembolso si lo rechazan...
+    // todo sigue funcionando exactamente igual que con un solo restaurante).
+    final groupId = byRestaurant.length == 2 ? SupabaseService.generateGroupId() : null;
     String firstOrderId = 'local';
     String firstRestaurantName = byRestaurant.values.first.first.restaurantName;
     bool anyError = false;
@@ -505,23 +559,25 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       final rid = entry.key;
       final rItems = entry.value;
       final rSubtotal = rItems.fold(0.0, (s, i) => s + i.total);
+      final rFee = feesByRestaurant[rid] ?? 0.0;
       // El descuento solo se aplica al restaurante de la promoción — como
       // solo se puede elegir una promoción cuando el carrito es de un solo
       // restaurante (ver _singleRestaurantId), aquí siempre es esta misma
       // entrada la que corresponde, sin necesidad de comparar ids.
       final rDiscount = promoValid ? promoDiscount : 0.0;
       final rSubtotalAfterDiscount = promoAppliesToShipping ? rSubtotal : rSubtotal - rDiscount;
-      final rFeeAfterDiscount = promoAppliesToShipping ? perOrderFee - rDiscount : perOrderFee;
+      final rFeeAfterDiscount = promoAppliesToShipping ? rFee - rDiscount : rFee;
       try {
         final oid = await SupabaseService.createOrder(
           restaurantId: rid,
           total: rSubtotalAfterDiscount + rFeeAfterDiscount,
           deliveryFee: rFeeAfterDiscount,
-          // Al repartidor se le paga el envío NOMINAL (perOrderFee, antes de
+          // Al repartidor se le paga el envío NOMINAL (rFee, antes de
           // cualquier descuento de promoción) — un pedido con "envío
           // gratis" no debe dejarlo trabajando sin cobrar; ese costo lo
           // absorbe la plataforma/restaurante, no el repartidor.
-          riderDeliveryFee: perOrderFee,
+          riderDeliveryFee: rFee,
+          groupId: groupId,
           customerName: _nameCtrl.text.trim(),
           // Ya no se pide de nuevo en el checkout — se usa el que la cuenta
           // ya tiene asociado (login por teléfono, o vinculado después desde
@@ -576,8 +632,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
     if (!mounted) return;
     setState(() => _loading = false);
-    final restaurantLabel = byRestaurant.length > 1
-        ? 'Varios restaurantes'
+    // Con el tope de 2 restaurantes, "Varios restaurantes" ya no hace
+    // falta como genérico — se muestran los 2 nombres de verdad, igual que
+    // en el resumen combinado de tracking_screen.dart.
+    final restaurantNames = byRestaurant.keys
+        .map((rid) => _restaurants[rid]?.name ?? '')
+        .where((n) => n.isNotEmpty)
+        .toList();
+    final restaurantLabel = byRestaurant.length > 1 && restaurantNames.length > 1
+        ? restaurantNames.join(' + ')
         : firstRestaurantName;
     // Un logo por restaurante del pedido — con un solo restaurante es una
     // lista de un elemento (el widget nativo espera siempre una lista, así
@@ -603,11 +666,20 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       if (byRestaurant.length == 1 && _primaryRestaurant?.lng != null)
         'restaurantLng': _primaryRestaurant!.lng,
     };
+    // Resumen tipo "2x Tacos, 1x Refresco" — se guarda ya armado para no
+    // tener que volver a pedirle los productos a Supabase solo para mostrar
+    // la tarjeta en "Mis pedidos".
+    final itemsSummary = byRestaurant.values
+        .expand((items) => items)
+        .map((i) => '${i.quantity}x ${i.product.name}')
+        .join(', ');
     await OrderHistoryService.add(
       orderId: firstOrderId,
       restaurantName: restaurantLabel,
       total: orderTotal,
       address: _addressCtrl.text.trim(),
+      restaurantImageUrl: byRestaurant.length == 1 ? _primaryRestaurant?.imageUrl : null,
+      itemsSummary: itemsSummary,
     );
     await AuthService.saveAddress(
       label: 'Reciente',
@@ -747,8 +819,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final textMain   = isDark ? Colors.white : Colors.black87;
     final textSub    = isDark ? Colors.white.withValues(alpha: 0.5) : Colors.black54;
     final divColor   = isDark ? Colors.white.withValues(alpha: 0.06) : Colors.black12;
-    final chipUnsel  = isDark ? AppConstants.surfaceColor : Colors.white.withValues(alpha: 0.3);
-    final chipBorder = isDark ? Colors.white.withValues(alpha: 0.15) : Colors.white.withValues(alpha: 0.5);
 
     return Scaffold(
       backgroundColor: scaffoldBg,
@@ -768,6 +838,36 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             // ── Resumen del pedido ───────────────────────────────────────────
             _SectionHeader(icon: Icons.receipt_long_outlined, label: 'Resumen del pedido'),
             const SizedBox(height: 10),
+            // Aviso honesto: con 2 restaurantes el pedido tarda más (hay que
+            // pasar por los 2 locales) y el envío es mayor (cada pierna
+            // cobra su propia tarifa, más un recargo fijo) — el dueño pidió
+            // que esto se le avisara claro al cliente antes de pagar.
+            if (cart.itemsByRestaurant.length > 1) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: AppConstants.primaryColor.withValues(alpha: isDark ? 0.15 : 1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppConstants.primaryColor.withValues(alpha: 0.5)),
+                ),
+                child: Row(children: [
+                  Icon(Icons.info_outline, color: isDark ? AppConstants.primaryColor : Colors.white, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Pedido de 2 restaurantes — tardará un poco más y el envío es mayor.',
+                      style: TextStyle(
+                        color: isDark ? AppConstants.primaryColor : Colors.white,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ]),
+              ),
+              const SizedBox(height: 14),
+            ],
             Container(
               decoration: BoxDecoration(color: cardBg, borderRadius: BorderRadius.circular(16)),
               child: Column(
@@ -869,138 +969,91 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               textMain: textMain,
               validator: (v) => (v == null || v.trim().isEmpty) ? 'Ingresa la dirección' : null,
             ),
-            if (_savedAddresses.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: _savedAddresses.map((a) {
-                    final label = a['label'] as String? ?? 'Dirección';
-                    final addr  = a['address'] as String? ?? '';
-                    // Las direcciones auto-guardadas al confirmar un pedido
-                    // comparten el label genérico 'Reciente' — mostrar la
-                    // dirección real evita que todos los chips digan lo mismo.
-                    final displayLabel = label == 'Reciente'
-                        ? (addr.length > 22 ? '${addr.substring(0, 22)}…' : addr)
-                        : label;
-                    final isSelected = _addressCtrl.text == addr;
-                    final chipColor = isSelected ? AppConstants.primaryColor : chipBorder;
-                    final labelColor = isSelected
-                        ? AppConstants.primaryColor
-                        : Colors.white.withValues(alpha: 0.85);
-                    return GestureDetector(
-                      onTap: () {
-                        final lat = a['lat'];
-                        final lng = a['lng'];
-                        setState(() {
-                          _addressCtrl.text = addr;
-                          _selectedPos = (lat != null && lng != null)
-                              ? LatLng((lat as num).toDouble(), (lng as num).toDouble())
-                              : null;
-                        });
-                      },
-                      child: Container(
-                        margin: const EdgeInsets.only(right: 8),
-                        padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
-                        decoration: BoxDecoration(
-                          color: isSelected ? AppConstants.primaryColor.withValues(alpha: 0.15) : chipUnsel,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: chipColor),
-                        ),
-                        child: Row(mainAxisSize: MainAxisSize.min, children: [
-                          Icon(
-                            label == 'Casa' ? Icons.home_outlined
-                                : label == 'Trabajo' ? Icons.work_outline
-                                : Icons.location_on_outlined,
-                            size: 14, color: labelColor,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(displayLabel, style: TextStyle(
-                            color: labelColor, fontSize: 12,
-                            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                          )),
-                          const SizedBox(width: 4),
-                          GestureDetector(
-                            onTap: () async {
-                              await AuthService.removeAddress(addr);
-                              if (!mounted) return;
-                              setState(() {
-                                _savedAddresses.removeWhere((x) => x['address'] == addr);
-                                if (_addressCtrl.text == addr) {
-                                  _addressCtrl.clear();
-                                  _selectedPos = null;
-                                }
-                              });
-                            },
-                            child: Icon(Icons.close, size: 14, color: labelColor),
-                          ),
-                        ]),
-                      ),
-                    );
-                  }).toList(),
+            const SizedBox(height: 10),
+            // Antes había hasta 3 botones apilados aquí (Ubicaciones
+            // guardadas, GPS guardado · Cambiar pin / Detectar mi ubicación)
+            // — se simplifica a UN botón principal ("Usar mi ubicación
+            // actual") y las otras dos opciones (ajustar pin en el mapa,
+            // ver ubicaciones guardadas) quedan como acciones chiquitas y
+            // compactas debajo, sin perder ninguna función.
+            Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.blue.withValues(alpha: 0.55),
+                    blurRadius: 16,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _loading ? null : _locateAndPick,
+                  icon: _loading
+                      ? const SizedBox(
+                          width: 18, height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.my_location, size: 20),
+                  label: const Text('Usar mi ubicación actual',
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: Colors.blue.withValues(alpha: 0.5),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    elevation: 4,
+                  ),
                 ),
               ),
-            ],
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              child: _selectedPos != null
-                  ? OutlinedButton.icon(
-                      onPressed: () async {
-                        final nav = Navigator.of(context);
-                        final result = await nav.push<LatLng>(
-                          MaterialPageRoute(builder: (_) => MapPickerScreen(initial: _selectedPos)),
-                        );
-                        if (result != null && mounted) {
-                          setState(() => _selectedPos = result);
-                          final addr = await LocationService.reverseGeocode(result.latitude, result.longitude);
-                          if (addr != null && mounted) {
-                            setState(() => _addressCtrl.text = addr);
-                            _addressCtrl.selection = TextSelection(baseOffset: 0, extentOffset: addr.length);
-                            _addressFocus.requestFocus();
-                          }
-                        }
-                      },
-                      icon: const Icon(Icons.my_location, size: 16, color: Colors.green),
-                      label: const Text('GPS guardado · Cambiar pin',
-                          style: TextStyle(color: Colors.green, fontSize: 13)),
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: Colors.green, width: 1),
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                    )
-                  : Container(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(14),
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppConstants.primaryColor.withValues(alpha: 0.55),
-                            blurRadius: 16,
-                            offset: const Offset(0, 6),
-                          ),
-                        ],
-                      ),
-                      child: ElevatedButton.icon(
-                        onPressed: _loading ? null : _locateAndPick,
-                        icon: _loading
-                            ? const SizedBox(
-                                width: 18, height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                            : const Icon(Icons.pin_drop_rounded, size: 20),
-                        label: const Text('Detectar mi ubicación',
-                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppConstants.primaryColor,
-                          foregroundColor: Colors.white,
-                          disabledBackgroundColor: AppConstants.primaryColor.withValues(alpha: 0.5),
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                          elevation: 4,
-                        ),
-                      ),
-                    ),
             ),
+            if (_selectedPos != null || _savedAddresses.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Row(children: [
+                if (_selectedPos != null)
+                  TextButton.icon(
+                    onPressed: () async {
+                      final nav = Navigator.of(context);
+                      final result = await nav.push<LatLng>(
+                        MaterialPageRoute(builder: (_) => MapPickerScreen(initial: _selectedPos)),
+                      );
+                      if (result != null && mounted) {
+                        setState(() => _selectedPos = result);
+                        final addr = await LocationService.reverseGeocode(result.latitude, result.longitude);
+                        if (addr != null && mounted) {
+                          setState(() => _addressCtrl.text = addr);
+                          _addressCtrl.selection = TextSelection(baseOffset: 0, extentOffset: addr.length);
+                          _addressFocus.requestFocus();
+                        }
+                      }
+                    },
+                    icon: const Icon(Icons.edit_location_alt_outlined, size: 15),
+                    label: const Text('Ajustar pin', style: TextStyle(fontSize: 12)),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.blue,
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+                if (_selectedPos != null && _savedAddresses.isNotEmpty)
+                  Text('·', style: TextStyle(color: textSub, fontSize: 12)),
+                if (_savedAddresses.isNotEmpty)
+                  TextButton.icon(
+                    onPressed: _showSavedAddressesSheet,
+                    icon: const Icon(Icons.bookmark_outline, size: 15),
+                    label: const Text('Ubicaciones guardadas', style: TextStyle(fontSize: 12)),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.blue,
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+              ]),
+            ],
             const SizedBox(height: 12),
             _FormField(
               controller: _refCtrl,
@@ -1049,6 +1102,107 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         ),
       ),
       bottomNavigationBar: _ConfirmBar(total: _orderTotalDisplay(cart), onConfirm: _confirm, loading: _loading, isDark: isDark),
+    );
+  }
+
+  void _showSavedAddressesSheet() {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        backgroundColor: AppConstants.primaryColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Ubicación usada recientemente',
+                  style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              _buildAddressChip(_savedAddresses.first),
+              if (_savedAddresses.length > 1) ...[
+                const SizedBox(height: 18),
+                const Text('Ubicaciones',
+                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                for (final a in _savedAddresses.sublist(1)) ...[
+                  _buildAddressChip(a),
+                  const SizedBox(height: 8),
+                ],
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAddressChip(Map<String, dynamic> a) {
+    final label = a['label'] as String? ?? 'Dirección';
+    final addr  = a['address'] as String? ?? '';
+    // Siempre se muestra la dirección real, nunca la etiqueta genérica
+    // ("Mi ubicación", "Reciente", etc.) — con varias guardadas, el nombre
+    // genérico no ayuda a distinguir cuál es cuál.
+    final displayLabel = addr.length > 34 ? '${addr.substring(0, 34)}…' : addr;
+    final isSelected = _addressCtrl.text == addr;
+    final bg = isSelected ? Colors.white : Colors.blue;
+    final fg = isSelected ? Colors.blue : Colors.white;
+    return GestureDetector(
+      onTap: () {
+        final lat = a['lat'];
+        final lng = a['lng'];
+        setState(() {
+          _addressCtrl.text = addr;
+          _selectedPos = (lat != null && lng != null)
+              ? LatLng((lat as num).toDouble(), (lng as num).toDouble())
+              : null;
+        });
+        Navigator.of(context).pop();
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(14),
+          border: isSelected ? Border.all(color: Colors.blue, width: 1.5) : null,
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.18), blurRadius: 6, offset: const Offset(0, 2))],
+        ),
+        child: Row(children: [
+          Icon(
+            label == 'Casa' ? Icons.home_outlined
+                : label == 'Trabajo' ? Icons.work_outline
+                : Icons.location_on_outlined,
+            size: 18, color: fg,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(displayLabel,
+                maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: fg, fontSize: 13,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                )),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: () async {
+              await AuthService.removeAddress(addr);
+              if (!mounted) return;
+              setState(() {
+                _savedAddresses.removeWhere((x) => x['address'] == addr);
+                if (_addressCtrl.text == addr) {
+                  _addressCtrl.clear();
+                  _selectedPos = null;
+                }
+              });
+              if (mounted) Navigator.of(context).pop();
+            },
+            child: Icon(Icons.close, size: 16, color: fg),
+          ),
+        ]),
+      ),
     );
   }
 }

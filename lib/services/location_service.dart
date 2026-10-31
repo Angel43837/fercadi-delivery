@@ -53,6 +53,12 @@ class LocationService {
   static double tarifaBase = 15.0;   // MXN, se cobra siempre
   static double tarifaPorKm = 5.0;   // MXN por cada km entre restaurante y cliente
 
+  // Recargo fijo de un pedido de 2 restaurantes (ver
+  // 20261031000000_multi_restaurant_orders.sql) — se suma a UNA sola de las
+  // 2 piernas en checkout_screen.dart, nunca a las dos. Configurable desde
+  // Supabase > platform_config (clave "multi_restaurant_surcharge").
+  static double multiRestaurantSurcharge = 15.0;
+
   // % que se queda la plataforma (GOGO) — de cada envío que gana un
   // repartidor, y de cada venta de un restaurante. Configurable en
   // platform_config (comision_repartidor_pct/comision_restaurante_pct);
@@ -73,6 +79,7 @@ class LocationService {
         switch (row['key']) {
           case 'tarifa_base':    tarifaBase   = v;
           case 'tarifa_por_km':  tarifaPorKm  = v;
+          case 'multi_restaurant_surcharge': multiRestaurantSurcharge = v;
           case 'radio_metros':   _radioMetros = v;
           case 'centro_lat':     _lat         = v;
           case 'centro_lng':     _lng         = v;

@@ -253,6 +253,30 @@ class AuthService {
     } catch (_) {}
   }
 
+  // ── Promociones por correo (marketing opt-in, Task C de la auditoría) ───
+  // Antes kPrivacyPolicy solo decía "escríbenos para darte de baja" sin
+  // ningún interruptor real detrás. No existía ninguna tabla/mecanismo de
+  // preferencias por-usuario en todo el código (se revisó: ni
+  // user_preferences ni nada parecido) — se reutiliza user_metadata, el
+  // mismo mecanismo que ya usan preferred_payment/zona/gender arriba, en
+  // vez de crear una tabla nueva solo para un booleano.
+  //
+  // A diferencia de esos otros campos (que son "mejor esfuerzo", nunca
+  // fallan visiblemente), este SÍ debe fallar fuerte si no se pudo
+  // guardar: es una preferencia real de consentimiento/privacidad, no un
+  // dato cosmético — por eso NO se envuelve en try/catch aquí; quien llama
+  // (profile_screen.dart) debe enterarse del error real y mostrarlo.
+  static Future<bool> getMarketingOptIn() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    return (user?.userMetadata?['marketing_opt_in'] as bool?) ?? false;
+  }
+
+  static Future<void> saveMarketingOptIn(bool value) async {
+    await Supabase.instance.client.auth
+        .updateUser(UserAttributes(data: {'marketing_opt_in': value}))
+        .timeout(const Duration(seconds: 8));
+  }
+
   // ── Edad y género (onboarding) ─────────────────────────────────────────────────
   // Opcionales a propósito (se pueden omitir en el onboarding) — null significa
   // "nunca se contestó", no lo mismo que un valor guardado vacío.

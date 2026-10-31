@@ -51,6 +51,67 @@ class _Order {
   final List<String> items;
   final double total;
   final double deliveryFee;
+  final String? groupId;
+
+  // Segunda pierna de un pedido de 2 restaurantes (ver
+  // 20261031000000_multi_restaurant_orders.sql) — nulo para un pedido
+  // normal de un solo restaurante. Cuando no es nulo, esta _Order ya
+  // representa el viaje COMBINADO completo (ver mergedWith): sus propios
+  // campos (restaurantName, restaurantPos, total, items...) siguen siendo
+  // los del PRIMER restaurante SIN sumar (cada pierna se queda con su
+  // propio valor, a propósito, para poder reconstruir cualquiera de las 2
+  // por separado si una carrera de reclamo solo logra tomar una — ver
+  // firstLegSolo/secondLegSolo), y secondXxx son los del segundo.
+  final String? secondOrderId;
+  final String? secondRestaurantName;
+  final LatLng? secondRestaurantPos;
+  final List<String>? secondItems;
+  final double? secondTotal;
+  final double? secondDeliveryFee;
+
+  bool get isGrouped => secondOrderId != null;
+
+  // Total combinado de las 2 piernas, solo para mostrar en la UI — cada
+  // pedido en la BD se queda con su propio `total` real, esto nunca se
+  // manda a ningún lado, es puramente de presentación.
+  double get combinedTotal => total + (secondTotal ?? 0);
+
+  // Reconstruye cada pierna como un pedido solo normal — usado cuando
+  // claim_group_order solo logra reclamar UNA de las 2 (la otra ya se la
+  // llevó otro repartidor justo antes).
+  _Order get firstLegSolo => _Order(
+        id: id,
+        restaurantName: restaurantName,
+        restaurantIcon: restaurantIcon,
+        restaurantPos: restaurantPos,
+        hasExactRestaurantCoords: hasExactRestaurantCoords,
+        customerName: customerName,
+        customerId: customerId,
+        customerPhone: customerPhone,
+        address: address,
+        customerPos: customerPos,
+        hasExactCoords: hasExactCoords,
+        items: items,
+        total: total,
+        deliveryFee: deliveryFee,
+      );
+
+  _Order get secondLegSolo => _Order(
+        id: secondOrderId!,
+        restaurantName: secondRestaurantName ?? 'Restaurante',
+        restaurantIcon: restaurantIcon,
+        restaurantPos: secondRestaurantPos ?? restaurantPos,
+        hasExactRestaurantCoords: secondRestaurantPos != null,
+        customerName: customerName,
+        customerId: customerId,
+        customerPhone: customerPhone,
+        address: address,
+        customerPos: customerPos,
+        hasExactCoords: hasExactCoords,
+        items: secondItems ?? const [],
+        total: secondTotal ?? 0,
+        deliveryFee: secondDeliveryFee ?? 0,
+      );
 
   _Order({
     required this.id,
@@ -67,7 +128,46 @@ class _Order {
     required this.items,
     required this.total,
     required this.deliveryFee,
+    this.groupId,
+    this.secondOrderId,
+    this.secondRestaurantName,
+    this.secondRestaurantPos,
+    this.secondItems,
+    this.secondTotal,
+    this.secondDeliveryFee,
   });
+
+  // Combina esta _Order (restaurante A) con la de su pareja de grupo
+  // (restaurante B) en una sola _Order "de viaje combinado" — los datos del
+  // cliente/dirección son los mismos para las 2 (un solo cliente, una sola
+  // entrega), solo cambia qué restaurante hay que recoger primero. `total`/
+  // `deliveryFee` de ESTA pierna NO se tocan (se quedan como su propio
+  // valor real) — usar combinedTotal para mostrar la suma.
+  _Order mergedWith(_Order other) {
+    return _Order(
+      id: id,
+      restaurantName: restaurantName,
+      restaurantIcon: restaurantIcon,
+      restaurantPos: restaurantPos,
+      hasExactRestaurantCoords: hasExactRestaurantCoords,
+      customerName: customerName,
+      customerId: customerId,
+      customerPhone: customerPhone,
+      address: address,
+      customerPos: customerPos,
+      hasExactCoords: hasExactCoords,
+      items: items,
+      total: total,
+      deliveryFee: deliveryFee,
+      groupId: groupId,
+      secondOrderId: other.id,
+      secondRestaurantName: other.restaurantName,
+      secondRestaurantPos: other.restaurantPos,
+      secondItems: other.items,
+      secondTotal: other.total,
+      secondDeliveryFee: other.deliveryFee,
+    );
+  }
 
   factory _Order.fromMap(Map<String, dynamic> m) {
     final restaurantData = m['restaurants'] as Map<String, dynamic>?;
@@ -117,6 +217,7 @@ class _Order {
       // verdad se le paga al repartidor, nunca lo que el cliente pagó con
       // descuento.
       deliveryFee: ((m['rider_delivery_fee'] ?? m['delivery_fee']) as num?)?.toDouble() ?? 0.0,
+      groupId: m['group_id'] as String?,
     );
   }
 }
@@ -161,6 +262,14 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   RealtimeChannel? _callChannel;
   Timer? _callPollTimer;
 
+  // Llamadas que este rider ya aceptó y sigue en curso — antes esta
+  // pantalla (a diferencia de repartidor_plus_screen.dart) no tenía NINGÚN
+  // rastro de esto: en cuanto se aceptaba, la tarjeta desaparecía y el rider
+  // se quedaba sin dirección, sin botón de "Cómo llegar" y sin forma de
+  // cerrar el ciclo (nunca contaba el envío a ningún lado).
+  List<Map<String, dynamic>> _myAcceptedCalls = [];
+  final Set<String> _marcandoEntregadoIds = {};
+
   // Ruta azul/amarilla en el mapa
   List<LatLng> _routePoints = [];
   Color _routeColor = const Color(0xFFFFB300);
@@ -183,11 +292,40 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   Future<void> _loadRiderCalls() async {
     try {
       final calls = await SupabaseService.getPendingRiderCalls();
-      if (!mounted) return;
-      setState(() {
-        _pendingRiderCalls = calls.where((c) => !_dismissedCallIds.contains(c['id'])).toList();
-      });
+      if (mounted) {
+        setState(() {
+          _pendingRiderCalls = calls.where((c) => !_dismissedCallIds.contains(c['id'])).toList();
+        });
+      }
+      final mine = await SupabaseService.getMyAcceptedRiderCalls();
+      if (mounted) setState(() => _myAcceptedCalls = mine);
     } catch (_) {}
+    SupabaseService.expireOldRiderCalls();
+  }
+
+  Future<void> _marcarEntregado(String callId) async {
+    if (_marcandoEntregadoIds.contains(callId)) return;
+    _marcandoEntregadoIds.add(callId);
+    try {
+      await SupabaseService.markRiderCallDelivered(callId);
+      if (!mounted) return;
+      setState(() => _myAcceptedCalls.removeWhere((c) => c['id'] == callId));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('¡Listo! Ya se sumó a tu saldo.'),
+          backgroundColor: Colors.green,
+        ));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('No se pudo marcar como entregado. Intenta de nuevo.'),
+          backgroundColor: Color(0xFFE53935),
+        ));
+      }
+    } finally {
+      _marcandoEntregadoIds.remove(callId);
+    }
   }
 
   Future<void> _responderLlamada(String callId, bool accept) async {
@@ -209,6 +347,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     final textSub = isDark ? Colors.white.withValues(alpha: 0.45) : Colors.black54;
     final restaurantName = call['restaurant_name'] as String? ?? 'Un restaurante';
     final id = call['id'] as String;
+    final restaurantAddress = (call['restaurants'] as Map<String, dynamic>?)?['address'] as String?;
     const callBlue = Color(0xFF2196F3);
 
     return Container(
@@ -230,6 +369,11 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                     style: TextStyle(color: textMain, fontWeight: FontWeight.bold, fontSize: 15)),
                 Text('$restaurantName necesita un repartidor ahora mismo',
                     style: TextStyle(color: textSub, fontSize: 12)),
+                if (restaurantAddress != null && restaurantAddress.trim().isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(restaurantAddress, style: TextStyle(color: textSub, fontSize: 11)),
+                  ),
               ]),
             ),
           ]),
@@ -279,13 +423,130 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     );
   }
 
+  Widget _buildAcceptedCallCard(Map<String, dynamic> call, bool isDark) {
+    final cardBg = isDark ? AppConstants.surfaceColor : Colors.white;
+    final textMain = isDark ? Colors.white : Colors.black87;
+    final textSub = isDark ? Colors.white.withValues(alpha: 0.45) : Colors.black54;
+    final restaurantName = call['restaurant_name'] as String? ?? 'Un restaurante';
+    final id = call['id'] as String;
+    final envio = (call['amount_envio'] as num?)?.toDouble() ?? 35;
+    final marcando = _marcandoEntregadoIds.contains(id);
+    final restaurantData = call['restaurants'] as Map<String, dynamic>?;
+    final restaurantAddress = restaurantData?['address'] as String?;
+    final restLat = restaurantData?['lat'];
+    final restLng = restaurantData?['lng'];
+    final restaurantPos = (restLat != null && restLng != null)
+        ? LatLng((restLat as num).toDouble(), (restLng as num).toDouble())
+        : null;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: cardBg,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.green.withValues(alpha: 0.5), width: 1.5),
+      ),
+      child: Column(children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(children: [
+            const Icon(Icons.storefront_rounded, color: Colors.green, size: 28),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('Ve por el pedido a $restaurantName',
+                    style: TextStyle(color: textMain, fontWeight: FontWeight.bold, fontSize: 15)),
+                Text('Cuando entregues, marca como entregado — ganas \$${envio.toStringAsFixed(0)}',
+                    style: TextStyle(color: textSub, fontSize: 12)),
+                if (restaurantAddress != null && restaurantAddress.trim().isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(restaurantAddress, style: TextStyle(color: textSub, fontSize: 11)),
+                  ),
+              ]),
+            ),
+          ]),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+          child: Row(children: [
+            if (restaurantPos != null) ...[
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    final url = Uri.parse(
+                      'https://www.google.com/maps/dir/?api=1&destination=${restaurantPos.latitude},${restaurantPos.longitude}&travelmode=driving',
+                    );
+                    launchUrl(url, mode: LaunchMode.externalApplication);
+                  },
+                  icon: const Icon(Icons.navigation, size: 16),
+                  label: const Text('Cómo llegar'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: isDark ? Colors.white : Colors.black87,
+                    side: BorderSide(color: isDark ? Colors.white24 : Colors.black26),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+            ],
+            Expanded(
+              flex: restaurantPos != null ? 1 : 2,
+              child: ElevatedButton.icon(
+                onPressed: marcando ? null : () => _marcarEntregado(id),
+                icon: marcando
+                    ? const SizedBox(
+                        height: 14, width: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Icon(Icons.check_circle_outline, size: 16),
+                label: const Text('ENTREGADO'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
+          ]),
+        ),
+      ]),
+    );
+  }
+
+  // Combina pares de pedidos que compartan group_id (pedido de 2
+  // restaurantes) en una sola _Order de "viaje combinado" — un pedido
+  // huérfano (su pareja todavía no aparece aquí, p. ej. el restaurante de
+  // esa pareja no ha confirmado, o ya se la llevó otro rider) se deja tal
+  // cual, como un pedido normal de un solo restaurante.
+  List<_Order> _mergeGrouped(List<_Order> orders) {
+    final byGroup = <String, List<_Order>>{};
+    final result = <_Order>[];
+    for (final o in orders) {
+      if (o.groupId == null) {
+        result.add(o);
+      } else {
+        byGroup.putIfAbsent(o.groupId!, () => []).add(o);
+      }
+    }
+    for (final pair in byGroup.values) {
+      if (pair.length == 2) {
+        result.add(pair[0].mergedWith(pair[1]));
+      } else {
+        result.addAll(pair);
+      }
+    }
+    return result;
+  }
+
   Future<void> _loadOrders() async {
     try {
       final data = await SupabaseService.getOrdersForRepartidor();
       if (!mounted) return;
-      final orders = data
-          .map(_Order.fromMap)
-          .where((o) => o.id != _activeOrder?.id && !_rejectedOrderIds.contains(o.id))
+      final rawOrders = data.map(_Order.fromMap).toList();
+      final orders = _mergeGrouped(rawOrders)
+          .where((o) => o.id != _activeOrder?.id &&
+              !_rejectedOrderIds.contains(o.id) &&
+              (o.secondOrderId == null || !_rejectedOrderIds.contains(o.secondOrderId)))
           .toList();
       if (!_initialOrdersLoaded) {
         _initialOrdersLoaded = true;
@@ -345,12 +606,9 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                 const Distance()(prevPos, current) > 200;
             if (moved) {
               _lastRouteFetchPos = current;
-              final dest = _step >= 2
-                  ? (_geocodedCustomerPos ?? _activeOrder!.customerPos)
-                  : _activeOrder!.restaurantPos;
-              final color = _step >= 2
-                  ? const Color(0xFF2196F3)
-                  : const Color(0xFFFFB300);
+              final clientPos = _geocodedCustomerPos ?? _activeOrder!.customerPos;
+              final dest = _destForStep(_activeOrder!, _step, clientPos);
+              final color = _colorForStep(_activeOrder!, _step);
               _fetchRoute(current, dest, color: color);
             }
           }
@@ -372,7 +630,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     super.dispose();
   }
 
-  void _aceptarPedido(_Order order) {
+  Future<void> _aceptarPedido(_Order order) async {
     setState(() {
       _activeOrder = order;
       _geocodedCustomerPos = order.hasExactCoords ? order.customerPos : null;
@@ -384,13 +642,55 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
       _routePoints = [];
       _lastRouteFetchPos = null;
     });
-    SupabaseService.updateOrderStatus(order.id, 'accepted').then((_) => _loadCustomerProfile(order));
-    SupabaseService.startLocationBroadcast(order.id);
     if (!order.hasExactCoords) _geocodeCustomer(order.address);
     final from = _myPos != null
         ? LatLng(_myPos!.latitude, _myPos!.longitude)
         : order.restaurantPos;
     _fetchRoute(from, order.restaurantPos, color: const Color(0xFFFFB300));
+
+    if (!order.isGrouped) {
+      SupabaseService.updateOrderStatus(order.id, 'accepted').then((_) => _loadCustomerProfile(order));
+      SupabaseService.startLocationBroadcast(order.id);
+      return;
+    }
+
+    // Pedido de 2 restaurantes: reclama AMBAS piernas en una sola
+    // transacción (claim_group_order) — si entre que se cargó la lista y
+    // este tap otro repartidor ya se adelantó con una de las 2, se sigue
+    // solo con la que sí se logró reclamar (nunca es un error, mientras se
+    // haya reclamado al menos una).
+    try {
+      final claimed = await SupabaseService.claimGroupOrder(order.id);
+      if (!mounted || _activeOrder?.id != order.id) return;
+      _Order effective = order;
+      if (claimed.length < 2) {
+        final gotFirst = claimed.contains(order.id);
+        effective = gotFirst ? order.firstLegSolo : order.secondLegSolo;
+        setState(() {
+          _activeOrder = effective;
+          _geocodedCustomerPos = effective.hasExactCoords ? effective.customerPos : null;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('El otro restaurante de este pedido ya se lo llevó otro repartidor — sigues solo con este.'),
+          backgroundColor: Colors.orange,
+        ));
+        final f = _myPos != null ? LatLng(_myPos!.latitude, _myPos!.longitude) : effective.restaurantPos;
+        _fetchRoute(f, effective.restaurantPos, color: const Color(0xFFFFB300));
+      }
+      SupabaseService.startLocationBroadcast(effective.id);
+      _loadCustomerProfile(effective);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _activeOrder = null;
+        _step = 0;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Ya se lo llevó otro repartidor.'),
+        backgroundColor: Colors.orange,
+      ));
+      _loadOrders();
+    }
   }
 
   // Nombre/foto reales de la cuenta del cliente (como en Uber) — solo se
@@ -409,6 +709,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   void _rechazarPedido(_Order order) {
     setState(() {
       _rejectedOrderIds.add(order.id);
+      if (order.secondOrderId != null) _rejectedOrderIds.add(order.secondOrderId!);
       _pendingOrders.removeWhere((o) => o.id == order.id);
     });
   }
@@ -451,29 +752,53 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   }
 
   Future<void> _avanzarStep() async {
-    if (_step < 2) {
+    final order = _activeOrder!;
+    final finalizeIndex = _finalizeIndexFor(order);
+    if (_step < finalizeIndex) {
       setState(() => _step++);
-      if (_step == 2) {
-        SupabaseService.updateOrderStatus(_activeOrder!.id, 'delivering');
+      // En un pedido de 2 restaurantes, pasar de "recoge en A" a "ve a B"
+      // (step 1→2) también necesita una ruta nueva (destino cambia de
+      // restaurante A a restaurante B) aunque todavía no sea el tramo
+      // final — antes (pedido de un solo restaurante) esto solo pasaba en
+      // la transición final, porque solo había un restaurante de por medio.
+      if (_step != finalizeIndex) {
+        final clientPos = _geocodedCustomerPos ?? order.customerPos;
+        final dest = _destForStep(order, _step, clientPos);
+        final color = _colorForStep(order, _step);
+        final from = _myPos != null ? LatLng(_myPos!.latitude, _myPos!.longitude) : dest;
+        setState(() { _routePoints = []; _lastRouteFetchPos = null; });
+        _fetchRoute(from, dest, color: color);
+      }
+      if (_step == finalizeIndex) {
+        // Pedido de 1 o 2 restaurantes: a partir de aquí se considera
+        // "delivering" para TODAS sus piernas (cada fila de "orders" avanza
+        // su propio status, pero desde la perspectiva del rider es un solo
+        // viaje continuo).
+        SupabaseService.updateOrderStatus(order.id, 'delivering');
+        if (order.secondOrderId != null) {
+          SupabaseService.updateOrderStatus(order.secondOrderId!, 'delivering');
+        }
         _broadcastTimer = Timer.periodic(const Duration(seconds: 5), (_) {
           if (_myPos != null) {
             SupabaseService.broadcastLocation(_myPos!.latitude, _myPos!.longitude);
           }
         });
-        // Ruta azul al cliente
-        final clientPos = _geocodedCustomerPos ?? _activeOrder!.customerPos;
+        final clientPos = _geocodedCustomerPos ?? order.customerPos;
         final from = _myPos != null
             ? LatLng(_myPos!.latitude, _myPos!.longitude)
-            : _activeOrder!.restaurantPos;
+            : _destForStep(order, _step - 1, clientPos);
         setState(() { _routePoints = []; _lastRouteFetchPos = null; });
         _fetchRoute(from, clientPos, color: const Color(0xFF2196F3));
       }
     } else {
       _broadcastTimer?.cancel();
       _broadcastTimer = null;
-      final orderId = _activeOrder!.id;
-      final ganancia = _activeOrder!.total * 0.15;
+      final orderId = order.id;
+      final ganancia = order.combinedTotal * 0.15;
       SupabaseService.updateOrderStatus(orderId, 'delivered');
+      if (order.secondOrderId != null) {
+        SupabaseService.updateOrderStatus(order.secondOrderId!, 'delivered');
+      }
       SupabaseService.stopLocationBroadcast();
       NotificationService.entregaCompletada(ganancia);
       setState(() {
@@ -543,6 +868,19 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
               delegate: SliverChildBuilderDelegate(
                 (ctx, i) => _buildRiderCallCard(_pendingRiderCalls[i], isDark),
                 childCount: _pendingRiderCalls.length,
+              ),
+            ),
+          ),
+
+        // Llamadas ya aceptadas por este rider — antes desaparecían sin
+        // dejar rastro al aceptarlas (ver nota en _myAcceptedCalls arriba).
+        if (_myAcceptedCalls.isNotEmpty)
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+            sliver: SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (ctx, i) => _buildAcceptedCallCard(_myAcceptedCalls[i], isDark),
+                childCount: _myAcceptedCalls.length,
               ),
             ),
           ),
@@ -847,21 +1185,71 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     'Ver más pedidos',
   ];
 
+  // Pedido de 2 restaurantes: 2 paradas de recogida en vez de 1 — 6 "pasos"
+  // en vez de 4 (ve a A, recoge en A, ve a B, recoge en B, en camino al
+  // cliente, entregado). El patrón de siempre (finalizar = steps.length-2)
+  // se mantiene igual para los 2 casos.
+  List<({IconData icon, String label, Color color})> _stepsFor(_Order order) {
+    if (!order.isGrouped) return _steps;
+    return [
+      (icon: Icons.store, label: 'Ve a ${order.restaurantName}', color: const Color(0xFFFFD600)),
+      (icon: Icons.shopping_bag, label: 'Recoge en ${order.restaurantName}', color: AppConstants.primaryColor),
+      (icon: Icons.store, label: 'Ve a ${order.secondRestaurantName}', color: Colors.deepOrange),
+      (icon: Icons.shopping_bag, label: 'Recoge en ${order.secondRestaurantName}', color: Colors.deepOrangeAccent),
+      (icon: Icons.delivery_dining, label: 'En camino al cliente', color: const Color(0xFF2196F3)),
+      (icon: Icons.check_circle, label: '¡Pedido entregado!', color: Colors.green),
+    ];
+  }
+
+  List<String> _stepActionsFor(_Order order) {
+    if (!order.isGrouped) return _stepActions;
+    return [
+      'Ya estoy en ${order.restaurantName}',
+      'Pedido recogido — ir al 2º restaurante',
+      'Ya estoy en ${order.secondRestaurantName}',
+      'Pedido recogido — ¡en camino al cliente!',
+      'Marcar como entregado',
+      'Ver más pedidos',
+    ];
+  }
+
+  // Destino de navegación/ruta para el "step" actual — centraliza lo que
+  // antes era un ternario repetido en varios lados (GPS en vivo, "Cómo
+  // llegar", mapa) y que ahora tiene 3 posibles destinos (restaurante A,
+  // restaurante B, cliente) en vez de solo 2.
+  LatLng _destForStep(_Order order, int step, LatLng clientPos) {
+    if (!order.isGrouped) return step >= 2 ? clientPos : order.restaurantPos;
+    if (step < 2) return order.restaurantPos;
+    if (step < 4) return order.secondRestaurantPos ?? order.restaurantPos;
+    return clientPos;
+  }
+
+  Color _colorForStep(_Order order, int step) {
+    if (!order.isGrouped) return step >= 2 ? const Color(0xFF2196F3) : const Color(0xFFFFB300);
+    if (step < 2) return const Color(0xFFFFD600);
+    if (step < 4) return Colors.deepOrange;
+    return const Color(0xFF2196F3);
+  }
+
+  // El último paso antes de "entregado" — donde se dispara 'delivering' y
+  // se empieza a transmitir ubicación al cliente. Para un pedido solo es el
+  // índice 2 (como siempre); para uno de 2 restaurantes, el 4.
+  int _finalizeIndexFor(_Order order) => _stepsFor(order).length - 2;
+
   Widget _buildActiveOrder(bool isDark) {
     final order = _activeOrder!;
-    final sd = _steps[_step];
+    final steps = _stepsFor(order);
+    final stepActions = _stepActionsFor(order);
+    final finalizeIndex = _finalizeIndexFor(order);
+    final sd = steps[_step];
     final myLatLng = _myPos != null
         ? LatLng(_myPos!.latitude, _myPos!.longitude)
         : null;
 
     final clientPos = _geocodedCustomerPos ?? order.customerPos;
-    final showClientPos = _step >= 2;
-    final mapCenter = myLatLng ?? (showClientPos
-        ? LatLng(
-            (order.restaurantPos.latitude + clientPos.latitude) / 2,
-            (order.restaurantPos.longitude + clientPos.longitude) / 2,
-          )
-        : order.restaurantPos);
+    final showClientPos = _step >= finalizeIndex;
+    final currentDest = _destForStep(order, _step, clientPos);
+    final mapCenter = myLatLng ?? currentDest;
 
     final bgColor      = isDark ? AppConstants.bgColor : AppConstants.primaryColor;
     final cardBg       = isDark ? AppConstants.surfaceColor : Colors.white;
@@ -900,6 +1288,12 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                   width: 44, height: 44,
                   child: _Pin(icon: Icons.storefront, color: AppConstants.primaryColor),
                 ),
+                if (order.isGrouped && order.secondRestaurantPos != null)
+                  Marker(
+                    point: order.secondRestaurantPos!,
+                    width: 44, height: 44,
+                    child: _Pin(icon: Icons.storefront, color: Colors.deepOrange),
+                  ),
                 if (showClientPos)
                   Marker(
                     point: clientPos,
@@ -917,7 +1311,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
           ),
           // Debajo de la fila de arriba (paso + "Cómo llegar"), no encima —
           // antes las dos se dibujaban en la misma franja y se encimaban.
-          if (_step == 2)
+          if (_step == finalizeIndex)
             Positioned(
               top: 56, left: 0, right: 0,
               child: SafeArea(
@@ -982,7 +1376,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                   ),
                   GestureDetector(
                     onTap: () {
-                      final dest = _step >= 2 ? clientPos : order.restaurantPos;
+                      final dest = _destForStep(order, _step, clientPos);
                       final url = Uri.parse(
                         'https://www.google.com/maps/dir/?api=1&destination=${dest.latitude},${dest.longitude}&travelmode=driving',
                       );
@@ -1016,7 +1410,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(16),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              _buildStepper(),
+              _buildStepper(steps),
               const SizedBox(height: 20),
 
               _SectionLabel('Datos del cliente', textColor: Colors.white),
@@ -1096,10 +1490,38 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                   }).toList(),
                 ),
               ),
+              if (order.isGrouped) ...[
+                const SizedBox(height: 16),
+                _SectionLabel('Productos (${order.secondRestaurantName})', textColor: Colors.white),
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: cardBg,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Column(
+                    children: (order.secondItems ?? const []).asMap().entries.map((e) {
+                      final isLast = e.key == (order.secondItems?.length ?? 1) - 1;
+                      return Column(children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 6),
+                          child: Row(children: [
+                            const Icon(Icons.fastfood, color: Colors.deepOrange, size: 16),
+                            const SizedBox(width: 10),
+                            Text(e.value, style: TextStyle(color: textMain, fontSize: 14)),
+                          ]),
+                        ),
+                        if (!isLast) Divider(height: 1, color: divider),
+                      ]);
+                    }).toList(),
+                  ),
+                ),
+              ],
               const SizedBox(height: 8),
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                 Text('Total del pedido', style: TextStyle(color: textSub, fontSize: 13)),
-                Text('\$${order.total.toStringAsFixed(0)} MXN',
+                Text('\$${order.combinedTotal.toStringAsFixed(0)} MXN',
                     style: TextStyle(color: textMain, fontWeight: FontWeight.bold, fontSize: 16)),
               ]),
               const SizedBox(height: 20),
@@ -1118,17 +1540,17 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
               width: double.infinity,
               child: ElevatedButton.icon(
                 onPressed: _avanzarStep,
-                icon: Icon(_step == 3 ? Icons.arrow_forward : Icons.check, size: 20),
-                label: Text(_stepActions[_step],
+                icon: Icon(_step == steps.length - 1 ? Icons.arrow_forward : Icons.check, size: 20),
+                label: Text(stepActions[_step],
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: _steps[_step].color,
+                  backgroundColor: steps[_step].color,
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 15),
                 ),
               ),
             ),
-            if (_step < 3) ...[
+            if (_step < steps.length - 1) ...[
               const SizedBox(height: 10),
               SizedBox(
                 width: double.infinity,
@@ -1163,7 +1585,9 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         title: const Text('¿Cancelar esta entrega?',
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         content: Text(
-          'El pedido de ${order.restaurantName} volverá a estar disponible para otro repartidor.',
+          order.isGrouped
+              ? 'El pedido de ${order.restaurantName} y ${order.secondRestaurantName} volverá a estar disponible para otro repartidor.'
+              : 'El pedido de ${order.restaurantName} volverá a estar disponible para otro repartidor.',
           style: TextStyle(color: Colors.white.withValues(alpha: 0.75), height: 1.4),
         ),
         actions: [
@@ -1178,6 +1602,9 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
               _broadcastTimer = null;
               SupabaseService.stopLocationBroadcast();
               await SupabaseService.releaseOrderFromRider(order.id);
+              if (order.secondOrderId != null) {
+                await SupabaseService.releaseOrderFromRider(order.secondOrderId!);
+              }
               if (!mounted) return;
               setState(() {
                 _activeOrder = null;
@@ -1195,12 +1622,12 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     );
   }
 
-  Widget _buildStepper() {
+  Widget _buildStepper(List<({IconData icon, String label, Color color})> steps) {
     return Row(
-      children: List.generate(_steps.length, (i) {
+      children: List.generate(steps.length, (i) {
         final done = i < _step;
         final active = i == _step;
-        final sd = _steps[i];
+        final sd = steps[i];
         // Mismo esquema que tracking_screen.dart (cliente): un paso ya
         // completado siempre se ve azul, sin importar su color propio —
         // solo el paso activo usa el color propio de sd.
@@ -1241,7 +1668,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                 ),
               ]),
             ),
-            if (i < _steps.length - 1)
+            if (i < steps.length - 1)
               Expanded(
                 child: Container(
                   height: 2,

@@ -6,14 +6,21 @@ import 'package:flutter/material.dart';
 class AdminColors {
   AdminColors._();
 
-  static const bg = Color(0xFF0D0D0F);
-  static const surface = Color(0xFF17171A);
-  static const surfaceElevated = Color(0xFF1F1F23);
-  static const accent = Color(0xFFFF6B00);
+  // Mismo naranja de Dueño (NO el de AppConstants, que es del cliente) —
+  // surface/surfaceElevated son sombras más oscuras del mismo naranja,
+  // para que las tarjetas se distingan del fondo sin dejar de ser naranja.
+  static const bg = Color(0xFFFF5722);
+  static const surface = Color(0xFFE64A19);
+  static const surfaceElevated = Color(0xFFD84315);
+  // Antes era naranja (0xFFFF6B00) — ahora que el fondo es naranja, los
+  // botones/acentos interactivos pasan a azul para que de verdad resalten.
+  static const accent = Color(0xFF2196F3);
 
   static const textPrimary = Colors.white;
-  static Color textSecondary = Colors.white.withValues(alpha: 0.55);
-  static Color textFaint = Colors.white.withValues(alpha: 0.35);
+  // Subidos de 0.55/0.35 — esos valores se calcularon para texto sobre
+  // fondo casi negro; sobre naranja se ven lavados si no suben.
+  static Color textSecondary = Colors.white.withValues(alpha: 0.85);
+  static Color textFaint = Colors.white.withValues(alpha: 0.65);
 
   // Estados de pedido — única fuente de verdad para Admin.
   // No reutilizar AppOrderStatus (app_data_provider.dart): ese enum

@@ -69,26 +69,27 @@ class _MyPromotionsScreenState extends State<MyPromotionsScreen> with SingleTick
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppConstants.bgColor,
+      backgroundColor: AppConstants.primaryColor,
       appBar: AppBar(
-        backgroundColor: AppConstants.bgColor,
+        backgroundColor: AppConstants.primaryColor,
         elevation: 0,
         title: const Text('Mis promociones', style: TextStyle(color: Colors.white)),
         iconTheme: const IconThemeData(color: Colors.white),
         bottom: TabBar(
           controller: _tabController,
           isScrollable: true,
-          indicatorColor: AppConstants.primaryColor,
+          dividerColor: Colors.transparent,
+          indicatorColor: Colors.white,
           labelColor: Colors.white,
-          unselectedLabelColor: Colors.white38,
+          unselectedLabelColor: Colors.white70,
           tabs: [for (final b in _buckets) Tab(text: '${b.$3} ${b.$2}')],
         ),
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator(color: AppConstants.primaryColor))
+          ? const Center(child: CircularProgressIndicator(color: Colors.white))
           : RefreshIndicator(
               onRefresh: _load,
-              color: AppConstants.primaryColor,
+              color: Colors.white,
               child: TabBarView(
                 controller: _tabController,
                 children: [
@@ -103,10 +104,10 @@ class _MyPromotionsScreenState extends State<MyPromotionsScreen> with SingleTick
     if (claims.isEmpty) {
       return ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        children: const [
-          SizedBox(height: 80),
+        children: [
+          const SizedBox(height: 80),
           Center(
-            child: Text('Nada por aquí todavía', style: TextStyle(color: Colors.white38)),
+            child: Text('Nada por aquí todavía', style: TextStyle(color: Colors.white.withValues(alpha: 0.85))),
           ),
         ],
       );
@@ -137,7 +138,7 @@ class _PromoClaimCard extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: AppConstants.surfaceColor,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: selectable ? Border.all(color: AppConstants.primaryColor, width: 1.5) : null,
       ),
@@ -158,7 +159,7 @@ class _PromoClaimCard extends StatelessWidget {
                   Row(children: [
                     Expanded(
                       child: Text(p?.title ?? 'Promoción', maxLines: 2, overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                          style: const TextStyle(color: AppConstants.primaryColor, fontWeight: FontWeight.bold, fontSize: 16)),
                     ),
                     _StatusChip(claim.bucket),
                   ]),
@@ -168,20 +169,20 @@ class _PromoClaimCard extends StatelessWidget {
                   ],
                   if (p != null && p.description.isNotEmpty) ...[
                     const SizedBox(height: 6),
-                    Text(p.description, style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 13)),
+                    Text(p.description, style: TextStyle(color: AppConstants.primaryColor.withValues(alpha: 0.75), fontSize: 13)),
                   ],
                   if (p?.expiresAt != null) ...[
                     const SizedBox(height: 6),
                     Text('Válido hasta: ${_formatDate(p!.expiresAt!)}',
-                        style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 12)),
+                        style: TextStyle(color: AppConstants.primaryColor.withValues(alpha: 0.6), fontSize: 12)),
                   ],
                   if (p != null && p.conditionsSummary.isNotEmpty) ...[
                     const SizedBox(height: 4),
-                    Text(p.conditionsSummary, style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 11)),
+                    Text(p.conditionsSummary, style: TextStyle(color: AppConstants.primaryColor.withValues(alpha: 0.55), fontSize: 11)),
                   ],
                   if (p?.code != null) ...[
                     const SizedBox(height: 6),
-                    Text('Código: ${p!.code}', style: const TextStyle(color: Colors.white70, fontSize: 12, fontFamily: 'monospace')),
+                    Text('Código: ${p!.code}', style: const TextStyle(color: AppConstants.primaryColor, fontSize: 12, fontFamily: 'monospace')),
                   ],
                   if (claim.status == 'used' && claim.discountAmount != null) ...[
                     const SizedBox(height: 6),

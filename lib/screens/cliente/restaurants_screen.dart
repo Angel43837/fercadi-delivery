@@ -20,7 +20,6 @@ import '../../providers/cart_provider.dart';
 import '../../providers/theme_provider.dart';
 import '../../services/location_service.dart';
 import '../../services/notification_service.dart';
-import '../../services/order_history_service.dart';
 import '../../services/supabase_service.dart';
 import '../../models/restaurant_banner.dart';
 import '../../models/app_promo.dart';
@@ -101,9 +100,13 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
   bool _userTouchingPromos = false;
   DateTime? _promosTouchReleasedAt;
 
-  // Active order banner
-  Map<String, dynamic>? _activeOrder;
-  String _prevActiveStatus = '';
+  // Banner de pedidos en curso — antes solo se podía ver UN pedido activo a
+  // la vez (un slot local en SharedPreferences, ver OrderHistoryService);
+  // si el cliente pedía a un segundo restaurante mientras el primero seguía
+  // en curso, el primero desaparecía de esta pantalla sin avisar. Ahora se
+  // leen en vivo TODOS los pedidos activos del cliente desde la BD.
+  List<Map<String, dynamic>> _activeOrders = [];
+  final Map<String, String> _prevStatusByOrderId = {};
   Timer? _activeOrderTimer;
   Timer? _promoRefreshTimer;
 
@@ -161,17 +164,17 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppConstants.surfaceColor,
+        backgroundColor: AppConstants.primaryColor,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         contentPadding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
           Container(
             width: 72, height: 72,
             decoration: BoxDecoration(
-              color: AppConstants.primaryColor.withValues(alpha: 0.12),
+              color: Colors.white.withValues(alpha: 0.15),
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.location_on, color: AppConstants.primaryColor, size: 38),
+            child: const Icon(Icons.location_on, color: Colors.white, size: 38),
           ),
           const SizedBox(height: 18),
           const Text('¿Dónde te entregamos?',
@@ -180,7 +183,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
           const SizedBox(height: 10),
           Text('Marca tu casa o lugar favorito en el mapa para que tus pedidos lleguen directo ahí.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13, height: 1.5)),
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontSize: 13, height: 1.5)),
           const SizedBox(height: 24),
           SizedBox(
             width: double.infinity,
@@ -202,14 +205,21 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
               },
               icon: const Icon(Icons.map_outlined, size: 20),
               label: const Text('Ubicar mi casa en el mapa', style: TextStyle(fontWeight: FontWeight.bold)),
-              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
             ),
           ),
           const SizedBox(height: 8),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text('Ahora no',
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 13)),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () => Navigator.pop(ctx),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white),
+              child: const Text('Ahora no', style: TextStyle(fontSize: 13)),
+            ),
           ),
         ]),
       ),
@@ -217,29 +227,20 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
   }
 
   Future<void> _checkActiveOrder() async {
-    final order = await OrderHistoryService.getActiveOrder();
-    if (!mounted) return;
-    if (order == null) {
-      if (_activeOrder != null) setState(() => _activeOrder = null);
-      return;
-    }
-    final orderId = order['orderId'] as String;
-    String status;
+    List<Map<String, dynamic>> orders;
     try {
-      status = await SupabaseService.getOrderStatus(orderId) ?? 'pending';
+      orders = await SupabaseService.getMyActiveOrders();
     } catch (_) {
-      status = 'pending';
-    }
-    if (!mounted) return;
-    if (status == 'delivered' || status == 'cancelled') {
-      await OrderHistoryService.clearActiveOrder();
-      setState(() => _activeOrder = null);
       return;
     }
-    final prev = _prevActiveStatus;
-    _prevActiveStatus = status;
-    setState(() => _activeOrder = order);
-    if (prev.isNotEmpty && prev != status) {
+    if (!mounted) return;
+
+    for (final o in orders) {
+      final orderId = o['id'] as String;
+      final status = o['status'] as String? ?? 'pending';
+      final prev = _prevStatusByOrderId[orderId];
+      _prevStatusByOrderId[orderId] = status;
+      if (prev == null || prev == status) continue;
       if (status == 'delivering') {
         NotificationService.repartidorEnCamino();
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -266,7 +267,15 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
         ));
       }
     }
+    // Deja de rastrear pedidos que ya no están activos (entregados/cancelados).
+    _prevStatusByOrderId.removeWhere((id, _) => !orders.any((o) => o['id'] == id));
+    // Un pedido de 2 restaurantes crea 2 filas en "orders" — se combinan en
+    // una sola entrada aquí (mergeGroupedOrders) antes de guardarlas, para
+    // que el banner de abajo siga mostrando UN pedido por cada checkout
+    // real del cliente, no una fila por restaurante.
+    setState(() => _activeOrders = SupabaseService.mergeGroupedOrders(orders));
   }
+
 
   bool _likesInited = false;
   @override
@@ -487,14 +496,20 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
     );
   }
 
+  // Solo para ver en Pruebas cómo luce la pantalla de reclamar con
+  // cualquier banner, tenga o no una promoción real enlazada — en GOGO Food
+  // esto no se usa, ahí se queda el comportamiento real de siempre.
+  static const String _pruebasTestPromotionId = '3748ef97-d7af-4e69-9244-7cddd95cc08f';
+
   Widget _buildPromoCard(AppPromo p) {
     return GestureDetector(
       // Si el banner tiene una promoción real enlazada, lleva a su detalle
       // (con botón de "Reclamar" de verdad) — si no, se queda igual que
       // siempre: solo abre la imagen en grande. Un banner nunca aplica un
       // descuento por sí mismo.
-      onTap: p.linkedPromotionId != null
-          ? () => context.push('/promotion-detail', extra: {'promotionId': p.linkedPromotionId})
+      onTap: (p.linkedPromotionId != null || AppConstants.isPruebas)
+          ? () => context.push('/promotion-detail',
+              extra: {'promotionId': p.linkedPromotionId ?? _pruebasTestPromotionId})
           : () => showDialog(
                 context: context,
                 builder: (_) => Dialog(
@@ -510,7 +525,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
         width: 220,
         margin: const EdgeInsets.only(right: 12),
         clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(color: const Color(0xFFF7F7F7), borderRadius: BorderRadius.circular(24)),
+        decoration: BoxDecoration(color: AppConstants.primaryColor, borderRadius: BorderRadius.circular(24)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Stack(children: [
             Image.network(p.imageUrl,
@@ -535,12 +550,12 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                 if (p.title.isNotEmpty)
                   Text(p.title,
                       maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Color(0xFF1A1A1A))),
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white)),
                 if (p.subtitle.isNotEmpty) ...[
                   const SizedBox(height: 2),
                   Text(p.subtitle,
                       maxLines: 2, overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: Colors.black.withValues(alpha: 0.55), fontSize: 12)),
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 12)),
                 ],
               ]),
             ),
@@ -759,23 +774,43 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
         ],
       ),
       // ── Barra de carrito fija abajo ──────────────────────────────────────
-      bottomNavigationBar: (cartCount > 0 || _activeOrder != null)
+      bottomNavigationBar: (cartCount > 0 || _activeOrders.isNotEmpty)
           ? _buildBottomArea(cartCount, context.read<CartProvider>())
           : null,
       body: _checkingLocation ? _buildChecking(isDark) : _buildBody(appData, isDark),
     );
   }
 
-  Widget _buildActiveOrderBannerInline() {
-    final name = (_activeOrder!['restaurantName'] as String?) ?? 'Tu pedido';
-    // SafeArea + margen abajo — sin esto quedaba pegado hasta el borde de
-    // la pantalla (detrás del indicador de inicio en iPhone).
+  Widget _buildActiveOrdersBanner() {
+    // Antes se apilaban TODOS los pedidos activos del cliente aquí — con una
+    // cuenta que acumuló varios pedidos reales nunca cerrados (de pruebas a
+    // lo largo de esta sesión), esto llenaba la pantalla de tarjetas
+    // repetidas. El home ahora solo muestra la MÁS RECIENTE (la lista ya
+    // viene ordenada por created_at desc) — el resto siguen siendo
+    // rastreables individualmente, cada una por su cuenta, desde "Mis
+    // pedidos" (order_history_screen.dart).
+    if (_activeOrders.isEmpty) return const SizedBox.shrink();
     return SafeArea(
       top: false,
       child: Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
-      child: GestureDetector(
-        onTap: () => context.go('/tracking', extra: _activeOrder!),
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+        child: _buildActiveOrderCard(_activeOrders.first),
+      ),
+    );
+  }
+
+  Widget _buildActiveOrderCard(Map<String, dynamic> order) {
+    final restaurant = order['restaurants'] as Map<String, dynamic>?;
+    // Si esta entrada ya viene combinada (pedido de 2 restaurantes, ver
+    // mergeGroupedOrders), se muestran los 2 nombres — sigue siendo UNA
+    // sola tarjeta, nunca 2.
+    final sibling = order['group_sibling'] as Map<String, dynamic>?;
+    final siblingRestaurant = sibling?['restaurants'] as Map<String, dynamic>?;
+    final name = sibling != null
+        ? '${restaurant?['name'] as String? ?? 'Restaurante'} + ${siblingRestaurant?['name'] as String? ?? 'Restaurante'}'
+        : (restaurant?['name'] as String? ?? 'Tu pedido');
+    return GestureDetector(
+        onTap: () => context.go('/tracking', extra: SupabaseService.orderToTrackingExtra(order)),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           decoration: BoxDecoration(
@@ -835,9 +870,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
             ),
           ]),
         ),
-      ),
-      ),
-    );
+      );
   }
 
   // ── Avatar por defecto ───────────────────────────────────────────────────
@@ -985,7 +1018,7 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
   // ── Área inferior: pedido activo + barra de carrito ───────────────────────
   Widget _buildBottomArea(int cartCount, CartProvider cart) {
     return Column(mainAxisSize: MainAxisSize.min, children: [
-      if (_activeOrder != null) _buildActiveOrderBannerInline(),
+      if (_activeOrders.isNotEmpty) _buildActiveOrdersBanner(),
       if (cartCount > 0)
         Container(
           color: Colors.transparent,
@@ -2084,33 +2117,35 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                     ),
                     onPressed: () async {
                       final cart = context.read<CartProvider>();
-                      // Si hay items de otro restaurante, pedir confirmación
-                      if (cart.restaurantId != null && cart.restaurantId != restaurantId) {
-                        final cambiar = await showDialog<bool>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            backgroundColor: AppConstants.surfaceColor,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                            title: const Text('¿Cambiar restaurante?',
-                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                            content: Text(
-                              'Tienes productos de ${cart.restaurantName} en tu carrito.\n\n¿Quieres vaciarlo y pedir de $restaurantName?',
-                              style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 14),
-                            ),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(ctx, false),
-                                child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
-                              ),
-                              ElevatedButton(
-                                style: ElevatedButton.styleFrom(backgroundColor: accent),
-                                onPressed: () => Navigator.pop(ctx, true),
-                                child: const Text('Sí, cambiar', style: TextStyle(color: Colors.white)),
-                              ),
-                            ],
+                      // Hasta 2 restaurantes por pedido (decisión del dueño,
+                      // oct 2026) — un restaurante que YA está en el
+                      // carrito nunca cuenta como "nuevo" aquí (antes esto
+                      // comparaba contra cart.restaurantId, que solo
+                      // devuelve el PRIMER restaurante agregado, así que
+                      // agregar MÁS del segundo restaurante ya presente en
+                      // el carrito disparaba esta misma advertencia por
+                      // error). Si agregar este producto metería un TERCER
+                      // restaurante distinto, se bloquea con un aviso
+                      // honesto — antes el diálogo de aquí decía "vaciarlo"
+                      // pero el código nunca llamaba a cart.clear(): en la
+                      // práctica ya mezclaba los restaurantes sin avisar.
+                      // 2 restaurantes a la vez ya NO es un caso de error:
+                      // es el pedido combinado que ahora sí se soporta, así
+                      // que no hace falta ninguna advertencia para ese caso.
+                      final existingRestaurants = cart.itemsByRestaurant.keys.toSet();
+                      if (existingRestaurants.isNotEmpty &&
+                          !existingRestaurants.contains(restaurantId) &&
+                          existingRestaurants.length >= 2) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                          content: Text(
+                            'Ya tienes productos de 2 restaurantes en tu carrito — es el máximo '
+                            'por pedido. Quita los de uno de ellos antes de agregar uno de un '
+                            'tercer restaurante.',
                           ),
-                        );
-                        if (cambiar != true || !mounted) return;
+                          backgroundColor: Colors.redAccent,
+                          duration: Duration(seconds: 4),
+                        ));
+                        return;
                       }
                       // El % de un banner (bannerDiscount) es solo texto
                       // publicitario ahora — ya no se resta del precio real

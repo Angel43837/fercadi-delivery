@@ -13,6 +13,10 @@ class AppConstants {
     'SUPABASE_ANON_KEY',
     defaultValue: 'sb_publishable_eEimQboqykVjDWpnXG8VNQ_iVlNhgbo',
   );
+  // GOGO Food compila con --dart-define=SUPABASE_URL=...dlukaxbcyetcdbdjjgct...;
+  // Pruebas se queda en el default de arriba — así se puede diferenciar en
+  // runtime sin agregar un flag nuevo, para cosas exclusivas de pruebas/QA.
+  static const bool isPruebas = supabaseUrl == 'https://ymztoayxzewghbethahv.supabase.co';
   // Service role key — Settings > API > service_role en tu dashboard de Supabase
   static const String supabaseServiceRoleKey = '';
 

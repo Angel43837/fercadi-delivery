@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' show Random;
 import 'package:flutter/foundation.dart' hide Category;
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants.dart';
+import '../core/legal_content.dart';
 import '../models/restaurant.dart';
 import '../models/category.dart';
 import '../models/product.dart';
@@ -1791,6 +1793,11 @@ class SupabaseService {
     String? clientFcmToken,
     String? paymentStatus,
     String? stripePaymentIntentId,
+    // Comparte este mismo id entre las 2 filas de un pedido de 2
+    // restaurantes (ver 20261031000000_multi_restaurant_orders.sql) — nulo
+    // para un pedido normal de un solo restaurante, que es el default para
+    // no romper a ningún llamador existente.
+    String? groupId,
   }) async {
     final orderId = 'ord_${DateTime.now().millisecondsSinceEpoch}';
     final deliveryJson = jsonEncode({
@@ -1814,6 +1821,7 @@ class SupabaseService {
       if (stripePaymentIntentId != null)
         'stripe_payment_intent_id': stripePaymentIntentId,
       if (clientFcmToken != null) 'client_fcm_token': clientFcmToken,
+      if (groupId != null) 'group_id': groupId,
     });
     if (items.isNotEmpty) {
       await _client
@@ -1821,6 +1829,94 @@ class SupabaseService {
           .insert(items.map((i) => {'order_id': orderId, ...i}).toList());
     }
     return orderId;
+  }
+
+  // Genera un uuid v4 en el celular, para ligar las 2 filas de un pedido de
+  // 2 restaurantes ANTES de insertarlas (orders.group_id es uuid de
+  // verdad, a diferencia de orders.id que son ids tipo "ord_<timestamp>").
+  // No hay ningún paquete "uuid" en este proyecto todavía (se revisó antes
+  // de agregar una dependencia nueva solo para esto) — un v4 es solo 16
+  // bytes aleatorios con 2 nibbles fijos, no justifica traer un paquete.
+  static String generateGroupId() {
+    final rnd = Random.secure();
+    final bytes = List<int>.generate(16, (_) => rnd.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40; // versión 4
+    bytes[8] = (bytes[8] & 0x3f) | 0x80; // variante RFC 4122
+    String hex(int start, int end) =>
+        bytes.sublist(start, end).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    return '${hex(0, 4)}-${hex(4, 6)}-${hex(6, 8)}-${hex(8, 10)}-${hex(10, 16)}';
+  }
+
+  // Rechaza un pedido de parte del dueño (o Admin) — vía Edge Function
+  // (reject-order), no un update directo: antes `updateOrderStatus(id,
+  // 'cancelled')` nunca revisaba si el pedido ya tenía un pago real con
+  // tarjeta, así que un pedido pagado y rechazado se quedaba cobrado para
+  // siempre sin que el cliente recibiera nada de vuelta. Regresa `true` si
+  // de verdad se reembolsó algo (para que la UI pueda avisarlo), `false` si
+  // solo se canceló (efectivo, o sin pago confirmado). Propaga el mensaje
+  // real del servidor si algo sale mal — nunca lo swallowea.
+  static Future<bool> rejectOrder(String orderId, {String? reason}) async {
+    final res = await _client.functions.invoke('reject-order', body: {
+      'orderId': orderId,
+      if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+    });
+    final data = res.data as Map<String, dynamic>?;
+    if (data == null || data['ok'] != true) {
+      throw Exception(data?['error'] as String? ?? 'No se pudo rechazar el pedido.');
+    }
+    return data['refunded'] == true;
+  }
+
+  // Un repartidor reclama un pedido — vía RPC (claim_group_order), no un
+  // update directo: si el pedido es de un solo restaurante se comporta
+  // igual que antes (status→'accepted', repartidor_id propio); si es un
+  // pedido de 2 restaurantes (group_id), reclama ambas piernas del grupo
+  // que sigan disponibles en una sola transacción. Regresa la lista de ids
+  // que de verdad se lograron reclamar (puede ser 1 si la pierna hermana ya
+  // no estaba disponible — ver comentarios del RPC).
+  static Future<List<String>> claimGroupOrder(String orderId) async {
+    final data = await _client.rpc('claim_group_order', params: {'p_order_id': orderId});
+    return (data as List).cast<String>();
+  }
+
+  // Agrupa pedidos por group_id — un pedido de 2 restaurantes crea DOS
+  // filas en "orders" ligadas por group_id; desde la perspectiva del
+  // cliente es UN solo pedido. Devuelve la lista con cada par ya combinado
+  // en una sola entrada (con las claves originales de la primera fila +
+  // 'group_sibling' con la fila de la segunda) — una fila huérfana (su
+  // pareja ya no aparece en esta misma lista, p. ej. porque la rechazaron o
+  // porque ya salió del rango de la consulta que armó la lista) se deja tal
+  // cual, como un pedido normal. Usado por restaurants_screen.dart (banner
+  // de "pedido en curso") y order_history_screen.dart (Mis pedidos).
+  static List<Map<String, dynamic>> mergeGroupedOrders(List<Map<String, dynamic>> orders) {
+    final byGroup = <String, List<Map<String, dynamic>>>{};
+    final result = <Map<String, dynamic>>[];
+    for (final o in orders) {
+      final gid = o['group_id'] as String?;
+      if (gid == null) {
+        result.add(o);
+      } else {
+        byGroup.putIfAbsent(gid, () => []).add(o);
+      }
+    }
+    for (final pair in byGroup.values) {
+      if (pair.length == 2) {
+        final a = pair[0], b = pair[1];
+        result.add({
+          ...a,
+          'group_sibling': b,
+          'total': (((a['total'] as num?) ?? 0).toDouble()) + (((b['total'] as num?) ?? 0).toDouble()),
+        });
+      } else {
+        result.addAll(pair);
+      }
+    }
+    result.sort((x, y) {
+      final cx = x['created_at'] as String? ?? '';
+      final cy = y['created_at'] as String? ?? '';
+      return cy.compareTo(cx);
+    });
+    return result;
   }
 
   static Future<List<Map<String, dynamic>>> getRestaurantsAdmin() async {
@@ -2219,6 +2315,96 @@ class SupabaseService {
     await _client.from('restaurants').delete().eq('id', restaurantId);
   }
 
+  // Elimina la cuenta de QUIEN LLAMA (cliente, repartidor o dueño) —
+  // bloqueador de tienda: Apple/Google exigen un flujo de borrado de
+  // cuenta dentro de la app, no solo un formulario de contacto.
+  //
+  // La Edge Function (`delete-account`) aplica la política real del lado
+  // del servidor (retiros en proceso, pedidos activos del restaurante,
+  // etc.) y puede REFUSAR el borrado con un mensaje claro — ese mensaje se
+  // relanza tal cual (nunca un genérico) para que la pantalla lo muestre
+  // íntegro al usuario. `functions.invoke()` lanza `FunctionException` (no
+  // regresa el body) en cualquier respuesta fuera de 2xx — mismo patrón ya
+  // usado en rider_withdrawal_repository.dart para Stripe.
+  static Future<void> deleteMyAccount() async {
+    if (useMock) return;
+    try {
+      await _client.functions.invoke('delete-account', body: {});
+    } catch (e) {
+      String message = e.toString();
+      if (e is FunctionException) {
+        final details = e.details;
+        if (details is Map && details['error'] != null) {
+          message = details['error'].toString();
+        } else {
+          message = e.reasonPhrase ?? 'No se pudo eliminar la cuenta.';
+        }
+      }
+      throw Exception(message);
+    }
+  }
+
+  // Pedidos simultáneos del cliente — antes la app solo recordaba UN
+  // "pedido activo" en un slot local (SharedPreferences, ver
+  // order_history_service.dart): si el cliente pedía un segundo restaurante
+  // mientras el primero seguía en curso, ese slot se sobreescribía y el
+  // primer pedido desaparecía de la vista (seguía existiendo en la BD, pero
+  // ya no había forma cómoda de volver a verlo desde la pantalla principal).
+  // Esta consulta siempre trae TODOS los pedidos en curso de verdad, leídos
+  // en vivo de la BD — no depende de ningún caché local.
+  static Future<List<Map<String, dynamic>>> getMyActiveOrders() async {
+    if (useMock) return [];
+    final uid = _client.auth.currentUser?.id;
+    if (uid == null) return [];
+    final data = await _client
+        .from('orders')
+        .select('*, restaurants(name, image_url, lat, lng, address)')
+        .eq('customer_id', uid)
+        .inFilter('status', ['pending', 'restaurant_accepted', 'accepted', 'delivering'])
+        .order('created_at', ascending: false);
+    return (data as List).cast<Map<String, dynamic>>();
+  }
+
+  // Convierte un pedido activo (fila cruda de este método, con el join a
+  // restaurants) al mapa que espera la ruta /tracking — compartido entre
+  // restaurants_screen.dart y order_history_screen.dart para no duplicar
+  // esta conversión en los dos lados. La dirección de entrega vive como
+  // JSON dentro de la columna customer_name (mismo formato que ya lee
+  // _aceptarPedido del lado del repartidor).
+  static Map<String, dynamic> orderToTrackingExtra(Map<String, dynamic> o) {
+    Map<String, dynamic> delivery = {};
+    try {
+      delivery = jsonDecode(o['customer_name'] as String? ?? '{}') as Map<String, dynamic>;
+    } catch (_) {}
+    final restaurant = o['restaurants'] as Map<String, dynamic>?;
+    // Si "o" ya viene combinada por mergeGroupedOrders (pedido de 2
+    // restaurantes), 'group_sibling' trae la segunda fila — se muestra un
+    // resumen combinado (ambos nombres/logos, total ya sumado) en vez de
+    // intentar rehacer el mapa/pasos en vivo para 2 restaurantes a la vez.
+    final sibling = o['group_sibling'] as Map<String, dynamic>?;
+    final siblingRestaurant = sibling?['restaurants'] as Map<String, dynamic>?;
+    final isGroup = sibling != null;
+    final restaurantName = isGroup
+        ? '${restaurant?['name'] as String? ?? 'Restaurante'} + ${siblingRestaurant?['name'] as String? ?? 'Restaurante'}'
+        : (restaurant?['name'] as String? ?? 'Restaurante');
+    return {
+      'orderId': o['id'],
+      'restaurantName': restaurantName,
+      'address': delivery['address'] as String? ?? '',
+      'total': (o['total'] as num?)?.toDouble() ?? 0.0,
+      'lat': delivery['lat'] != null ? (delivery['lat'] as num).toDouble() : null,
+      'lng': delivery['lng'] != null ? (delivery['lng'] as num).toDouble() : null,
+      'restaurantLat': (restaurant?['lat'] as num?)?.toDouble(),
+      'restaurantLng': (restaurant?['lng'] as num?)?.toDouble(),
+      'restaurantImageUrl': restaurant?['image_url'] as String?,
+      if (isGroup)
+        'restaurants': [
+          {'name': restaurant?['name'] as String? ?? '', 'imageUrl': restaurant?['image_url'] as String? ?? ''},
+          {'name': siblingRestaurant?['name'] as String? ?? '', 'imageUrl': siblingRestaurant?['image_url'] as String? ?? ''},
+        ],
+    };
+  }
+
   static Future<List<Map<String, dynamic>>> getOrdersForRepartidor() async {
     final userId = _client.auth.currentUser?.id;
     // Solo pedidos ya confirmados por el restaurante y sin repartidor
@@ -2235,6 +2421,15 @@ class SupabaseService {
         )
         .order('created_at', ascending: false);
     return (data as List).cast<Map<String, dynamic>>();
+  }
+
+  // El cliente cancela SU propio pedido antes de que el restaurante lo
+  // confirme — vía RPC (cancel_my_order), no un .update() directo: desde
+  // que se cerró el hueco de RLS de "orders" (ver migración
+  // 20261026010000_close_orders_update_hole.sql), un cliente ya no tiene
+  // permiso de escritura directa sobre esa tabla, a propósito.
+  static Future<void> cancelMyOrder(String orderId) async {
+    await _client.rpc('cancel_my_order', params: {'p_order_id': orderId});
   }
 
   static Future<void> updateOrderStatus(String orderId, String status) async {
@@ -2361,6 +2556,107 @@ class SupabaseService {
         .order('created_at', ascending: false)
         .limit(100);
     return (data as List).cast<Map<String, dynamic>>();
+  }
+
+  // Un pedido con sus productos completos (no solo id/nombre) — para poder
+  // reconstruir Product y volver a agregarlo al carrito ("Volver a pedir").
+  // También trae status/payment_status/stripe_payment_intent_id — los usa
+  // order_history_screen.dart para decidir si un pedido es elegible para
+  // pedir reembolso (solo pagos con tarjeta ya confirmados por Stripe).
+  static Future<Map<String, dynamic>?> getOrderById(String orderId) async {
+    if (useMock) return null;
+    final data = await _client
+        .from('orders')
+        .select(
+          'id, status, payment_status, stripe_payment_intent_id, total, created_at, restaurant_id, restaurants(name, image_url), order_items(quantity, products(*))',
+        )
+        .eq('id', orderId)
+        .maybeSingle();
+    return data;
+  }
+
+  // ── Reembolsos de pedidos (Task A de la auditoría de cumplimiento) ───────
+  // Antes de esto, un problema con un pedido no tenía NINGÚN mecanismo real
+  // — ver migración 20261026030000_order_refund_requests.sql.
+
+  // Cliente: pide un reembolso de SU pedido — toda la validación real
+  // (¿es tu pedido? ¿de verdad hay un pago con tarjeta confirmado? ¿ya
+  // tienes una solicitud abierta?) vive en el RPC, nunca en el cliente.
+  static Future<void> requestOrderRefund(String orderId, String reason) async {
+    await _client.rpc('request_order_refund', params: {
+      'p_order_id': orderId,
+      'p_reason': reason,
+    });
+  }
+
+  // Cliente: solicitudes de reembolso propias (para mostrar su estado —
+  // no es fire-and-forget, el cliente debe poder ver si sigue pendiente,
+  // se aprobó o se rechazó).
+  static Future<List<Map<String, dynamic>>> getMyRefundRequests() async {
+    if (useMock) return [];
+    final uid = _client.auth.currentUser?.id;
+    if (uid == null) return [];
+    final data = await _client
+        .from('order_refund_requests')
+        .select()
+        .eq('requested_by', uid)
+        .order('created_at', ascending: false);
+    return (data as List).cast<Map<String, dynamic>>();
+  }
+
+  // Admin: todas las solicitudes de reembolso (RLS ya restringe esto a
+  // is_admin(), pero no se filtra aquí para poder mostrar también las ya
+  // resueltas si la pantalla de Admin lo necesita).
+  static Future<List<Map<String, dynamic>>> getAllRefundRequests() async {
+    if (useMock) return [];
+    final data = await _client
+        .from('order_refund_requests')
+        .select()
+        .order('created_at', ascending: false);
+    return (data as List).cast<Map<String, dynamic>>();
+  }
+
+  // Admin: aprueba o rechaza una solicitud — la Edge Function hace la
+  // llamada real a Stripe y SOLO marca "procesado" si Stripe confirma el
+  // reembolso (nunca antes). El mensaje de error real de Stripe/validación
+  // se relanza tal cual para que Admin sepa exactamente qué pasó.
+  static Future<void> processOrderRefund(
+    String refundRequestId, {
+    required String action,
+    String? adminNotes,
+  }) async {
+    try {
+      await _client.functions.invoke('process-order-refund', body: {
+        'refundRequestId': refundRequestId,
+        'action': action,
+        if (adminNotes != null) 'adminNotes': adminNotes,
+      });
+    } catch (e) {
+      String message = e.toString();
+      if (e is FunctionException) {
+        final details = e.details;
+        if (details is Map && details['error'] != null) {
+          message = details['error'].toString();
+        } else {
+          message = e.reasonPhrase ?? 'No se pudo procesar el reembolso.';
+        }
+      }
+      throw Exception(message);
+    }
+  }
+
+  // ── Registro de aceptación de Términos/Privacidad (Task B) ───────────────
+  // Mejor esfuerzo, fire-and-forget a propósito — es un registro de
+  // cumplimiento, nunca debe bloquear ni tronar el alta de una cuenta si
+  // falla (ver migración 20261026040000_legal_acceptances.sql).
+  static Future<void> recordLegalAcceptance() async {
+    if (useMock) return;
+    final uid = _client.auth.currentUser?.id;
+    if (uid == null) return;
+    await _client.from('legal_acceptances').insert([
+      {'user_id': uid, 'document': 'terms', 'version': kLegalVersion},
+      {'user_id': uid, 'document': 'privacy', 'version': kLegalVersion},
+    ]);
   }
 
   // Historial completo de entregas de un repartidor (todas las fechas, no solo hoy).
@@ -2661,7 +2957,7 @@ class SupabaseService {
     if (useMock) return [];
     final data = await _client
         .from('rider_calls')
-        .select()
+        .select('*, restaurants(address, lat, lng)')
         .eq('status', 'pendiente')
         .order('created_at');
     return (data as List).cast<Map<String, dynamic>>();
@@ -2674,6 +2970,35 @@ class SupabaseService {
       'p_accept': accept,
     });
     return res == true;
+  }
+
+  // Llamadas que este rider ya aceptó y sigue en curso (para mostrarle el
+  // botón de "Marcar como entregado" — sin esto no había forma de cerrar
+  // el ciclo ni de que esos $35 de envío contaran para su saldo).
+  static Future<List<Map<String, dynamic>>> getMyAcceptedRiderCalls() async {
+    if (useMock) return [];
+    final uid = _client.auth.currentUser?.id;
+    if (uid == null) return [];
+    final data = await _client
+        .from('rider_calls')
+        .select('*, restaurants(address, lat, lng)')
+        .eq('status', 'aceptado')
+        .eq('accepted_by', uid)
+        .order('created_at');
+    return (data as List).cast<Map<String, dynamic>>();
+  }
+
+  static Future<bool> markRiderCallDelivered(String callId) async {
+    final res = await _client.rpc('mark_rider_call_delivered', params: {'p_call_id': callId});
+    return res == true;
+  }
+
+  // "Mejor esfuerzo", sin cron real detrás (ver rider-call-expire-check) —
+  // se llama de oquis en cada sondeo normal, se ignora cualquier error.
+  static Future<void> expireOldRiderCalls() async {
+    try {
+      await _client.functions.invoke('rider-call-expire-check', body: {});
+    } catch (_) {}
   }
 
   static RealtimeChannel subscribeToRiderCalls(void Function() onUpdate) {

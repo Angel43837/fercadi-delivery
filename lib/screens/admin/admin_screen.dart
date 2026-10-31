@@ -10,7 +10,6 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
-import '../../core/constants.dart';
 import '../../providers/app_data_provider.dart';
 import '../../services/auth_service.dart';
 import '../../models/withdrawal_status.dart';
@@ -51,7 +50,7 @@ Future<String?> _promptRejectionReason(BuildContext context) async {
   return showDialog<String>(
     context: context,
     builder: (ctx) => AlertDialog(
-      backgroundColor: AppConstants.surfaceColor,
+      backgroundColor: AdminColors.surface,
       title: const Text('Motivo del rechazo', style: TextStyle(color: Colors.white)),
       content: TextField(
         controller: ctrl,
@@ -144,6 +143,7 @@ class _AdminScreenState extends State<AdminScreen> {
   // Retiros (solo el conteo de pendientes, para el badge en "Más")
   int _retirosPendientes = 0;
   int _retirosRestaurantesPendientes = 0;
+  int _reembolsosPendientes = 0;
   final _withdrawalRepo = RiderWithdrawalRepository();
   final _restaurantWithdrawalRepo = RestaurantWithdrawalRepository();
 
@@ -158,6 +158,7 @@ class _AdminScreenState extends State<AdminScreen> {
     _loadStats();
     _loadRetirosPendientes();
     _loadRetirosRestaurantesPendientes();
+    _loadReembolsosPendientes();
     _loadPendingDrivers();
     _pollTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       _loadOrders();
@@ -166,6 +167,7 @@ class _AdminScreenState extends State<AdminScreen> {
       _loadStats();
       _loadRetirosPendientes();
       _loadRetirosRestaurantesPendientes();
+      _loadReembolsosPendientes();
       _loadPendingDrivers();
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -268,6 +270,14 @@ class _AdminScreenState extends State<AdminScreen> {
     } catch (_) {}
   }
 
+  Future<void> _loadReembolsosPendientes() async {
+    try {
+      final data = await SupabaseService.getAllRefundRequests();
+      final count = data.where((r) => r['status'] == 'pendiente').length;
+      if (mounted) setState(() => _reembolsosPendientes = count);
+    } catch (_) {}
+  }
+
   Future<void> _setAlertStatus(String alertId, String status) async {
     await SupabaseService.updateAlertStatus(alertId, status);
     await _loadAlerts();
@@ -283,7 +293,7 @@ class _AdminScreenState extends State<AdminScreen> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setS) => AlertDialog(
-          backgroundColor: AppConstants.surfaceColor,
+          backgroundColor: AdminColors.surface,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
@@ -306,7 +316,7 @@ class _AdminScreenState extends State<AdminScreen> {
                         color: Colors.white.withValues(alpha: 0.3),
                       ),
                       filled: true,
-                      fillColor: AppConstants.surface2Color,
+                      fillColor: AdminColors.surfaceElevated,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(10),
                         borderSide: BorderSide.none,
@@ -324,7 +334,7 @@ class _AdminScreenState extends State<AdminScreen> {
                         color: Colors.white.withValues(alpha: 0.3),
                       ),
                       filled: true,
-                      fillColor: AppConstants.surface2Color,
+                      fillColor: AdminColors.surfaceElevated,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(10),
                         borderSide: BorderSide.none,
@@ -334,11 +344,11 @@ class _AdminScreenState extends State<AdminScreen> {
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
                     initialValue: priority,
-                    dropdownColor: AppConstants.surface2Color,
+                    dropdownColor: AdminColors.surfaceElevated,
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
                       filled: true,
-                      fillColor: AppConstants.surface2Color,
+                      fillColor: AdminColors.surfaceElevated,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(10),
                         borderSide: BorderSide.none,
@@ -358,11 +368,11 @@ class _AdminScreenState extends State<AdminScreen> {
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
                     initialValue: category,
-                    dropdownColor: AppConstants.surface2Color,
+                    dropdownColor: AdminColors.surfaceElevated,
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
                       filled: true,
-                      fillColor: AppConstants.surface2Color,
+                      fillColor: AdminColors.surfaceElevated,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(10),
                         borderSide: BorderSide.none,
@@ -417,7 +427,7 @@ class _AdminScreenState extends State<AdminScreen> {
                 await _loadAlerts();
               },
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppConstants.primaryColor,
+                backgroundColor: AdminColors.accent,
               ),
               child: const Text(
                 'Crear',
@@ -947,7 +957,7 @@ class _AdminScreenState extends State<AdminScreen> {
         title: name,
         subtitle: 'Historial y calificaciones',
         icon: Icons.person_outline,
-        color: AppConstants.primaryColor,
+        color: AdminColors.accent,
         avatarUrl: avatarUrl,
         future: _loadClientDetail(customerId),
       ),
@@ -1212,6 +1222,13 @@ class _AdminScreenState extends State<AdminScreen> {
         'Solicitudes de pago a restaurantes',
         _retirosRestaurantesPendientes,
         () => context.push('/admin/retiros-restaurantes'),
+      ),
+      (
+        Icons.money_off_csred_outlined,
+        'Reembolsos',
+        'Solicitudes de reembolso de pedidos',
+        _reembolsosPendientes,
+        () => context.push('/admin/reembolsos'),
       ),
       (
         Icons.local_offer_outlined,
@@ -1731,7 +1748,7 @@ class _AdminScreenState extends State<AdminScreen> {
           margin: const EdgeInsets.only(bottom: 12),
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: AppConstants.surfaceColor,
+            color: AdminColors.surface,
             borderRadius: BorderRadius.circular(16),
             border: isOpen
                 ? Border.all(color: Colors.green.withValues(alpha: 0.3))
@@ -1790,7 +1807,7 @@ class _AdminScreenState extends State<AdminScreen> {
                       decoration: BoxDecoration(
                         color: isOpen
                             ? Colors.green.withValues(alpha: 0.12)
-                            : AppConstants.surface2Color,
+                            : AdminColors.surfaceElevated,
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(
                           color: isOpen
@@ -1816,7 +1833,7 @@ class _AdminScreenState extends State<AdminScreen> {
                       final confirm = await showDialog<bool>(
                         context: context,
                         builder: (_) => AlertDialog(
-                          backgroundColor: AppConstants.surfaceColor,
+                          backgroundColor: AdminColors.surface,
                           title: const Text(
                             '¿Eliminar restaurante?',
                             style: TextStyle(color: Colors.white),
@@ -1901,7 +1918,7 @@ class _AdminScreenState extends State<AdminScreen> {
                         const SizedBox(height: 8),
                         Row(children: [
                           Expanded(
-                            child: OutlinedButton(
+                            child: ElevatedButton(
                               onPressed: () async {
                                 final motivo = await _promptRejectionReason(context);
                                 if (motivo == null || !mounted) return;
@@ -1912,8 +1929,8 @@ class _AdminScreenState extends State<AdminScreen> {
                                   await _loadRestaurants();
                                 });
                               },
-                              style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent),
-                              child: const Text('Rechazar', style: TextStyle(fontSize: 12)),
+                              style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                              child: const Text('Rechazar', style: TextStyle(fontSize: 12, color: Colors.white)),
                             ),
                           ),
                           const SizedBox(width: 8),
@@ -1945,13 +1962,13 @@ class _AdminScreenState extends State<AdminScreen> {
                     label: 'Pedidos hoy',
                     value: '$ordersToday',
                     icon: Icons.receipt_long_outlined,
-                    color: AppConstants.primaryColor,
+                    color: AdminColors.accent,
                   ),
                   _MiniStat(
                     label: 'Likes',
                     value: '$likes',
                     icon: Icons.thumb_up,
-                    color: AppConstants.primaryColor,
+                    color: AdminColors.accent,
                   ),
                   _MiniStat(
                     label: 'Estado',
@@ -2023,7 +2040,11 @@ class _AdminScreenState extends State<AdminScreen> {
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
         padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(color: AppConstants.surfaceColor, borderRadius: BorderRadius.circular(14)),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.18), blurRadius: 10, offset: const Offset(0, 3))],
+        ),
         child: Row(children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(10),
@@ -2035,18 +2056,18 @@ class _AdminScreenState extends State<AdminScreen> {
           const SizedBox(width: 12),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+              Text(name, style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 14)),
               Text(
                 switch (approvalStatus) {
                   'correcciones_solicitadas' => 'Se le pidieron correcciones',
                   'en_revision' => 'En revisión',
                   _ => 'Pendiente',
                 },
-                style: TextStyle(color: Colors.orange.withValues(alpha: 0.8), fontSize: 12),
+                style: TextStyle(color: Colors.orange.withValues(alpha: 0.9), fontSize: 12, fontWeight: FontWeight.w600),
               ),
             ]),
           ),
-          Icon(Icons.chevron_right, color: Colors.white.withValues(alpha: 0.3)),
+          Icon(Icons.chevron_right, color: Colors.black.withValues(alpha: 0.3)),
         ]),
       ),
     );
@@ -2067,27 +2088,31 @@ class _AdminScreenState extends State<AdminScreen> {
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
         padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(color: AppConstants.surfaceColor, borderRadius: BorderRadius.circular(14)),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.18), blurRadius: 10, offset: const Offset(0, 3))],
+        ),
         child: Row(children: [
           Container(
             width: 40, height: 40,
-            decoration: BoxDecoration(color: AppConstants.primaryColor.withValues(alpha: 0.15), shape: BoxShape.circle),
-            child: const Icon(Icons.delivery_dining, color: AppConstants.primaryColor, size: 20),
+            decoration: BoxDecoration(color: AdminColors.accent.withValues(alpha: 0.15), shape: BoxShape.circle),
+            child: const Icon(Icons.delivery_dining, color: AdminColors.accent, size: 20),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(name.isEmpty ? adminShortId(id) : name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+              Text(name.isEmpty ? adminShortId(id) : name, style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 14)),
               Text(
                 '${d['vehicle'] ?? '—'} · ${d['city'] ?? '—'} · ${switch (status) {
                   'requiere_correccion' => 'Se le pidieron correcciones',
                   _ => 'En revisión',
                 }}',
-                style: TextStyle(color: Colors.orange.withValues(alpha: 0.8), fontSize: 12),
+                style: TextStyle(color: Colors.orange.withValues(alpha: 0.9), fontSize: 12, fontWeight: FontWeight.w600),
               ),
             ]),
           ),
-          Icon(Icons.chevron_right, color: Colors.white.withValues(alpha: 0.3)),
+          Icon(Icons.chevron_right, color: Colors.black.withValues(alpha: 0.3)),
         ]),
       ),
     );
@@ -2135,7 +2160,7 @@ class _AdminScreenState extends State<AdminScreen> {
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 20),
             child: Center(
-              child: CircularProgressIndicator(color: AppConstants.primaryColor),
+              child: CircularProgressIndicator(color: AdminColors.accent),
             ),
           )
         else if (_clientUsers.isEmpty)
@@ -2154,7 +2179,7 @@ class _AdminScreenState extends State<AdminScreen> {
               subtitle: (u['email'] as String?) ?? (u['phone'] as String?) ?? '—',
               trailing:
                   '$orders pedido${orders != 1 ? 's' : ''} • \$${total.toStringAsFixed(0)}',
-              color: AppConstants.primaryColor,
+              color: AdminColors.accent,
               icon: Icons.person_outline,
               avatarUrl: u['avatarUrl'] as String?,
               onTap: () => _showClientDetail(
@@ -2228,7 +2253,7 @@ class _AdminScreenState extends State<AdminScreen> {
     final statusColors = {
       'pending': const Color(0xFFFFB300),
       'restaurant_accepted': const Color(0xFF00BFA5),
-      'accepted': AppConstants.primaryColor,
+      'accepted': AdminColors.accent,
       'delivering': const Color(0xFF2196F3),
       'delivered': Colors.green,
       'cancelled': Colors.red,
@@ -2253,7 +2278,7 @@ class _AdminScreenState extends State<AdminScreen> {
       children: [
         // buscador + filtro
         Container(
-          color: AppConstants.surfaceColor,
+          color: AdminColors.surface,
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
           child: Column(
             children: [
@@ -2272,7 +2297,7 @@ class _AdminScreenState extends State<AdminScreen> {
                     size: 18,
                   ),
                   filled: true,
-                  fillColor: AppConstants.surface2Color,
+                  fillColor: AdminColors.surfaceElevated,
                   contentPadding: const EdgeInsets.symmetric(vertical: 10),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10),
@@ -2290,7 +2315,7 @@ class _AdminScreenState extends State<AdminScreen> {
                     _EventChip(
                       label: 'Todos',
                       selected: _eventStatusFilter == null,
-                      color: AppConstants.primaryColor,
+                      color: AdminColors.accent,
                       onTap: () => setState(() => _eventStatusFilter = null),
                     ),
                     ...statuses.map(
@@ -2316,7 +2341,7 @@ class _AdminScreenState extends State<AdminScreen> {
           child: _loadingOrders
               ? const Center(
                   child: CircularProgressIndicator(
-                    color: AppConstants.primaryColor,
+                    color: AdminColors.accent,
                   ),
                 )
               : filtered.isEmpty
@@ -2357,7 +2382,7 @@ class _AdminScreenState extends State<AdminScreen> {
                       margin: const EdgeInsets.only(bottom: 8),
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: AppConstants.surfaceColor,
+                        color: AdminColors.surface,
                         borderRadius: BorderRadius.circular(12),
                         border: Border(
                           left: BorderSide(color: color, width: 3),
@@ -2486,7 +2511,7 @@ class _AdminScreenState extends State<AdminScreen> {
     return Column(
       children: [
         Container(
-          color: AppConstants.surfaceColor,
+          color: AdminColors.surface,
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
           child: Column(
             children: [
@@ -2526,7 +2551,7 @@ class _AdminScreenState extends State<AdminScreen> {
                     _EventChip(
                       label: 'Todas',
                       selected: _alertStatusFilter == null,
-                      color: AppConstants.primaryColor,
+                      color: AdminColors.accent,
                       onTap: () => setState(() => _alertStatusFilter = null),
                     ),
                     _EventChip(
@@ -2592,7 +2617,7 @@ class _AdminScreenState extends State<AdminScreen> {
         Container(
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
-            color: AppConstants.surfaceColor,
+            color: AdminColors.surface,
             borderRadius: BorderRadius.circular(16),
           ),
           child: Column(
@@ -2602,7 +2627,7 @@ class _AdminScreenState extends State<AdminScreen> {
                 children: [
                   const Icon(
                     Icons.local_shipping_outlined,
-                    color: AppConstants.primaryColor,
+                    color: AdminColors.accent,
                     size: 20,
                   ),
                   const SizedBox(width: 8),
@@ -2644,7 +2669,7 @@ class _AdminScreenState extends State<AdminScreen> {
                 width: double.infinity,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppConstants.primaryColor,
+                    backgroundColor: AdminColors.accent,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     shape: RoundedRectangleBorder(
@@ -2887,7 +2912,7 @@ class _RealOrderCard extends StatelessWidget {
     final (statusLabel, statusColor) = switch (status) {
       'pending' => ('Pendiente', const Color(0xFFFFB300)),
       'restaurant_accepted' => ('Confirmado', const Color(0xFF00BFA5)),
-      'accepted' => ('Aceptado', AppConstants.primaryColor),
+      'accepted' => ('Aceptado', AdminColors.accent),
       'delivering' => ('En camino', const Color(0xFF2196F3)),
       'delivered' => ('Entregado', Colors.green),
       'cancelled' => ('Cancelado', Colors.red),
@@ -2920,7 +2945,7 @@ class _RealOrderCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppConstants.surfaceColor,
+        color: AdminColors.surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: statusColor.withValues(alpha: 0.35)),
       ),
@@ -3105,7 +3130,7 @@ class _RankingCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppConstants.surfaceColor,
+        color: AdminColors.surface,
         borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
@@ -3242,7 +3267,7 @@ class _AlertCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppConstants.surfaceColor,
+        color: AdminColors.surface,
         borderRadius: BorderRadius.circular(14),
         border: Border(left: BorderSide(color: priorityColor, width: 4)),
       ),
@@ -3421,7 +3446,7 @@ class _SectionTitle extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Icon(icon, color: AppConstants.primaryColor, size: 18),
+        Icon(icon, color: AdminColors.accent, size: 18),
         const SizedBox(width: 8),
         Text(
           label,
@@ -3482,7 +3507,7 @@ class _UserTile extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
-          color: AppConstants.surfaceColor,
+          color: AdminColors.surface,
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -3588,7 +3613,7 @@ class _UserDetailSheet extends StatelessWidget {
     final sent = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppConstants.surfaceColor,
+        backgroundColor: AdminColors.surface,
         title: const Text('Mandar mensaje', style: TextStyle(color: Colors.white)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -3618,7 +3643,7 @@ class _UserDetailSheet extends StatelessWidget {
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: AppConstants.primaryColor),
+            style: ElevatedButton.styleFrom(backgroundColor: AdminColors.accent),
             child: const Text('Enviar'),
           ),
         ],
@@ -3648,7 +3673,7 @@ class _UserDetailSheet extends StatelessWidget {
       builder: (context, scrollController) {
         return Container(
           decoration: const BoxDecoration(
-            color: AppConstants.surfaceColor,
+            color: AdminColors.surface,
             borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
           ),
           child: FutureBuilder(
@@ -3657,7 +3682,7 @@ class _UserDetailSheet extends StatelessWidget {
               if (snapshot.connectionState != ConnectionState.done) {
                 return const Center(
                   child: CircularProgressIndicator(
-                    color: AppConstants.primaryColor,
+                    color: AdminColors.accent,
                   ),
                 );
               }
@@ -3732,12 +3757,12 @@ class _UserDetailSheet extends StatelessWidget {
                         if (isRider)
                           IconButton(
                             onPressed: () => _showDocs(context),
-                            icon: const Icon(Icons.badge_outlined, color: AppConstants.primaryColor),
+                            icon: const Icon(Icons.badge_outlined, color: AdminColors.accent),
                             tooltip: 'Ver documentos',
                           ),
                         IconButton(
                           onPressed: () => _sendMessage(context),
-                          icon: const Icon(Icons.send_outlined, color: AppConstants.primaryColor),
+                          icon: const Icon(Icons.send_outlined, color: AdminColors.accent),
                           tooltip: 'Mandar mensaje',
                         ),
                       ],
@@ -3896,7 +3921,7 @@ class _RestaurantDetailSheetState extends State<_RestaurantDetailSheet> {
       builder: (context, scrollController) {
         return Container(
           decoration: const BoxDecoration(
-            color: AppConstants.surfaceColor,
+            color: AdminColors.surface,
             borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
           ),
           child: ListView(
@@ -3936,7 +3961,7 @@ class _RestaurantDetailSheetState extends State<_RestaurantDetailSheet> {
               if (needsReview)
                 Row(children: [
                   Expanded(
-                    child: OutlinedButton(
+                    child: ElevatedButton(
                       onPressed: () async {
                         final motivo = await _promptRejectionReason(context);
                         if (motivo == null || !context.mounted) return;
@@ -3947,8 +3972,8 @@ class _RestaurantDetailSheetState extends State<_RestaurantDetailSheet> {
                         });
                         if (context.mounted) Navigator.pop(context);
                       },
-                      style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent),
-                      child: const Text('Rechazar'),
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                      child: const Text('Rechazar', style: TextStyle(color: Colors.white)),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -4039,7 +4064,7 @@ class _DriverDocsSheetState extends State<_DriverDocsSheet> {
       builder: (context, scrollController) {
         return Container(
           decoration: const BoxDecoration(
-            color: AppConstants.surfaceColor,
+            color: AdminColors.surface,
             borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
           ),
           child: FutureBuilder<Map<String, dynamic>?>(
@@ -4047,7 +4072,7 @@ class _DriverDocsSheetState extends State<_DriverDocsSheet> {
             builder: (context, snapshot) {
               if (snapshot.connectionState != ConnectionState.done) {
                 return const Center(
-                  child: CircularProgressIndicator(color: AppConstants.primaryColor),
+                  child: CircularProgressIndicator(color: AdminColors.accent),
                 );
               }
               final driver = snapshot.data;
@@ -4107,14 +4132,14 @@ class _DriverDocsSheetState extends State<_DriverDocsSheet> {
                       (driver['status'] as String?) != 'activo')
                     Row(children: [
                       Expanded(
-                        child: OutlinedButton(
+                        child: ElevatedButton(
                           onPressed: () async {
                             final motivo = await _promptRejectionReason(context);
                             if (motivo == null) return;
                             await _transition('rechazado', note: motivo);
                           },
-                          style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent),
-                          child: const Text('Rechazar'),
+                          style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                          child: const Text('Rechazar', style: TextStyle(color: Colors.white)),
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -4275,7 +4300,7 @@ class _FilterChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final selected = value == current;
     final color = value == null
-        ? AppConstants.primaryColor
+        ? AdminColors.accent
         : appOrderStatusStyle(value!).color;
     return GestureDetector(
       onTap: () => onTap(value),
@@ -4435,7 +4460,7 @@ class _NavItem extends StatelessWidget {
                   Icon(
                     icon,
                     color: active
-                        ? AppConstants.primaryColor
+                        ? AdminColors.accent
                         : Colors.white.withValues(alpha: 0.3),
                     size: 22,
                   ),

@@ -8,7 +8,18 @@ const String kPrivacyContactEmail = 'privacidad@fercadi.com';
 const String kLegalBusinessName = 'Grupo Fercadi';
 const String kLegalCity = 'Maravatío, Michoacán';
 
-const String kLastUpdatedLegal = 'Agosto de 2026';
+const String kLastUpdatedLegal = 'Octubre de 2026';
+
+// Versión corta para registrar en `legal_acceptances` (qué versión aceptó
+// cada cuenta y cuándo) — deliberadamente separada de kLastUpdatedLegal:
+// un cambio de redacción menor no necesariamente debe subir la versión, y
+// cuando sí sea un cambio sustancial, basta subir este string (no hace
+// falta que coincida palabra por palabra con la fecha mostrada arriba).
+// Si GOGO cambia los términos de forma importante en el futuro, subir
+// este valor identifica a las cuentas que aceptaron una versión vieja —
+// no se construyó ningún flujo de "re-aceptación forzosa" todavía (fuera
+// de alcance de esta sesión), queda como posible mejora futura.
+const String kLegalVersion = '2026-10';
 
 const String kPrivacyPolicy = '''
 AVISO DE PRIVACIDAD
@@ -26,7 +37,8 @@ Para poder ofrecerte el servicio de pedidos y entrega a domicilio, recabamos:
 • Fotografía de perfil, si decides subir una.
 • Historial de pedidos: qué pediste, en qué restaurante, fecha y monto.
 • Datos de pago: los procesa directamente nuestro proveedor de pagos (Stripe); nosotros no almacenamos el número completo de tu tarjeta.
-• Si inicias sesión con Google o Facebook, recibimos tu nombre, correo y foto de perfil públicos de esas plataformas.
+• Si inicias sesión con Google, Facebook o Apple ("Iniciar sesión con Apple", disponible en iPhone), recibimos tu nombre, correo y foto de perfil públicos de esas plataformas.
+• Datos técnicos de fallos de la app (reporte de errores), recabados automáticamente por nuestro proveedor de monitoreo (Sentry) para poder corregir problemas — no incluyen tu contraseña ni datos de pago.
 
 No recabamos datos personales sensibles (salud, origen étnico, creencias religiosas, etc.).
 
@@ -44,7 +56,7 @@ Finalidades secundarias (puedes decirnos que no si no quieres):
 • Enviarte promociones u ofertas de restaurantes participantes.
 • Analizar el uso de la app para mejorarla.
 
-Si no quieres que usemos tus datos para las finalidades secundarias, escríbenos a $kPrivacyContactEmail.
+Puedes desactivar el envío de promociones y ofertas por correo en cualquier momento desde el interruptor "Recibir promociones y ofertas por correo" en tu perfil, dentro de la app. Si no puedes acceder a la app, también puedes escribirnos a $kPrivacyContactEmail para que lo hagamos por ti.
 
 3. TRANSFERENCIA DE DATOS
 
@@ -53,6 +65,7 @@ Compartimos tus datos únicamente con:
 • El repartidor asignado (para entregarlo).
 • Nuestro proveedor de pagos (Stripe), para procesar el cobro.
 • Nuestro proveedor de infraestructura y base de datos (Supabase), que almacena la información en nuestro nombre bajo un contrato de confidencialidad.
+• Nuestro proveedor de monitoreo de errores (Sentry), solo datos técnicos del dispositivo y el error — nunca tu contraseña ni tus datos de pago.
 • Autoridades, cuando la ley nos obligue a ello.
 
 No vendemos tus datos personales a terceros.
@@ -65,9 +78,13 @@ También puedes eliminar tu cuenta y tus datos directamente desde la app, en la 
 
 5. USO DE UBICACIÓN
 
-La app solicita acceso a tu ubicación para: detectar tu zona de cobertura (Maravatío/Acámbaro) y, si eres repartidor, transmitir tu posición en tiempo real durante una entrega activa. Puedes desactivar el acceso a tu ubicación desde los ajustes de tu teléfono, aunque esto puede limitar funciones del servicio.
+La app solicita acceso a tu ubicación para: detectar tu zona de cobertura (Maravatío, Acámbaro y Morelia) y, si eres repartidor, transmitir tu posición en tiempo real durante una entrega activa. Puedes desactivar el acceso a tu ubicación desde los ajustes de tu teléfono, aunque esto puede limitar funciones del servicio.
 
-6. CAMBIOS A ESTE AVISO
+6. CUÁNTO TIEMPO GUARDAMOS TUS DATOS
+
+Conservamos tus datos mientras tu cuenta exista. Si eliminas tu cuenta, borramos tus datos personales de inmediato (ver sección 4) — solo conservamos, sin tu nombre ni datos de contacto, los registros de pedidos y pagos ya completados que por ley o por necesidad contable debemos mantener, y que también le pertenecen al restaurante o repartidor que participó en ese pedido.
+
+7. CAMBIOS A ESTE AVISO
 
 Podemos actualizar este aviso de privacidad. Cualquier cambio se publicará dentro de la app con su fecha de actualización.
 ''';

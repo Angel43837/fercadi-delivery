@@ -1,15 +1,18 @@
 // login_screen.dart
 // Pantalla de inicio de sesión y registro.
-// Soporta tres métodos de autenticación:
+// Soporta cuatro métodos de autenticación:
 //   1. Email + contraseña (Supabase Auth)
 //   2. Google OAuth (abre el navegador externo, regresa por deep link fercadi://login-callback)
 //   3. Facebook OAuth (igual que Google)
+//   4. Apple OAuth (solo iOS — Apple exige "Sign in with Apple" como
+//      alternativa obligatoria en cualquier app que ofrezca login social)
 // Incluye un botón "demo" que entra sin credenciales para probar la app.
 // La navegación post-login la maneja el listener _authSub según el rol del usuario.
 
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:math';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
@@ -142,6 +145,10 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     _phoneAuthInProgress = false;
     if (!mounted) return;
     if (isNewUser) {
+      // Alta nueva por teléfono — mismo checkbox de Términos/Privacidad que
+      // el alta por correo (_beforeFirstPhoneSend ya lo exigió antes de
+      // mandar el OTP), así que también se registra aquí.
+      _recordLegalAcceptance();
       // Alta nueva — falta todo el onboarding (nombre, edad, dirección...).
       context.go('/onboarding', extra: {
         if (widget.returnTo != null) 'returnTo': widget.returnTo,
@@ -170,6 +177,19 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     super.dispose();
+  }
+
+  // Registro de cumplimiento (Task B de la auditoría): qué versión de los
+  // Términos y del Aviso de Privacidad aceptó esta cuenta y cuándo — antes
+  // solo existía el checkbox genérico, sin ningún rastro real de qué se
+  // aceptó. Fire-and-forget A PROPÓSITO (no se espera ni se bloquea nada
+  // con esto): es un registro de cumplimiento, no un candado de alta — si
+  // falla (sin internet justo en ese instante, etc.) la cuenta se crea
+  // igual, solo se registra el error en consola.
+  void _recordLegalAcceptance() {
+    SupabaseService.recordLegalAcceptance().catchError((e) {
+      debugPrint('No se pudo registrar la aceptación de términos/privacidad: $e');
+    });
   }
 
   void _shakeTermsBox() => _shakeController.forward(from: 0);
@@ -214,6 +234,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
           password: _passwordController.text,
           data: {'accepted_terms_at': DateTime.now().toIso8601String()},
         );
+        _recordLegalAcceptance();
         if (!mounted) return;
         // Igual que el alta por teléfono: falta todo el onboarding antes de
         // entrar a la app.
@@ -330,6 +351,30 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     }
   }
 
+  // Solo iOS: Apple exige "Sign in with Apple" como alternativa obligatoria
+  // en cualquier app que ya ofrezca otro login social (Google/Facebook) —
+  // el botón que llama a este método está gateado con `!kIsWeb && Platform.isIOS`.
+  // NOTA: el proveedor "Apple" del lado de Supabase (Services ID + llave
+  // privada .p8) todavía necesita configurarse a mano en el dashboard — eso
+  // requiere una cuenta de Apple Developer de pago, que todavía no existe
+  // (ver "Pendiente para tiendas" en CLAUDE.md); este cambio de código no
+  // puede terminar esa parte por sí solo.
+  Future<void> _signInWithApple() async {
+    setState(() => _isLoading = true);
+    try {
+      final redirect = await _resolveRedirectUrl();
+      await Supabase.instance.client.auth.signInWithOAuth(
+        OAuthProvider.apple,
+        redirectTo: redirect,
+        authScreenLaunchMode: LaunchMode.externalApplication,
+      );
+      // La navegación la maneja el listener _authSub
+    } catch (_) {
+      if (mounted) _showMessage('No se pudo iniciar sesión con Apple. Intenta de nuevo.', isError: true);
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   void _showMessage(String msg, {bool isError = false}) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -399,6 +444,22 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                         style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 15)),
                   ]),
                 ),
+                // Solo iOS: en Android/web Apple no permite ni exige este
+                // botón (regla de Apple, aplica únicamente a su plataforma).
+                if (!kIsWeb && Platform.isIOS) ...[
+                  const SizedBox(height: 12),
+                  _SocialButton(
+                    onTap: _isLoading ? null : () => _requireTermsThen(_signInWithApple),
+                    color: Colors.black,
+                    disabled: !_acceptedTerms,
+                    child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                      Icon(Icons.apple, color: Colors.white, size: 24),
+                      SizedBox(width: 10),
+                      Text('Continuar con Apple',
+                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 15)),
+                    ]),
+                  ),
+                ],
                 const SizedBox(height: 12),
                 Center(
                   child: TextButton(

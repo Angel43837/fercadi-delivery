@@ -15,6 +15,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:phone_form_field/phone_form_field.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../core/constants.dart';
 import 'otp_code_field.dart';
 import 'phone_number_field.dart';
 
@@ -332,7 +333,7 @@ class _ErrorBanner extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.black26,
+        color: AppConstants.primaryColor,
         borderRadius: BorderRadius.circular(10),
       ),
       child: Row(children: [

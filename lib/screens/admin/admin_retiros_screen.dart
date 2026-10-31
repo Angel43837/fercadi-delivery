@@ -597,7 +597,7 @@ class _RetiroDetailSheetState extends State<_RetiroDetailSheet> {
         return [
           AdminPrimaryButton(label: 'Aprobar y pagar por Stripe', onPressed: () => run(widget.onApprove)),
           const SizedBox(height: 10),
-          _actionButton('Rechazar', AdminColors.statusCancelled, () => run(widget.onReject)),
+          _actionButton('Rechazar', AdminColors.statusCancelled, () => run(widget.onReject), filled: true),
           const SizedBox(height: 10),
           _actionButton('Cancelar', AdminColors.textFaint, () => run(widget.onCancel)),
         ];
@@ -605,7 +605,7 @@ class _RetiroDetailSheetState extends State<_RetiroDetailSheet> {
         return [
           AdminPrimaryButton(label: 'Marcar como completado', onPressed: () => run(widget.onComplete)),
           const SizedBox(height: 10),
-          _actionButton('Rechazar', AdminColors.statusCancelled, () => run(widget.onReject)),
+          _actionButton('Rechazar', AdminColors.statusCancelled, () => run(widget.onReject), filled: true),
           const SizedBox(height: 10),
           _actionButton('Cancelar', AdminColors.textFaint, () => run(widget.onCancel)),
         ];
@@ -614,12 +614,18 @@ class _RetiroDetailSheetState extends State<_RetiroDetailSheet> {
     }
   }
 
-  Widget _actionButton(String label, Color color, VoidCallback onPressed) => SizedBox(
+  Widget _actionButton(String label, Color color, VoidCallback onPressed, {bool filled = false}) => SizedBox(
         width: double.infinity,
-        child: OutlinedButton(
-          onPressed: onPressed,
-          style: OutlinedButton.styleFrom(side: BorderSide(color: color)),
-          child: Text(label, style: TextStyle(color: color, fontWeight: FontWeight.bold)),
-        ),
+        child: filled
+            ? ElevatedButton(
+                onPressed: onPressed,
+                style: ElevatedButton.styleFrom(backgroundColor: color, foregroundColor: Colors.white),
+                child: Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
+              )
+            : OutlinedButton(
+                onPressed: onPressed,
+                style: OutlinedButton.styleFrom(side: BorderSide(color: color)),
+                child: Text(label, style: TextStyle(color: color, fontWeight: FontWeight.bold)),
+              ),
       );
 }

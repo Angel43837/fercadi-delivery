@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'core/constants.dart';
+import 'theme/admin_theme.dart';
 import 'providers/app_data_provider.dart';
 import 'screens/admin/admin_screen.dart';
 import 'screens/admin/admin_login_screen.dart';
@@ -11,6 +12,7 @@ import 'screens/admin/admin_resenas_screen.dart';
 import 'screens/admin/admin_retiros_screen.dart';
 import 'screens/admin/admin_retiros_restaurantes_screen.dart';
 import 'screens/admin/admin_promociones_screen.dart';
+import 'screens/admin/admin_reembolsos_screen.dart';
 import 'services/auth_service.dart';
 
 void main() async {
@@ -54,6 +56,10 @@ final _adminRouter = GoRouter(
       path: '/admin/promociones',
       builder: (_, _) => const AdminPromocionesScreen(),
     ),
+    GoRoute(
+      path: '/admin/reembolsos',
+      builder: (_, _) => const AdminReembolsosScreen(),
+    ),
   ],
 );
 
@@ -68,9 +74,9 @@ class AdminApp extends StatelessWidget {
         title: 'GOGO Food — Admin',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
-          scaffoldBackgroundColor: AppConstants.bgColor,
+          scaffoldBackgroundColor: AdminColors.bg,
           colorScheme: const ColorScheme.dark(
-            primary: AppConstants.primaryColor,
+            primary: AdminColors.accent,
           ),
         ),
         routerConfig: _adminRouter,

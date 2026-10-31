@@ -71,6 +71,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String? _uploadStage;
   String  _zona          = 'maravatio';
   int     _unreadAvisos  = 0;
+  bool    _marketingOptIn = false;
+  bool    _savingMarketing = false;
 
   bool get _isDirty => _photoChanged || _nameCtrl.text.trim() != _originalName;
 
@@ -96,6 +98,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final defAddr = await AuthService.getDefaultAddress();
     final zona    = await AuthService.getZona();
     final unread  = await SupabaseService.getUnreadAdminMessageCount();
+    final marketingOptIn = await AuthService.getMarketingOptIn();
     // El rol real siempre se saca de la sesión activa de Supabase (misma
     // fuente que usa el router para proteger rutas) — la sesión "legacy"
     // de AuthService puede quedar con datos de otra cuenta/rol anterior
@@ -115,6 +118,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _clabeCtrl.text = clabe;
       _zona           = zona;
       _unreadAvisos   = unread;
+      _marketingOptIn = marketingOptIn;
       if (defAddr != null) {
         _addrText = defAddr['address'] as String? ?? '';
         _addrLat  = (defAddr['lat'] as num?)?.toDouble();
@@ -122,6 +126,41 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
       _loading = false;
     });
+  }
+
+  // Toggle real de marketing (Task C de la auditoría) — antes solo existía
+  // la frase "escríbenos para darte de baja" en el Aviso de Privacidad, sin
+  // ningún interruptor real. Se guarda en user_metadata (mismo mecanismo
+  // que preferred_payment/zona) vía AuthService.saveMarketingOptIn, que a
+  // propósito NO atrapa errores en silencio — si falla, se revierte el
+  // switch visualmente y se avisa con un SnackBar real, para cumplir con
+  // "ningún tap debe no hacer nada visible".
+  Future<void> _toggleMarketingOptIn(bool value) async {
+    setState(() {
+      _marketingOptIn = value;
+      _savingMarketing = true;
+    });
+    try {
+      await AuthService.saveMarketingOptIn(value);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(value
+              ? 'Listo, recibirás promociones por correo'
+              : 'Ya no recibirás promociones por correo'),
+          backgroundColor: Colors.green,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _marketingOptIn = !value); // no se guardó, se revierte
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('No se pudo guardar tu preferencia: $e'),
+          backgroundColor: Colors.redAccent,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _savingMarketing = false);
+    }
   }
 
   void _showZonaPicker() {
@@ -913,6 +952,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
           // Nota: el pago con tarjeta se procesa siempre con Stripe (PaymentSheet)
           // directo en el checkout — no se guarda ningún dato de tarjeta aquí.
 
+          // ── Preferencias de marketing ─────────────────────────────────────
+          Container(
+            margin: const EdgeInsets.only(bottom: 28),
+            decoration: BoxDecoration(color: cardBg, borderRadius: BorderRadius.circular(16)),
+            child: SwitchListTile(
+              value: _marketingOptIn,
+              onChanged: _savingMarketing ? null : _toggleMarketingOptIn,
+              activeColor: AppConstants.primaryColor,
+              secondary: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(color: AppConstants.primaryColor.withValues(alpha: 0.12), shape: BoxShape.circle),
+                child: const Icon(Icons.local_offer_outlined, color: AppConstants.primaryColor, size: 20),
+              ),
+              title: Text('Recibir promociones y ofertas por correo', style: TextStyle(color: cardText, fontWeight: FontWeight.w600)),
+              subtitle: Text('Puedes cambiarlo cuando quieras', style: TextStyle(color: cardSub, fontSize: 12)),
+            ),
+          ),
+
           // ── Avisos de Admin ───────────────────────────────────────────────
           Container(
             margin: const EdgeInsets.only(bottom: 28),
@@ -995,6 +1052,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   router.go('/login');
                 },
               ),
+              Divider(height: 1, color: cardDiv, indent: 16, endIndent: 16),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: Colors.red.withValues(alpha: 0.12), shape: BoxShape.circle),
+                  child: const Icon(Icons.delete_forever, color: Colors.red, size: 20),
+                ),
+                title: const Text('Eliminar mi cuenta', style: TextStyle(color: Colors.red, fontWeight: FontWeight.w600)),
+                subtitle: Text('Esta acción es permanente', style: TextStyle(color: cardSub, fontSize: 12)),
+                trailing: Icon(Icons.chevron_right, color: cardChev),
+                onTap: _confirmDeleteAccount,
+              ),
             ]),
           ),
           const SizedBox(height: 40),
@@ -1003,6 +1072,96 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+
+  // Confirmación real (no un tap casual) antes de borrar la cuenta — pide
+  // escribir "ELIMINAR" porque es irreversible y, a diferencia de cerrar
+  // sesión, no hay forma de deshacerlo.
+  Future<void> _confirmDeleteAccount() async {
+    final confirmCtrl = TextEditingController();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          final canConfirm = confirmCtrl.text.trim().toUpperCase() == 'ELIMINAR';
+          return AlertDialog(
+            backgroundColor: isDark ? AppConstants.surfaceColor : Colors.white,
+            title: Text('¿Eliminar tu cuenta?',
+                style: TextStyle(color: isDark ? Colors.white : Colors.black87, fontWeight: FontWeight.bold)),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Esta acción es PERMANENTE y no se puede deshacer. Perderás el acceso '
+                  'a tu cuenta y tus datos personales se eliminarán.',
+                  style: TextStyle(color: isDark ? Colors.white70 : Colors.black87),
+                ),
+                const SizedBox(height: 16),
+                Text('Escribe ELIMINAR para confirmar:',
+                    style: TextStyle(color: isDark ? Colors.white70 : Colors.black54, fontSize: 13)),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: confirmCtrl,
+                  autofocus: true,
+                  onChanged: (_) => setDialogState(() {}),
+                  style: TextStyle(color: isDark ? Colors.white : Colors.black87),
+                  decoration: InputDecoration(
+                    hintText: 'ELIMINAR',
+                    hintStyle: TextStyle(color: isDark ? Colors.white30 : Colors.black26),
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancelar'),
+              ),
+              ElevatedButton(
+                onPressed: canConfirm ? () => Navigator.pop(ctx, true) : null,
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+                child: const Text('Eliminar mi cuenta'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator(color: AppConstants.primaryColor)),
+    );
+
+    try {
+      await SupabaseService.deleteMyAccount();
+      if (!mounted) return;
+      Navigator.of(context).pop(); // cierra el spinner
+      final router = GoRouter.of(context);
+      await AuthService.clearSession();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Tu cuenta fue eliminada.'),
+        backgroundColor: Colors.green,
+      ));
+      router.go('/login');
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop(); // cierra el spinner
+      // Nunca se traga el motivo real (ej. "tienes un retiro en proceso") —
+      // se muestra tal cual lo manda el servidor.
+      final message = e.toString().replaceFirst('Exception: ', '');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red[700],
+        duration: const Duration(seconds: 6),
+      ));
+    }
+  }
 
   InputDecoration _inputDeco(String hint, IconData icon) {
     final isDark = Theme.of(context).brightness == Brightness.dark;

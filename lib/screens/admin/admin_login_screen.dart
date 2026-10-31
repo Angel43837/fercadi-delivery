@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../core/constants.dart';
 import '../../services/auth_service.dart';
+import '../../theme/admin_theme.dart';
 
 class AdminLoginScreen extends StatefulWidget {
   const AdminLoginScreen({super.key});
@@ -47,7 +47,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppConstants.bgColor,
+      backgroundColor: AdminColors.bg,
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 400),
@@ -59,7 +59,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                 Container(
                   width: 72, height: 72,
                   decoration: BoxDecoration(
-                    color: AppConstants.primaryColor,
+                    color: AdminColors.accent,
                     borderRadius: BorderRadius.circular(18),
                   ),
                   child: const Icon(Icons.admin_panel_settings_rounded,
@@ -71,7 +71,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                         fontSize: 24, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 6),
                 Text('Grupo Fercadi',
-                    style: TextStyle(color: Colors.white.withValues(alpha: 0.45),
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.75),
                         fontSize: 14)),
                 const SizedBox(height: 36),
                 TextField(
@@ -80,17 +80,17 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                   style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
                     hintText: 'Correo electrónico',
-                    hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.3)),
+                    hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.55)),
                     filled: true,
-                    fillColor: AppConstants.surfaceColor,
+                    fillColor: AdminColors.surface,
                     prefixIcon: Icon(Icons.email_outlined,
-                        color: Colors.white.withValues(alpha: 0.4), size: 20),
+                        color: Colors.white.withValues(alpha: 0.65), size: 20),
                     border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                         borderSide: BorderSide.none),
                     focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: AppConstants.primaryColor)),
+                        borderSide: const BorderSide(color: AdminColors.accent)),
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -101,14 +101,14 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                   onSubmitted: (_) => _login(),
                   decoration: InputDecoration(
                     hintText: 'Contraseña',
-                    hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.3)),
+                    hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.55)),
                     filled: true,
-                    fillColor: AppConstants.surfaceColor,
+                    fillColor: AdminColors.surface,
                     prefixIcon: Icon(Icons.lock_outline,
-                        color: Colors.white.withValues(alpha: 0.4), size: 20),
+                        color: Colors.white.withValues(alpha: 0.65), size: 20),
                     suffixIcon: IconButton(
                       icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility,
-                          color: Colors.white.withValues(alpha: 0.3), size: 20),
+                          color: Colors.white.withValues(alpha: 0.55), size: 20),
                       onPressed: () => setState(() => _obscure = !_obscure),
                     ),
                     border: OutlineInputBorder(
@@ -116,7 +116,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                         borderSide: BorderSide.none),
                     focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: AppConstants.primaryColor)),
+                        borderSide: const BorderSide(color: AdminColors.accent)),
                   ),
                 ),
                 if (_error != null) ...[
@@ -131,7 +131,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                   child: ElevatedButton(
                     onPressed: _loading ? null : _login,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppConstants.primaryColor,
+                      backgroundColor: AdminColors.accent,
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12)),

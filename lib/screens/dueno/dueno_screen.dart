@@ -111,6 +111,10 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
   final Set<String> _notifiedIds = {};
   Timer? _orderPollTimer;
   RealtimeChannel? _ordersChannel;
+  // Evita doble-tap mientras reject-order sigue en vuelo (puede tardar: a
+  // veces llama a Stripe de verdad) — mismo patrón que _marcandoEntregadoIds
+  // en las pantallas de repartidor.
+  final Set<String> _rejectingIds = {};
 
   // ID del restaurante de este dueño
   String _restaurantId = '1';
@@ -521,7 +525,7 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
   // Platillos para que arranque su menú.
   Widget _buildClosedEmptyGate() {
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: AppConstants.primaryColor,
       body: SafeArea(
         child: Center(
           child: Padding(
@@ -546,7 +550,7 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
                 width: double.infinity,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppConstants.primaryColor,
+                    backgroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                   ),
@@ -557,8 +561,8 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
                       _tab = 2;
                     });
                   },
-                  child: const Text('Agregar mis platillos',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+                  child: Text('Agregar mis platillos',
+                      style: TextStyle(color: AppConstants.primaryColor, fontWeight: FontWeight.bold, fontSize: 15)),
                 ),
               ),
             ]),
@@ -1197,6 +1201,7 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
                 itemBuilder: (_, i) => _RealOrderCard(
                   order: filtered[i],
                   isDark: _isDark,
+                  rejecting: _rejectingIds.contains(filtered[i]['id'] as String),
                   onAccept: () async {
                     // Confirma el pedido de parte del restaurante — a partir
                     // de aquí ya se vuelve visible/tomable para repartidores
@@ -1209,9 +1214,33 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
                     _loadRealOrders();
                   },
                   onCancel: () async {
-                    await SupabaseService.updateOrderStatus(
-                        filtered[i]['id'] as String, 'cancelled');
-                    _loadRealOrders();
+                    // Vía Edge Function (reject-order), no un update directo
+                    // de status — antes esto nunca revisaba si el pedido ya
+                    // tenía un pago real con tarjeta confirmado, así que un
+                    // pedido pagado y rechazado se quedaba cobrado para
+                    // siempre sin que el cliente recibiera nada de vuelta.
+                    // "No silent failures": siempre un SnackBar, éxito o error.
+                    final orderId = filtered[i]['id'] as String;
+                    if (_rejectingIds.contains(orderId)) return;
+                    setState(() => _rejectingIds.add(orderId));
+                    final messenger = ScaffoldMessenger.of(context);
+                    try {
+                      final refunded = await SupabaseService.rejectOrder(orderId);
+                      _loadRealOrders();
+                      messenger.showSnackBar(SnackBar(
+                        content: Text(refunded
+                            ? 'Pedido rechazado y reembolsado al cliente.'
+                            : 'Pedido rechazado.'),
+                        backgroundColor: Colors.green,
+                      ));
+                    } catch (e) {
+                      messenger.showSnackBar(SnackBar(
+                        content: Text('No se pudo rechazar el pedido: $e'),
+                        backgroundColor: Colors.redAccent,
+                      ));
+                    } finally {
+                      if (mounted) setState(() => _rejectingIds.remove(orderId));
+                    }
                   },
                 ),
               ),
@@ -2753,7 +2782,7 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
       Positioned(
         bottom: 20, right: 20,
         child: FloatingActionButton(
-          backgroundColor: Colors.blue,
+          backgroundColor: AppConstants.primaryColor,
           onPressed: () => showAddSheet(),
           child: const Icon(Icons.add, color: Colors.white),
         ),
@@ -2776,6 +2805,82 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
           contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         ),
       );
+
+  // Confirmación real (no un tap casual) antes de borrar la cuenta del
+  // dueño — mismo patrón que profile_screen.dart (cliente/repartidor). El
+  // servidor puede REFUSAR (retiro en proceso, pedidos activos) — ese
+  // mensaje se muestra tal cual, nunca un genérico.
+  Future<void> _confirmDeleteAccount() async {
+    final confirmCtrl = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          final canConfirm = confirmCtrl.text.trim().toUpperCase() == 'ELIMINAR';
+          return AlertDialog(
+            title: const Text('¿Eliminar tu cuenta?', style: TextStyle(fontWeight: FontWeight.bold)),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Esta acción es PERMANENTE y no se puede deshacer. Tu restaurante '
+                  'dejará de aparecer para los clientes, pero sus pedidos y productos '
+                  'se conservan (no son datos tuyos para borrar).',
+                ),
+                const SizedBox(height: 16),
+                const Text('Escribe ELIMINAR para confirmar:', style: TextStyle(fontSize: 13)),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: confirmCtrl,
+                  autofocus: true,
+                  onChanged: (_) => setDialogState(() {}),
+                  decoration: const InputDecoration(hintText: 'ELIMINAR', border: OutlineInputBorder()),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+              ElevatedButton(
+                onPressed: canConfirm ? () => Navigator.pop(ctx, true) : null,
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+                child: const Text('Eliminar mi cuenta'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator(color: AppConstants.primaryColor)),
+    );
+
+    try {
+      await SupabaseService.deleteMyAccount();
+      if (!mounted) return;
+      Navigator.of(context).pop(); // cierra el spinner
+      await AuthService.clearDuenoSession();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Tu cuenta fue eliminada.'),
+        backgroundColor: Colors.green,
+      ));
+      context.go(kIsWeb ? '/restaurante' : '/login');
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop(); // cierra el spinner
+      final message = e.toString().replaceFirst('Exception: ', '');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red[700],
+        duration: const Duration(seconds: 6),
+      ));
+    }
+  }
 
   Widget _buildPerfilRestaurante() {
     Future<void> pickPhoto() async {
@@ -2950,15 +3055,15 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
           style: TextStyle(color: _textLow, fontSize: 11),
         ),
         const SizedBox(height: 10),
-        OutlinedButton.icon(
+        ElevatedButton.icon(
           onPressed: _launchingPremiumFlow
               ? null
               : (_isPremium ? _manageSubscription : _upgradeToPremium),
           icon: _launchingPremiumFlow
-              ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+              ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
               : Icon(_isPremium ? Icons.settings : Icons.workspace_premium, size: 16),
           label: Text(_isPremium ? 'Administrar mi suscripción' : 'Hazte Premium — \$99 MXN/mes'),
-          style: OutlinedButton.styleFrom(foregroundColor: AppConstants.primaryColor),
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
         ),
         const SizedBox(height: 24),
 
@@ -3015,7 +3120,7 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
 
         Container(
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.05),
+            color: Colors.white,
             borderRadius: BorderRadius.circular(16),
           ),
           child: ListTile(
@@ -3028,9 +3133,33 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
               child: const Icon(Icons.privacy_tip_outlined, color: AppConstants.primaryColor),
             ),
             title: const Text('Política de Privacidad',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-            trailing: Icon(Icons.chevron_right, color: Colors.white.withValues(alpha: 0.4)),
+                style: TextStyle(color: Colors.black87, fontWeight: FontWeight.w600)),
+            trailing: Icon(Icons.chevron_right, color: Colors.black.withValues(alpha: 0.4)),
             onTap: () => context.push('/privacy-policy'),
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: ListTile(
+            leading: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.red.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.delete_forever, color: Colors.red),
+            ),
+            title: const Text('Eliminar mi cuenta',
+                style: TextStyle(color: Colors.red, fontWeight: FontWeight.w600)),
+            subtitle: const Text('Esta acción es permanente',
+                style: TextStyle(color: Colors.black54, fontSize: 12)),
+            trailing: Icon(Icons.chevron_right, color: Colors.black.withValues(alpha: 0.4)),
+            onTap: _confirmDeleteAccount,
           ),
         ),
         const SizedBox(height: 20),
@@ -3222,7 +3351,14 @@ class _RealOrderCard extends StatelessWidget {
   final VoidCallback onAccept;
   final VoidCallback? onCancel;
   final bool isDark;
-  const _RealOrderCard({required this.order, required this.onAccept, this.onCancel, this.isDark = true});
+  final bool rejecting;
+  const _RealOrderCard({
+    required this.order,
+    required this.onAccept,
+    this.onCancel,
+    this.isDark = true,
+    this.rejecting = false,
+  });
 
   void _showDetail(BuildContext context) {
     Map<String, dynamic> delivery = {};
@@ -3431,9 +3567,13 @@ class _RealOrderCard extends StatelessWidget {
           Row(children: [
             Expanded(
               child: OutlinedButton.icon(
-                onPressed: onCancel,
-                icon: const Icon(Icons.close, size: 16),
-                label: const Text('Rechazar'),
+                onPressed: rejecting ? null : onCancel,
+                icon: rejecting
+                    ? const SizedBox(
+                        width: 14, height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.redAccent))
+                    : const Icon(Icons.close, size: 16),
+                label: Text(rejecting ? 'Rechazando…' : 'Rechazar'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.redAccent,
                   side: const BorderSide(color: Colors.redAccent),

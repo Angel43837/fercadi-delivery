@@ -23,7 +23,7 @@ import 'entrega_activa_screen.dart';
 
 // La tienda de coins ya no vive dentro de la app — el repartidor la usa
 // desde la página web (login propio ahí, mismo backend).
-const _tiendaRiderWebUrl = 'https://gogo-web-pruebas.vercel.app/login';
+const _tiendaRiderWebUrl = 'https://pagina-web-gogo-rho.vercel.app/login';
 
 class RepartidorPlusScreen extends StatefulWidget {
   const RepartidorPlusScreen({super.key});
@@ -87,6 +87,10 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
   final Set<String> _dismissedCallIds = {};
   RealtimeChannel? _callChannel;
   Timer? _callPollTimer;
+  // Llamadas que YA acepté y sigo debiendo entregar — hasta que las marco
+  // como entregadas, esos $35 de envío no cuentan para mi saldo.
+  List<Map<String, dynamic>> _myAcceptedCalls = [];
+  final Set<String> _marcandoEntregadoIds = {};
 
   bool _statsExpanded = false;
 
@@ -145,6 +149,42 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
         _pendingRiderCalls = calls.where((c) => !_dismissedCallIds.contains(c['id'])).toList();
       });
     } catch (_) {}
+    try {
+      final mine = await SupabaseService.getMyAcceptedRiderCalls();
+      if (mounted) setState(() => _myAcceptedCalls = mine);
+    } catch (_) {}
+    // De oquis, sin esperar respuesta ni mostrar nada si falla — reembolsa
+    // solas las llamadas de otros restaurantes que ya llevan 3h sin que
+    // nadie las acepte. No hay cron en este proyecto; esto es lo más
+    // parecido mientras alguien tenga la app abierta.
+    SupabaseService.expireOldRiderCalls();
+  }
+
+  Future<void> _marcarEntregado(String callId) async {
+    if (_marcandoEntregadoIds.contains(callId)) return;
+    _marcandoEntregadoIds.add(callId);
+    try {
+      await SupabaseService.markRiderCallDelivered(callId);
+      if (!mounted) return;
+      setState(() => _myAcceptedCalls.removeWhere((c) => c['id'] == callId));
+      final uid = Supabase.instance.client.auth.currentUser?.id;
+      if (uid != null) await _loadStats(uid);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('¡Listo! Ya se sumó a tu saldo.'),
+          backgroundColor: Colors.green,
+        ));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('No se pudo marcar como entregado. Intenta de nuevo.'),
+          backgroundColor: Color(0xFFE53935),
+        ));
+      }
+    } finally {
+      _marcandoEntregadoIds.remove(callId);
+    }
   }
 
   Future<void> _responderLlamada(String callId, bool accept) async {
@@ -163,6 +203,8 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
   Widget _buildRiderCallCard(Map<String, dynamic> call) {
     final restaurantName = call['restaurant_name'] as String? ?? 'Un restaurante';
     final id = call['id'] as String;
+    final restaurantData = call['restaurants'] as Map<String, dynamic>?;
+    final restaurantAddress = restaurantData?['address'] as String?;
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
@@ -182,6 +224,12 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
                     style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
                 Text('$restaurantName necesita un repartidor ahora mismo',
                     style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 12)),
+                if (restaurantAddress != null && restaurantAddress.trim().isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(restaurantAddress,
+                        style: TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 11)),
+                  ),
               ]),
             ),
           ]),
@@ -221,6 +269,103 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
               ),
             ),
           ]),
+        ),
+      ]),
+    );
+  }
+
+  Widget _buildAcceptedCallCard(Map<String, dynamic> call) {
+    final restaurantName = call['restaurant_name'] as String? ?? 'Un restaurante';
+    final id = call['id'] as String;
+    final envio = (call['amount_envio'] as num?)?.toDouble() ?? 35;
+    final marcando = _marcandoEntregadoIds.contains(id);
+    final restaurantData = call['restaurants'] as Map<String, dynamic>?;
+    final restaurantAddress = restaurantData?['address'] as String?;
+    final restLat = restaurantData?['lat'];
+    final restLng = restaurantData?['lng'];
+    final restaurantPos = (restLat != null && restLng != null)
+        ? LatLng((restLat as num).toDouble(), (restLng as num).toDouble())
+        : null;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: _bg,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.greenAccent, width: 1.5),
+      ),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+          child: Row(children: [
+            const Icon(Icons.storefront_rounded, color: Colors.greenAccent, size: 28),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('Ve por el pedido a $restaurantName',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                Text('Cuando entregues, marca como entregado — ganas \$${envio.toStringAsFixed(0)}',
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 12)),
+                if (restaurantAddress != null && restaurantAddress.trim().isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(restaurantAddress,
+                        style: TextStyle(color: Colors.white.withValues(alpha: 0.55), fontSize: 11)),
+                  ),
+              ]),
+            ),
+          ]),
+        ),
+        if (restaurantPos != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+            child: SizedBox(
+              width: double.infinity,
+              child: GestureDetector(
+                onTap: () {
+                  final url = Uri.parse(
+                    'https://www.google.com/maps/dir/?api=1&destination=${restaurantPos.latitude},${restaurantPos.longitude}&travelmode=driving',
+                  );
+                  launchUrl(url, mode: LaunchMode.externalApplication);
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
+                  ),
+                  child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    Icon(Icons.navigation, color: Colors.white, size: 16),
+                    SizedBox(width: 6),
+                    Text('Cómo llegar',
+                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+                  ]),
+                ),
+              ),
+            ),
+          ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+          child: SizedBox(
+            width: double.infinity,
+            child: GestureDetector(
+              onTap: marcando ? null : () => _marcarEntregado(id),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 11),
+                decoration: BoxDecoration(color: Colors.blue, borderRadius: BorderRadius.circular(12)),
+                child: marcando
+                    ? const SizedBox(
+                        height: 16, width: 16,
+                        child: Center(child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)))
+                    : const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                        Icon(Icons.check_circle_outline, color: Colors.white, size: 18),
+                        SizedBox(width: 6),
+                        Text('MARCAR COMO ENTREGADO',
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 0.3)),
+                      ]),
+              ),
+            ),
+          ),
         ),
       ]),
     );
@@ -283,6 +428,16 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
 
       final restaurantData = pedido['restaurants'] as Map<String, dynamic>?;
       final restaurantName = restaurantData?['name'] as String? ?? 'Restaurante';
+      final restaurantAddress = restaurantData?['address'] as String?;
+      final restLat = restaurantData?['lat'];
+      final restLng = restaurantData?['lng'];
+      // Antes nunca se mandaba la ubicación real del restaurante — la
+      // pantalla de entrega usaba un punto genérico del centro de
+      // Maravatío para TODOS los restaurantes, así que el rider "llegaba"
+      // a un lugar que no era el restaurante de verdad.
+      final restaurantPos = (restLat != null && restLng != null)
+          ? LatLng((restLat as num).toDouble(), (restLng as num).toDouble())
+          : null;
       Map<String, dynamic> delivery = {};
       try { delivery = jsonDecode(pedido['customer_name'] as String? ?? '{}') as Map<String, dynamic>; } catch (_) {}
       final rawLat = delivery['lat'];
@@ -303,6 +458,8 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
           builder: (_) => EntregaActivaScreen(
             orderId: orderId,
             restaurantName: restaurantName,
+            restaurantAddress: restaurantAddress,
+            restaurantPos: restaurantPos,
             customerName: delivery['name'] as String? ?? 'Cliente',
             customerId: pedido['customer_id'] as String?,
             customerPhone: delivery['phone'] as String? ?? '',
@@ -871,6 +1028,7 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
                   // como una tarjeta de pedido más (Aceptar/No puedo), no
                   // como un popup aparte.
                   ..._pendingRiderCalls.map(_buildRiderCallCard),
+                  ..._myAcceptedCalls.map(_buildAcceptedCallCard),
                   Text(
                     _pedidosPendientes.isEmpty
                         ? 'Esperando pedidos...'

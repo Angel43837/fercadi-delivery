@@ -30,6 +30,8 @@ const _card = AppConstants.surfaceColor;
 class EntregaActivaScreen extends StatefulWidget {
   final String orderId;
   final String restaurantName;
+  final String? restaurantAddress;
+  final LatLng? restaurantPos;
   final String customerName;
   final String? customerId;
   final String customerPhone;
@@ -42,6 +44,8 @@ class EntregaActivaScreen extends StatefulWidget {
     super.key,
     required this.orderId,
     required this.restaurantName,
+    this.restaurantAddress,
+    this.restaurantPos,
     required this.customerName,
     this.customerId,
     required this.customerPhone,
@@ -57,6 +61,13 @@ class EntregaActivaScreen extends StatefulWidget {
 
 class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsBindingObserver {
   int _step = 0; // 0: ve al restaurante, 1: recoge, 2: en camino al cliente
+
+  // Antes esta pantalla no recibía la ubicación real del restaurante y
+  // siempre usaba el centro de Maravatío como si fuera el restaurante —
+  // el rider terminaba "llegando" a un punto genérico del centro, no al
+  // restaurante real. _defaultRestaurantPos se queda solo como último
+  // respaldo si de plano el restaurante no tiene lat/lng guardado.
+  LatLng get _restaurantPos => widget.restaurantPos ?? _defaultRestaurantPos;
 
   Position? _myPos;
   StreamSubscription<Position>? _gpsSub;
@@ -160,7 +171,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
         SupabaseService.broadcastLocation(pos.latitude, pos.longitude);
         try { _mapCtrl.move(LatLng(pos.latitude, pos.longitude), 15.5); } catch (_) {}
         if (_routePoints.isEmpty && _step < 2) {
-          _fetchRoute(LatLng(pos.latitude, pos.longitude), _defaultRestaurantPos,
+          _fetchRoute(LatLng(pos.latitude, pos.longitude), _restaurantPos,
               color: const Color(0xFFFFB300));
         }
       });
@@ -244,10 +255,10 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
             SupabaseService.broadcastLocation(_myPos!.latitude, _myPos!.longitude);
           }
         });
-        final clientPos = _geocodedCustomerPos ?? _defaultRestaurantPos;
+        final clientPos = _geocodedCustomerPos ?? _restaurantPos;
         final from = _myPos != null
             ? LatLng(_myPos!.latitude, _myPos!.longitude)
-            : _defaultRestaurantPos;
+            : _restaurantPos;
         setState(() => _routePoints = []);
         _fetchRoute(from, clientPos, color: const Color(0xFF2196F3));
       }
@@ -314,9 +325,9 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
   Widget build(BuildContext context) {
     final sd = _steps[_step];
     final myLatLng = _myPos != null ? LatLng(_myPos!.latitude, _myPos!.longitude) : null;
-    final clientPos = _geocodedCustomerPos ?? _defaultRestaurantPos;
+    final clientPos = _geocodedCustomerPos ?? _restaurantPos;
     final showClientPos = _step >= 2;
-    final mapCenter = myLatLng ?? _defaultRestaurantPos;
+    final mapCenter = myLatLng ?? _restaurantPos;
 
     // Bloquea el gesto de deslizar/botón de regreso del sistema — con el
     // pedido ya aceptado, la única salida es cancelar la entrega.
@@ -352,7 +363,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
                   ]),
                 MarkerLayer(markers: [
                   Marker(
-                    point: _defaultRestaurantPos,
+                    point: _restaurantPos,
                     width: 44, height: 44,
                     child: _Pin(icon: Icons.storefront, color: AppConstants.primaryColor),
                   ),
@@ -409,7 +420,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                       decoration: BoxDecoration(
-                        color: AppConstants.surfaceColor.withValues(alpha: 0.92),
+                        color: AppConstants.primaryColor,
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -430,11 +441,11 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
                             child: Container(
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                               decoration: BoxDecoration(
-                                color: AppConstants.primaryColor,
+                                color: Colors.white,
                                 borderRadius: BorderRadius.circular(8),
                               ),
-                              child: const Text('Reintentar',
-                                  style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                              child: Text('Reintentar',
+                                  style: TextStyle(color: AppConstants.primaryColor, fontSize: 11, fontWeight: FontWeight.bold)),
                             ),
                           ),
                         ],
@@ -486,7 +497,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
                     ),
                     GestureDetector(
                       onTap: () {
-                        final dest = _step >= 2 ? clientPos : _defaultRestaurantPos;
+                        final dest = _step >= 2 ? clientPos : _restaurantPos;
                         final url = Uri.parse(
                           'https://www.google.com/maps/dir/?api=1&destination=${dest.latitude},${dest.longitude}&travelmode=driving',
                         );
@@ -609,6 +620,10 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
                   _InfoRow(Icons.location_on_outlined, widget.address),
                 ]),
               ),
+              if ((widget.restaurantAddress ?? '').isNotEmpty) ...[
+                const SizedBox(height: 10),
+                _InfoRow(Icons.storefront_outlined, 'Recoger en: ${widget.restaurantAddress}'),
+              ],
               const SizedBox(height: 16),
               Text('Productos (${widget.restaurantName})',
                   style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),

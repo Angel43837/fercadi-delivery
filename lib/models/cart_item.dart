@@ -15,5 +15,10 @@ class CartItem {
     this.notes = '',
   });
 
-  double get total => product.price * quantity;
+  // product.promoPrice (no product.price): si el producto tiene un
+  // descuento activo (promo_discount_percent + promo_expires_at vigente),
+  // antes se mostraba la insignia de descuento pero se cobraba el precio
+  // completo igual — el carrito nunca aplicaba el precio con descuento en
+  // ningún lado.
+  double get total => product.promoPrice * quantity;
 }

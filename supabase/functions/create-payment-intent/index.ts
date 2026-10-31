@@ -30,36 +30,42 @@ serve(async (req) => {
       })
     }
 
-    // Si el checkout trae una promoción aplicada, se vuelve a calcular el
-    // descuento AQUÍ (nunca se confía en el que mandó el celular) llamando
-    // a la misma función que usa el checkout para mostrarlo — y si el monto
-    // que mandó el cliente no coincide con lo que el servidor calculó, se
-    // rechaza el cobro antes de siquiera hablar con Stripe. Se exige
-    // cartSummary junto con promotionClaimId: un cliente que mandara el
-    // id de la promoción pero sin el resumen del carrito (para saltarse
-    // esta verificación) se rechaza directo.
-    if (promotionClaimId && !cartSummary) {
-      return new Response(JSON.stringify({ error: 'Falta el resumen del carrito para verificar la promoción' }), {
+    // El carrito SIEMPRE se verifica contra la BD antes de cobrar, con o
+    // sin promoción — antes esto solo corría si había una promoción
+    // aplicada (y aun así, confiaba en el unit_price/subtotal que mandaba
+    // el celular); el caso SIN promoción, el más común, no se verificaba
+    // en absoluto. cartSummary.items solo necesita product_id/quantity —
+    // cualquier precio que venga del cliente se ignora, el precio real
+    // siempre sale de products.price (con su descuento activo, si tiene).
+    if (!cartSummary || !Array.isArray(cartSummary.items) || cartSummary.items.length === 0) {
+      return new Response(JSON.stringify({ error: 'Falta el resumen del carrito para verificar el monto' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }
-    if (promotionClaimId && cartSummary) {
+
+    const authHeader = req.headers.get('Authorization') ?? ''
+    const userClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+      { global: { headers: { Authorization: authHeader } } },
+    )
+
+    let realSubtotal: number
+    let discount = 0
+
+    if (promotionClaimId) {
       // Cliente autenticado como quien llama (no service-role) — la función
       // validate_promotion_for_order revisa auth.uid() para confirmar que
       // el reclamo es de esta misma persona, así que hay que llamarla con
-      // su propio JWT, no con permisos de administrador.
-      const authHeader = req.headers.get('Authorization') ?? ''
-      const userClient = createClient(
-        Deno.env.get('SUPABASE_URL') ?? '',
-        Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-        { global: { headers: { Authorization: authHeader } } },
-      )
+      // su propio JWT, no con permisos de administrador. Ella misma ya
+      // recalcula el subtotal real internamente (ver
+      // 20261026020000_verify_cart_prices_server_side.sql).
       const { data: result, error: rpcError } = await userClient.rpc('validate_promotion_for_order', {
         p_claim_id: promotionClaimId,
         p_restaurant_id: cartSummary.restaurantId,
         p_cart_items: cartSummary.items,
-        p_subtotal: cartSummary.subtotal,
+        p_subtotal: cartSummary.subtotal ?? 0,
         p_delivery_fee: cartSummary.deliveryFee,
       })
       if (rpcError || !result?.valid) {
@@ -68,21 +74,38 @@ serve(async (req) => {
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
         )
       }
-      const discount = result.applies_to_shipping
+      realSubtotal = result.real_subtotal
+      discount = result.applies_to_shipping
         ? Math.min(cartSummary.deliveryFee, result.discount_amount)
         : result.discount_amount
-      const expectedTotal = cartSummary.subtotal + cartSummary.deliveryFee - discount
-      // Epsilon de un centavo de peso — evita falsos rechazos por redondeo.
-      if (Math.abs(expectedTotal - amount) > 0.5) {
+    } else {
+      // Sin promoción: igual se recalcula el subtotal real desde la BD,
+      // nunca se confía en lo que mande el celular.
+      const { data: subtotal, error: subtotalError } = await userClient.rpc('compute_cart_subtotal', {
+        p_cart_items: cartSummary.items,
+      })
+      if (subtotalError || subtotal == null) {
         return new Response(
-          JSON.stringify({ error: 'El monto no coincide con el descuento validado de la promoción' }),
+          JSON.stringify({ error: 'No se pudo verificar el carrito', reason: String(subtotalError) }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
         )
       }
+      realSubtotal = subtotal
     }
 
-    // Si viene orderId, verificar el monto real contra la BD para evitar manipulación
-    let verifiedAmount = amount
+    const expectedTotal = realSubtotal + cartSummary.deliveryFee - discount
+    // Epsilon de un centavo de peso — evita falsos rechazos por redondeo.
+    if (Math.abs(expectedTotal - amount) > 0.5) {
+      return new Response(
+        JSON.stringify({ error: 'El monto no coincide con el precio real de tu carrito' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      )
+    }
+
+    // El monto que de verdad se cobra es el calculado aquí, nunca el que
+    // mandó el celular — aunque ya coincidan (se acaba de verificar arriba),
+    // así no hay ninguna ruta donde "amount" llegue intacto hasta Stripe.
+    let verifiedAmount = expectedTotal
     if (orderId) {
       try {
         const supabase = createClient(
@@ -98,7 +121,7 @@ serve(async (req) => {
           verifiedAmount = order.total
         }
       } catch (_) {
-        // Si no se puede verificar, usar el monto del cliente pero con límite
+        // Si no se puede verificar, se queda con el monto ya validado arriba
       }
     }
 

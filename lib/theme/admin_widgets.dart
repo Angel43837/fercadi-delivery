@@ -27,10 +27,10 @@ class AdminStatCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AdminColors.surface,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(AdminRadii.card),
         boxShadow: [
-          BoxShadow(color: Colors.black.withValues(alpha: 0.25), blurRadius: 12, offset: const Offset(0, 4)),
+          BoxShadow(color: Colors.black.withValues(alpha: 0.18), blurRadius: 12, offset: const Offset(0, 4)),
         ],
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -40,9 +40,9 @@ class AdminStatCard extends StatelessWidget {
           child: Icon(icon, color: color, size: 18),
         ),
         const SizedBox(height: 14),
-        Text(value, style: const TextStyle(color: AdminColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 22)),
+        Text(value, style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 22)),
         const SizedBox(height: 2),
-        Text(label, style: TextStyle(color: AdminColors.textSecondary, fontSize: 12)),
+        Text(label, style: const TextStyle(color: Colors.black54, fontSize: 12)),
       ]),
     );
   }

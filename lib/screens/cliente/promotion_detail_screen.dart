@@ -56,14 +56,14 @@ class _PromotionDetailScreenState extends State<PromotionDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppConstants.bgColor,
+      backgroundColor: AppConstants.primaryColor,
       appBar: AppBar(
-        backgroundColor: AppConstants.bgColor,
+        backgroundColor: AppConstants.primaryColor,
         elevation: 0,
         iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator(color: AppConstants.primaryColor))
+          ? const Center(child: CircularProgressIndicator(color: Colors.white))
           : _promo == null
               ? const Center(child: Text('Promoción no encontrada', style: TextStyle(color: Colors.white54)))
               : _buildContent(_promo!),
@@ -85,7 +85,7 @@ class _PromotionDetailScreenState extends State<PromotionDetailScreen> {
           Text(p.title, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
           if (p.benefitLabel.isNotEmpty) ...[
             const SizedBox(height: 6),
-            Text(p.benefitLabel, style: const TextStyle(color: AppConstants.primaryColor, fontSize: 16, fontWeight: FontWeight.bold)),
+            Text(p.benefitLabel, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
           ],
           if (p.description.isNotEmpty) ...[
             const SizedBox(height: 12),
@@ -95,8 +95,14 @@ class _PromotionDetailScreenState extends State<PromotionDetailScreen> {
             const SizedBox(height: 16),
             Container(
               padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(color: AppConstants.surfaceColor, borderRadius: BorderRadius.circular(12)),
-              child: Text(p.conditionsSummary, style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12.5)),
+              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Icon(Icons.info_outline, color: AppConstants.primaryColor, size: 18),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(p.conditionsSummary, style: const TextStyle(color: Colors.black87, fontSize: 12.5)),
+                ),
+              ]),
             ),
           ],
           const SizedBox(height: 28),
@@ -110,8 +116,10 @@ class _PromotionDetailScreenState extends State<PromotionDetailScreen> {
             child: ElevatedButton(
               onPressed: (_claimed || _claiming || !p.isCurrentlyClaimable) ? null : _claim,
               style: ElevatedButton.styleFrom(
-                backgroundColor: _claimed ? Colors.green : AppConstants.primaryColor,
+                backgroundColor: _claimed ? Colors.green : Colors.blue,
                 foregroundColor: Colors.white,
+                disabledBackgroundColor: Colors.blue.withValues(alpha: 0.4),
+                disabledForegroundColor: Colors.white.withValues(alpha: 0.8),
               ),
               child: _claiming
                   ? const SizedBox(width: 22, height: 22,

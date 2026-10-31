@@ -86,6 +86,31 @@ class CartScreen extends StatelessWidget {
                     ],
                   ),
                 ),
+                // Aviso honesto de que el pedido va a tardar más y a costar
+                // más de envío — el dueño pidió explícitamente que esto se
+                // le avisara al cliente, no que se descubriera solo hasta
+                // ver el total en el checkout.
+                if (cart.itemsByRestaurant.length > 1)
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: AppConstants.primaryColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppConstants.primaryColor.withValues(alpha: 0.4)),
+                    ),
+                    child: Row(children: [
+                      const Icon(Icons.info_outline, color: AppConstants.primaryColor, size: 18),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'Pedido de 2 restaurantes — tardará un poco más y el envío es mayor.',
+                          style: TextStyle(color: AppConstants.primaryColor, fontSize: 12.5, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ]),
+                  ),
                 _OrderSummary(cart: cart),
               ],
             ),
