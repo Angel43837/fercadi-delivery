@@ -14,6 +14,7 @@ import '../models/product.dart';
 import '../models/restaurant_banner.dart';
 import '../models/app_promo.dart';
 import '../models/order_message.dart';
+import '../models/support_message.dart';
 import '../models/promotion.dart';
 import '../models/promotion_claim.dart';
 import '../core/product_categories.dart';
@@ -3082,6 +3083,116 @@ class SupabaseService {
         )
         .subscribe();
     return channel;
+  }
+
+  // ── Soporte (chat usuario ↔ Admin) ─────────────────────────────────────────
+  // Mismo patrón que order_messages arriba, pero el hilo es por usuario, no
+  // por pedido — un usuario tiene un solo hilo de por vida con soporte.
+
+  static Future<List<SupportMessage>> getMySupportMessages() async {
+    if (useMock) return [];
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) throw Exception('No hay sesión activa');
+    final data = await _client
+        .from('support_messages')
+        .select()
+        .eq('user_id', userId)
+        .order('created_at');
+    return (data as List).map((e) => SupportMessage.fromJson(e)).toList();
+  }
+
+  static Future<void> sendSupportMessage(String body) async {
+    if (useMock) return;
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) throw Exception('No hay sesión activa');
+    await _client.from('support_messages').insert({
+      'user_id': userId,
+      'sender': 'user',
+      'body': body,
+    });
+  }
+
+  static RealtimeChannel subscribeToMySupportMessages(
+    void Function(SupportMessage) onNewMessage,
+  ) {
+    final userId = _client.auth.currentUser?.id;
+    final channel = _client.channel('support_messages_$userId');
+    channel
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'support_messages',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'user_id',
+            value: userId,
+          ),
+          callback: (payload) => onNewMessage(SupportMessage.fromJson(payload.newRecord)),
+        )
+        .subscribe();
+    return channel;
+  }
+
+  // Lista de hilos para Admin (uno por usuario, más reciente primero), vía
+  // el RPC get_support_threads() — agregar esto con una consulta normal de
+  // Dart no es práctico (necesitaría agrupar por usuario y contar no
+  // leídos), así que se resolvió del lado del servidor.
+  static Future<List<SupportThread>> getSupportThreads() async {
+    if (useMock) return [];
+    final data = await _client.rpc('get_support_threads');
+    return (data as List)
+        .map((e) => SupportThread.fromJson(Map<String, dynamic>.from(e as Map)))
+        .toList();
+  }
+
+  static Future<List<SupportMessage>> getSupportMessagesForUser(String userId) async {
+    if (useMock) return [];
+    final data = await _client
+        .from('support_messages')
+        .select()
+        .eq('user_id', userId)
+        .order('created_at');
+    return (data as List).map((e) => SupportMessage.fromJson(e)).toList();
+  }
+
+  static Future<void> sendSupportMessageAsAdmin(String userId, String body) async {
+    if (useMock) return;
+    await _client.from('support_messages').insert({
+      'user_id': userId,
+      'sender': 'admin',
+      'body': body,
+    });
+  }
+
+  static RealtimeChannel subscribeToSupportMessagesForUser(
+    String userId,
+    void Function(SupportMessage) onNewMessage,
+  ) {
+    final channel = _client.channel('support_messages_admin_$userId');
+    channel
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'support_messages',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'user_id',
+            value: userId,
+          ),
+          callback: (payload) => onNewMessage(SupportMessage.fromJson(payload.newRecord)),
+        )
+        .subscribe();
+    return channel;
+  }
+
+  // Marca como leídos los mensajes pendientes de un hilo — vía RPC porque
+  // no hay política de UPDATE directa (ver migración support_messages):
+  // Admin la llama al abrir el hilo de un usuario (baja el badge de "Más →
+  // Soporte"); el propio usuario la llama al abrir su chat (marca como
+  // leídas las respuestas de Admin).
+  static Future<void> markSupportMessagesRead(String userId) async {
+    if (useMock) return;
+    await _client.rpc('mark_support_messages_read', params: {'p_user_id': userId});
   }
 
   // ── Configuración de la plataforma ────────────────────────────────────────

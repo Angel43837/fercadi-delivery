@@ -144,6 +144,9 @@ class _AdminScreenState extends State<AdminScreen> {
   int _retirosPendientes = 0;
   int _retirosRestaurantesPendientes = 0;
   int _reembolsosPendientes = 0;
+  // Soporte: mensajes de usuarios que Admin aún no ha leído, sumados de
+  // todos los hilos — mismo patrón de badge que retiros/reembolsos.
+  int _soportePendientes = 0;
   final _withdrawalRepo = RiderWithdrawalRepository();
   final _restaurantWithdrawalRepo = RestaurantWithdrawalRepository();
 
@@ -159,6 +162,7 @@ class _AdminScreenState extends State<AdminScreen> {
     _loadRetirosPendientes();
     _loadRetirosRestaurantesPendientes();
     _loadReembolsosPendientes();
+    _loadSoportePendientes();
     _loadPendingDrivers();
     _pollTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       _loadOrders();
@@ -168,6 +172,7 @@ class _AdminScreenState extends State<AdminScreen> {
       _loadRetirosPendientes();
       _loadRetirosRestaurantesPendientes();
       _loadReembolsosPendientes();
+      _loadSoportePendientes();
       _loadPendingDrivers();
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -275,6 +280,14 @@ class _AdminScreenState extends State<AdminScreen> {
       final data = await SupabaseService.getAllRefundRequests();
       final count = data.where((r) => r['status'] == 'pendiente').length;
       if (mounted) setState(() => _reembolsosPendientes = count);
+    } catch (_) {}
+  }
+
+  Future<void> _loadSoportePendientes() async {
+    try {
+      final threads = await SupabaseService.getSupportThreads();
+      final count = threads.fold<int>(0, (s, t) => s + t.unreadCount);
+      if (mounted) setState(() => _soportePendientes = count);
     } catch (_) {}
   }
 
@@ -1229,6 +1242,13 @@ class _AdminScreenState extends State<AdminScreen> {
         'Solicitudes de reembolso de pedidos',
         _reembolsosPendientes,
         () => context.push('/admin/reembolsos'),
+      ),
+      (
+        Icons.headset_mic_outlined,
+        'Soporte',
+        'Chat con clientes, dueños y repartidores',
+        _soportePendientes,
+        () => context.push('/admin/soporte'),
       ),
       (
         Icons.local_offer_outlined,
