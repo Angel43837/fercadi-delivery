@@ -1,4 +1,25 @@
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+// Supabase Edge Function — cobro con tarjeta de pedidos YA creados.
+//
+// El monto SIEMPRE sale de orders.total en la BD (calculado por place_order,
+// ver migración 20261102010000_server_side_orders.sql) — nunca de lo que
+// mande el celular. Antes el checkout mandaba "amount" y se cobraba tal cual.
+//
+// Deploy: supabase functions deploy create-payment-intent
+// (SIN --no-verify-jwt: requiere la sesión real del cliente)
+//
+// body:
+//   { action: 'create',  orderIds: string[], paymentMethodType?: 'card' | 'oxxo' }
+//     → { clientSecret, id, amount }
+//   { action: 'confirm', orderIds: string[] }
+//     → revisa con Stripe que el pago de esos pedidos se completó y por el
+//       monto correcto; si sí, los pasa a payment_status='paid' +
+//       status='pending' (ya visibles al restaurante). Mismo efecto que el
+//       webhook — lo que llegue primero gana, el otro no hace nada.
+//   { action: 'abandon', orderIds: string[] }
+//     → el cliente canceló/cerró el pago: cancela el PaymentIntent y los
+//       pedidos (si Stripe dice que sí se cobró, los confirma en vez de
+//       cancelarlos).
+
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const corsHeaders = {
@@ -6,179 +27,159 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-serve(async (req) => {
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  })
+}
+
+async function stripe(path: string, secretKey: string, init: { method?: string; body?: URLSearchParams; idempotencyKey?: string } = {}) {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${secretKey}`,
+    'Content-Type': 'application/x-www-form-urlencoded',
+  }
+  if (init.idempotencyKey) headers['Idempotency-Key'] = init.idempotencyKey
+  const res = await fetch(`https://api.stripe.com/v1/${path}`, {
+    method: init.method ?? 'GET',
+    headers,
+    body: init.body?.toString(),
+  })
+  return { ok: res.ok, data: await res.json() }
+}
+
+const toCents = (orders: { total: number }[]) =>
+  orders.reduce((sum, o) => sum + Math.round(Number(o.total) * 100), 0)
+
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
   try {
-    const { amount, currency = 'mxn', orderId, paymentMethodType, promotionClaimId, cartSummary } = await req.json()
-
-    // Validar monto básico
-    if (!amount || amount <= 0) {
-      return new Response(JSON.stringify({ error: 'Monto inválido' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
-
-    // Límite razonable: máximo $50,000 MXN por pedido
-    if (amount > 50000) {
-      return new Response(JSON.stringify({ error: 'Monto fuera de rango permitido' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
-
-    // El carrito SIEMPRE se verifica contra la BD antes de cobrar, con o
-    // sin promoción — antes esto solo corría si había una promoción
-    // aplicada (y aun así, confiaba en el unit_price/subtotal que mandaba
-    // el celular); el caso SIN promoción, el más común, no se verificaba
-    // en absoluto. cartSummary.items solo necesita product_id/quantity —
-    // cualquier precio que venga del cliente se ignora, el precio real
-    // siempre sale de products.price (con su descuento activo, si tiene).
-    if (!cartSummary || !Array.isArray(cartSummary.items) || cartSummary.items.length === 0) {
-      return new Response(JSON.stringify({ error: 'Falta el resumen del carrito para verificar el monto' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
-
     const authHeader = req.headers.get('Authorization') ?? ''
-    const userClient = createClient(
+    const callerClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_ANON_KEY') ?? '',
       { global: { headers: { Authorization: authHeader } } },
     )
-
-    let realSubtotal: number
-    let discount = 0
-
-    if (promotionClaimId) {
-      // Cliente autenticado como quien llama (no service-role) — la función
-      // validate_promotion_for_order revisa auth.uid() para confirmar que
-      // el reclamo es de esta misma persona, así que hay que llamarla con
-      // su propio JWT, no con permisos de administrador. Ella misma ya
-      // recalcula el subtotal real internamente (ver
-      // 20261026020000_verify_cart_prices_server_side.sql).
-      const { data: result, error: rpcError } = await userClient.rpc('validate_promotion_for_order', {
-        p_claim_id: promotionClaimId,
-        p_restaurant_id: cartSummary.restaurantId,
-        p_cart_items: cartSummary.items,
-        p_subtotal: cartSummary.subtotal ?? 0,
-        p_delivery_fee: cartSummary.deliveryFee,
-      })
-      if (rpcError || !result?.valid) {
-        return new Response(
-          JSON.stringify({ error: 'Promoción inválida', reason: result?.reason ?? String(rpcError) }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-        )
-      }
-      realSubtotal = result.real_subtotal
-      discount = result.applies_to_shipping
-        ? Math.min(cartSummary.deliveryFee, result.discount_amount)
-        : result.discount_amount
-    } else {
-      // Sin promoción: igual se recalcula el subtotal real desde la BD,
-      // nunca se confía en lo que mande el celular.
-      const { data: subtotal, error: subtotalError } = await userClient.rpc('compute_cart_subtotal', {
-        p_cart_items: cartSummary.items,
-      })
-      if (subtotalError || subtotal == null) {
-        return new Response(
-          JSON.stringify({ error: 'No se pudo verificar el carrito', reason: String(subtotalError) }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-        )
-      }
-      realSubtotal = subtotal
-    }
-
-    const expectedTotal = realSubtotal + cartSummary.deliveryFee - discount
-    // Epsilon de un centavo de peso — evita falsos rechazos por redondeo.
-    if (Math.abs(expectedTotal - amount) > 0.5) {
-      return new Response(
-        JSON.stringify({ error: 'El monto no coincide con el precio real de tu carrito' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-      )
-    }
-
-    // El monto que de verdad se cobra es el calculado aquí, nunca el que
-    // mandó el celular — aunque ya coincidan (se acaba de verificar arriba),
-    // así no hay ninguna ruta donde "amount" llegue intacto hasta Stripe.
-    let verifiedAmount = expectedTotal
-    if (orderId) {
-      try {
-        const supabase = createClient(
-          Deno.env.get('SUPABASE_URL') ?? '',
-          Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-        )
-        const { data: order } = await supabase
-          .from('orders')
-          .select('total')
-          .eq('id', orderId)
-          .single()
-        if (order?.total) {
-          verifiedAmount = order.total
-        }
-      } catch (_) {
-        // Si no se puede verificar, se queda con el monto ya validado arriba
-      }
-    }
+    const { data: callerData } = await callerClient.auth.getUser()
+    const callerId = callerData?.user?.id
+    if (!callerId) return json({ error: 'No autenticado' }, 401)
 
     const stripeSecretKey = Deno.env.get('STRIPE_SECRET_KEY')
-    if (!stripeSecretKey) {
-      return new Response(JSON.stringify({ error: 'Stripe no configurado' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
+    if (!stripeSecretKey) return json({ error: 'Stripe no configurado' }, 500)
+
+    const { action = 'create', orderIds, paymentMethodType } = await req.json()
+    if (!Array.isArray(orderIds) || orderIds.length === 0 || orderIds.length > 10) {
+      return json({ error: 'Faltan los pedidos a cobrar' }, 400)
     }
+    const ids = [...new Set(orderIds.map(String))].sort()
 
-    const body = new URLSearchParams({
-      amount: String(Math.round(verifiedAmount * 100)), // Stripe usa centavos
-      currency,
-      'metadata[orderId]': orderId ?? '',
-    })
-
-    // OXXO no es compatible con "automatic_payment_methods" en modo automático
-    // sin datos de envío — se pide explícitamente. Para tarjeta se pide
-    // "card" explícito en vez de automatic_payment_methods: con automático,
-    // Stripe intenta ofrecer TODO lo que esté activo en el dashboard (OXXO,
-    // Link, pagos bancarios), y como la app no configura
-    // allowsDelayedPaymentMethods ni soporta esos métodos, el PaymentSheet
-    // se quedaba filtrándolos y nunca llegaba a mostrar la tarjeta —
-    // se veía como "cargando" sin avanzar.
-    if (paymentMethodType === 'oxxo') {
-      body.set('payment_method_types[]', 'oxxo')
-    } else {
-      body.set('payment_method_types[]', 'card')
-    }
-
-    const stripeRes = await fetch('https://api.stripe.com/v1/payment_intents', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${stripeSecretKey}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: body.toString(),
-    })
-
-    const paymentIntent = await stripeRes.json()
-
-    if (!stripeRes.ok) {
-      return new Response(JSON.stringify({ error: paymentIntent.error?.message }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
-
-    return new Response(
-      JSON.stringify({ clientSecret: paymentIntent.client_secret, id: paymentIntent.id }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    const admin = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     )
+    const { data: orders, error: ordersError } = await admin
+      .from('orders')
+      .select('id, total, status, payment_status, customer_id, stripe_payment_intent_id')
+      .in('id', ids)
+    if (ordersError || !orders || orders.length !== ids.length) {
+      return json({ error: 'Pedido no encontrado' }, 404)
+    }
+
+    if (orders.some((o) => o.customer_id !== callerId)) {
+      return json({ error: 'No autorizado' }, 403)
+    }
+
+    const amountCents = toCents(orders)
+
+    // Marca pagados SOLO si Stripe confirma el cobro completo de estos
+    // pedidos exactos. Idempotente: solo toca los que siguen esperando pago.
+    const confirmFromIntent = async (intentId: string) => {
+      const { ok, data: intent } = await stripe(`payment_intents/${intentId}`, stripeSecretKey)
+      if (!ok) return { paid: false, intent: null }
+      const metaIds = String(intent.metadata?.orderIds ?? '').split(',').filter(Boolean).sort()
+      const paid =
+        intent.status === 'succeeded' &&
+        intent.amount_received === amountCents &&
+        metaIds.join(',') === ids.join(',')
+      if (paid) {
+        await admin
+          .from('orders')
+          .update({ payment_status: 'paid', status: 'pending' })
+          .in('id', ids)
+          .eq('status', 'awaiting_payment')
+      }
+      return { paid, intent }
+    }
+
+    if (action === 'create') {
+      if (orders.some((o) => o.status !== 'awaiting_payment')) {
+        return json({ error: 'Este pedido ya no está esperando pago' }, 409)
+      }
+      if (amountCents <= 0 || amountCents > 50000 * 100) {
+        return json({ error: 'Monto fuera de rango permitido' }, 400)
+      }
+
+      // OXXO no es compatible con "automatic_payment_methods" en modo
+      // automático sin datos de envío — se pide explícitamente. Para tarjeta
+      // se pide "card" explícito: con automático, Stripe intentaba ofrecer
+      // TODO lo activo en el dashboard y el PaymentSheet se quedaba
+      // cargando sin llegar a mostrar la tarjeta.
+      const body = new URLSearchParams({
+        amount: String(amountCents),
+        currency: 'mxn',
+        'metadata[orderIds]': ids.join(','),
+        'metadata[customerId]': callerId,
+        'payment_method_types[]': paymentMethodType === 'oxxo' ? 'oxxo' : 'card',
+      })
+      // Mismos pedidos + mismo monto = mismo PaymentIntent (un doble toque
+      // en "Confirmar" no crea dos cobros).
+      const { ok, data: intent } = await stripe('payment_intents', stripeSecretKey, {
+        method: 'POST',
+        body,
+        idempotencyKey: `gogo-pi-${ids.join('_')}-${amountCents}`,
+      })
+      if (!ok) return json({ error: intent.error?.message ?? 'Error de Stripe' }, 400)
+
+      await admin.from('orders').update({ stripe_payment_intent_id: intent.id }).in('id', ids)
+
+      return json({ clientSecret: intent.client_secret, id: intent.id, amount: amountCents / 100 })
+    }
+
+    const intentId = orders[0].stripe_payment_intent_id as string | null
+    if (orders.some((o) => o.stripe_payment_intent_id !== intentId)) {
+      return json({ error: 'Los pedidos no pertenecen al mismo pago' }, 400)
+    }
+
+    if (action === 'confirm') {
+      if (orders.every((o) => o.payment_status === 'paid')) return json({ paid: true })
+      if (!intentId) return json({ paid: false })
+      const { paid } = await confirmFromIntent(intentId)
+      return json({ paid })
+    }
+
+    if (action === 'abandon') {
+      if (intentId) {
+        const { paid, intent } = await confirmFromIntent(intentId)
+        if (paid) return json({ paid: true })
+        if (intent && !['canceled', 'succeeded', 'processing'].includes(intent.status)) {
+          await stripe(`payment_intents/${intentId}/cancel`, stripeSecretKey, { method: 'POST' })
+        }
+        // 'processing' (pago en curso): no se cancela nada, el webhook decide.
+        if (intent?.status === 'processing') return json({ paid: false, processing: true })
+      }
+      await admin
+        .from('orders')
+        .update({ status: 'cancelled' })
+        .in('id', ids)
+        .eq('status', 'awaiting_payment')
+      return json({ paid: false, cancelled: true })
+    }
+
+    return json({ error: 'Acción desconocida' }, 400)
   } catch (e) {
-    return new Response(JSON.stringify({ error: String(e) }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
+    return json({ error: String(e) }, 500)
   }
 })

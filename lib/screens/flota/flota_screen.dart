@@ -91,11 +91,13 @@ class _FlotaScreenState extends State<FlotaScreen> {
       activos[riderId] = await SupabaseService.getRiderActiveOrder(riderId);
     }
 
-    // Merge mock riders for demo
-    final allRiders = [..._mockRiders.map((m) => Map<String, dynamic>.from(m)), ...riders];
-    final allLocations = {..._mockLocations.map((k, v) => MapEntry(k, Map<String, dynamic>.from(v))), ...locations};
-    final allOrders = {..._mockOrders.map((k, v) => MapEntry(k, v.map((o) => Map<String, dynamic>.from(o)).toList())), ...orders};
-    final allActivos = {..._mockActivos, ...activos};
+    // Riders de demo solo en modo mock — antes se mezclaban siempre con los
+    // reales y aparecían en el panel de producción.
+    const demo = SupabaseService.useMock;
+    final allRiders = [if (demo) ..._mockRiders.map((m) => Map<String, dynamic>.from(m)), ...riders];
+    final allLocations = {if (demo) ..._mockLocations.map((k, v) => MapEntry(k, Map<String, dynamic>.from(v))), ...locations};
+    final allOrders = {if (demo) ..._mockOrders.map((k, v) => MapEntry(k, v.map((o) => Map<String, dynamic>.from(o)).toList())), ...orders};
+    final allActivos = {if (demo) ..._mockActivos, ...activos};
 
     if (!mounted) return;
     setState(() {

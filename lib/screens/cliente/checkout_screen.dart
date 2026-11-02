@@ -27,7 +27,6 @@ import '../../services/location_service.dart';
 import '../../services/supabase_service.dart';
 import '../map_picker_screen.dart';
 import '../../services/auth_service.dart';
-import '../../services/fcm_service.dart';
 import '../../services/order_history_service.dart';
 
 enum _Pay { cash, card }
@@ -372,41 +371,26 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     ));
   }
 
-  // Llama a la Supabase Edge Function, obtiene el clientSecret y abre el PaymentSheet de Stripe.
+  // Cobra con tarjeta pedidos YA creados: el monto lo pone el servidor (suma
+  // de orders.total), nunca este celular. Obtiene el clientSecret y abre el
+  // PaymentSheet de Stripe.
   // Cada etapa tiene su propio timeout: si Stripe se cuelga (bug conocido de
   // flutter_stripe en ciertas versiones de iOS, donde el PaymentSheet se
   // queda cargando para siempre sin lanzar error), esto evita que el botón
   // "Confirmar pedido" se quede pegado indefinidamente.
-  // Regresa el id del PaymentIntent si el pago se confirmó (para enlazar el
-  // pedido con el webhook de Stripe vía orders.stripe_payment_intent_id —
-  // antes se descartaba aquí mismo y esa columna nunca se llenaba), o null
-  // si el pago falló/se canceló.
-  Future<String?> _payWithStripe(
-    double total, {
-    Map<String, dynamic>? promoBody,
-  }) async {
+  // Regresa true si el pago se completó, false si falló o se canceló.
+  Future<bool> _payWithStripe(List<String> orderIds) async {
     try {
       // 1. Pedir clientSecret al backend (Edge Function)
       debugPrint('[Stripe] Solicitando payment intent al backend...');
-      final res = await Supabase.instance.client.functions.invoke(
-        'create-payment-intent',
-        body: {
-          'amount': total,
-          'currency': 'mxn',
-          ...?promoBody,
-        },
-      ).timeout(const Duration(seconds: 20));
-      final clientSecret = res.data?['clientSecret'] as String?;
-      final paymentIntentId = res.data?['id'] as String?;
+      final res = await SupabaseService.createCardPayment(orderIds)
+          .timeout(const Duration(seconds: 20));
+      final clientSecret = res['clientSecret'] as String?;
       if (clientSecret == null) {
-        debugPrint('[Stripe] El backend no devolvió clientSecret: ${res.data}');
-        // Si el backend rechazó por un descuento que no coincide (alguien
-        // manipulando la app, o la promoción cambió justo en ese momento),
-        // el mensaje real llega aquí — se muestra tal cual en vez del
-        // genérico, para que quede claro que no fue un problema de tarjeta.
-        final backendError = res.data?['error'] as String?;
+        debugPrint('[Stripe] El backend no devolvió clientSecret: $res');
+        final backendError = res['error'] as String?;
         _showPaymentError(backendError ?? 'No se pudo iniciar el pago. Intenta de nuevo.');
-        return null;
+        return false;
       }
       debugPrint('[Stripe] Payment intent recibido, iniciando PaymentSheet...');
 
@@ -426,19 +410,19 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       // cargando para siempre si el sheet nunca llega a mostrarse.
       await Stripe.instance.presentPaymentSheet().timeout(const Duration(seconds: 90));
       debugPrint('[Stripe] Pago confirmado.');
-      return paymentIntentId ?? '';
+      return true;
     } on TimeoutException {
       debugPrint('[Stripe] Timeout esperando respuesta de Stripe.');
       _showPaymentError('El pago está tardando demasiado. Revisa tu conexión e intenta de nuevo.');
-      return null;
+      return false;
     } on StripeException catch (e) {
       debugPrint('[Stripe] StripeException: ${e.error.code} ${e.error.message}');
       _showPaymentError(e.error.localizedMessage ?? 'Pago cancelado');
-      return null;
+      return false;
     } catch (e) {
       debugPrint('[Stripe] Error inesperado: $e');
       _showPaymentError('No se pudo procesar el pago. Revisa tu conexión e intenta de nuevo.');
-      return null;
+      return false;
     }
   }
 
@@ -467,68 +451,23 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     }
     setState(() => _loading = true);
     final cart = context.read<CartProvider>();
-    final feesByRestaurant = _deliveryFeesByRestaurant;
-    final deliveryFee = feesByRestaurant.values.fold(0.0, (a, b) => a + b);
-    // El descuento SIEMPRE es el que ya validó el servidor (ver
-    // _revalidatePromo) — nunca se calcula aquí. Si por algún motivo no hay
-    // una validación vigente y "válida" en este momento, no se aplica nada.
-    final promoClaim = cart.selectedPromoClaim;
-    final promoValid = cart.hasValidPromo;
-    final promoDiscount = promoValid ? cart.promoDiscount : 0.0;
-    final promoAppliesToShipping = promoValid && cart.promoAppliesToShipping;
-    final orderTotal = cart.total + deliveryFee - promoDiscount;
+    final isCard = _payment == _Pay.card;
+    // La promoción solo se manda si el servidor ya la validó (ver
+    // _revalidatePromo) — place_order la vuelve a validar y calcula el
+    // descuento real por su cuenta; nunca se usa uno calculado aquí.
+    final promoClaim = cart.hasValidPromo ? cart.selectedPromoClaim : null;
 
-    // Si el pago es con tarjeta, procesar Stripe primero
-    String? stripePaymentIntentId;
-    if (_payment == _Pay.card) {
-      if (kIsWeb) {
-        if (mounted) {
-          setState(() => _loading = false);
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('El pago con tarjeta solo está disponible en la app móvil. Descarga la app para pagar con tarjeta.'),
-            backgroundColor: Color(0xFFBF360C),
-            duration: Duration(seconds: 5),
-            behavior: SnackBarBehavior.floating,
-          ));
-        }
-        return;
+    if (isCard && kIsWeb) {
+      if (mounted) {
+        setState(() => _loading = false);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('El pago con tarjeta solo está disponible en la app móvil. Descarga la app para pagar con tarjeta.'),
+          backgroundColor: Color(0xFFBF360C),
+          duration: Duration(seconds: 5),
+          behavior: SnackBarBehavior.floating,
+        ));
       }
-      // El backend SIEMPRE recalcula el precio real del carrito antes de
-      // cobrar (con o sin promoción) — cartSummary.items solo manda
-      // product_id/quantity, nunca se confía en ningún precio que mande
-      // el celular. Antes esto solo se armaba si había una promoción
-      // aplicada; el caso sin promoción (el más común) no se verificaba.
-      //
-      // Con 2 restaurantes, cartSummary.items incluye los productos de
-      // AMBOS (compute_cart_subtotal/validate_promotion_for_order ya
-      // funcionan genéricamente por product_id, sin asumir un solo
-      // restaurante — ver 20261026020000_verify_cart_prices_server_side.sql)
-      // y cartSummary.deliveryFee es la suma de las 2 piernas (ya con el
-      // recargo incluido) — antes esto solo mandaba los items/el
-      // restaurantId del PRIMER restaurante, así que el monto a cobrar
-      // (que sí suma todo el carrito) nunca iba a coincidir con lo que el
-      // servidor recalculaba para un carrito de 2 restaurantes.
-      final rid = cart.itemsByRestaurant.keys.first;
-      final allItems = cart.itemsByRestaurant.values.expand((items) => items).toList();
-      final cartSummary = {
-        'restaurantId': rid,
-        'items': allItems.map((i) => {
-          'product_id': i.product.id,
-          'category_id': i.product.categoryId,
-          'quantity': i.quantity,
-        }).toList(),
-        'subtotal': allItems.fold(0.0, (s, i) => s + i.total),
-        'deliveryFee': deliveryFee,
-      };
-      final promoBody = {
-        if (promoValid && promoClaim != null) 'promotionClaimId': promoClaim.id,
-        'cartSummary': cartSummary,
-      };
-      stripePaymentIntentId = await _payWithStripe(orderTotal, promoBody: promoBody);
-      if (stripePaymentIntentId == null) {
-        if (mounted) setState(() => _loading = false);
-        return;
-      }
+      return;
     }
 
     final byRestaurant = cart.itemsByRestaurant;
@@ -543,40 +482,27 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       return;
     }
 
-    // Un pedido por restaurante, cada uno con SU PROPIO envío (calculado
-    // independientemente arriba en feesByRestaurant, no una división
-    // pareja del total) — ligados por el mismo group_id cuando son 2, para
-    // que el repartidor los vea/reclame como un solo viaje (ver
-    // claim_group_order) pero cada fila siga siendo, por sí sola, un
-    // pedido normal y completo (dueño, pago, reembolso si lo rechazan...
-    // todo sigue funcionando exactamente igual que con un solo restaurante).
+    // 1. Crear los pedidos ANTES de cobrar — antes se cobraba primero y, si
+    // el pedido fallaba, el cliente quedaba cobrado sin pedido. Un pedido
+    // por restaurante, ligados por el mismo group_id cuando son 2 (para que
+    // el repartidor los vea/reclame como un solo viaje, ver
+    // claim_group_order). Precios, envío (con el recargo de pedido
+    // combinado en la primera pierna) y descuento los calcula place_order()
+    // en el servidor; aquí solo se manda qué se pidió y a dónde. Con tarjeta
+    // los pedidos nacen 'awaiting_payment' y nadie los ve hasta confirmar el
+    // pago.
     final groupId = byRestaurant.length == 2 ? SupabaseService.generateGroupId() : null;
+    final orderIds = <String>[];
+    double orderTotal = 0;
     String firstOrderId = 'local';
     String firstRestaurantName = byRestaurant.values.first.first.restaurantName;
     bool anyError = false;
 
     for (final entry in byRestaurant.entries) {
-      final rid = entry.key;
       final rItems = entry.value;
-      final rSubtotal = rItems.fold(0.0, (s, i) => s + i.total);
-      final rFee = feesByRestaurant[rid] ?? 0.0;
-      // El descuento solo se aplica al restaurante de la promoción — como
-      // solo se puede elegir una promoción cuando el carrito es de un solo
-      // restaurante (ver _singleRestaurantId), aquí siempre es esta misma
-      // entrada la que corresponde, sin necesidad de comparar ids.
-      final rDiscount = promoValid ? promoDiscount : 0.0;
-      final rSubtotalAfterDiscount = promoAppliesToShipping ? rSubtotal : rSubtotal - rDiscount;
-      final rFeeAfterDiscount = promoAppliesToShipping ? rFee - rDiscount : rFee;
       try {
-        final oid = await SupabaseService.createOrder(
-          restaurantId: rid,
-          total: rSubtotalAfterDiscount + rFeeAfterDiscount,
-          deliveryFee: rFeeAfterDiscount,
-          // Al repartidor se le paga el envío NOMINAL (rFee, antes de
-          // cualquier descuento de promoción) — un pedido con "envío
-          // gratis" no debe dejarlo trabajando sin cobrar; ese costo lo
-          // absorbe la plataforma/restaurante, no el repartidor.
-          riderDeliveryFee: rFee,
+        final order = await SupabaseService.placeOrder(
+          restaurantId: entry.key,
           groupId: groupId,
           customerName: _nameCtrl.text.trim(),
           // Ya no se pide de nuevo en el checkout — se usa el que la cuenta
@@ -589,30 +515,21 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           paymentMethod: _payment.name,
           lat: _selectedPos?.latitude,
           lng: _selectedPos?.longitude,
-          clientFcmToken: FcmService.token,
-          paymentStatus: _payment == _Pay.card ? 'paid' : null,
-          stripePaymentIntentId: (stripePaymentIntentId == null || stripePaymentIntentId.isEmpty)
-              ? null : stripePaymentIntentId,
+          // Solo se puede elegir una promoción con carrito de un solo
+          // restaurante (ver _singleRestaurantId), así que siempre es este.
+          promotionClaimId: promoClaim?.id,
           items: rItems.map((i) => {
             'product_id': i.product.id,
             'quantity': i.quantity,
-            'price': i.product.price,
             if (i.notes.isNotEmpty) 'notes': i.notes,
           }).toList(),
         );
+        final oid = order['id'] as String;
+        orderIds.add(oid);
+        orderTotal += (order['total'] as num).toDouble();
         if (firstOrderId == 'local') {
           firstOrderId = oid;
           firstRestaurantName = rItems.first.restaurantName;
-        }
-        // El pedido ya se creó de verdad — recién ahora se marca la
-        // promoción como usada (nunca antes; si el pago hubiera fallado no
-        // se habría llegado a este punto).
-        if (promoValid && promoClaim != null) {
-          await SupabaseService.applyPromotionToOrder(
-            claimId: promoClaim.id,
-            orderId: oid,
-            discountAmount: promoDiscount,
-          );
         }
       } catch (e) {
         anyError = true;
@@ -622,12 +539,31 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             backgroundColor: Colors.redAccent,
           ));
         }
+        // Con tarjeta es todo o nada: un solo cobro cubre los 2 pedidos.
+        if (isCard) break;
       }
     }
 
-    if (anyError && firstOrderId == 'local') {
+    if (orderIds.isEmpty || (isCard && anyError)) {
+      if (orderIds.isNotEmpty) await SupabaseService.abandonCardPayment(orderIds);
       if (mounted) setState(() => _loading = false);
       return;
+    }
+
+    // 2. Tarjeta: se cobra exactamente lo que guardó el servidor (la suma de
+    // los pedidos del grupo, en un solo cobro).
+    if (isCard) {
+      final paid = await _payWithStripe(orderIds);
+      if (!paid) {
+        // Cancela los pedidos y el cobro (si Stripe dice que sí se cobró,
+        // el servidor los confirma en vez de cancelarlos).
+        await SupabaseService.abandonCardPayment(orderIds);
+        if (mounted) setState(() => _loading = false);
+        return;
+      }
+      // Pasa los pedidos al restaurante. Si esto no llega (red), el webhook
+      // de Stripe hace lo mismo después.
+      await SupabaseService.confirmCardPayment(orderIds);
     }
 
     if (!mounted) return;

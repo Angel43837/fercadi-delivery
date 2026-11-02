@@ -591,3 +591,34 @@ Dos bugs reales en la configuración nativa de iOS, no en Dart, causaban que "Co
 - GPS en `entrega_activa_screen.dart`/`repartidor_screen.dart`: antes solo se usaba `getPositionStream()`, que puede tardar mucho en entregar su primer punto en frío — el "arreglo" de abrir Google Maps y volver funcionaba porque eso *despierta* el GPS del sistema, no por nada que hiciera la app. Ahora se pide también un `getCurrentPosition()` puntual al iniciar (mismo efecto, sin salir de la app), y en `entrega_activa_screen.dart` aparece un botón "Reintentar" si sigue sin llegar nada después de 12s.
 - Elementos encimados en el paso "En camino" (`entrega_activa_screen.dart`/`repartidor_screen.dart`): el aviso verde "Transmitiendo ubicación en vivo" se dibujaba en la misma franja que la fila de arriba (chip de paso + "Cómo llegar") — se movió más abajo. Los avisos de "Buscando ubicación"/"Dirección no encontrada" (mismo `Positioned`) ahora se apilan en una `Column` en vez de superponerse si ambos aplican a la vez.
 - Panel de `entrega_activa_screen.dart` ahora es un `DraggableScrollableSheet` (mismo patrón que el sheet de "Retos" en `repartidor_plus_screen.dart`) — el repartidor puede arrastrarlo para ver más mapa o más info del pedido, con los botones de acción siempre fijos abajo.
+
+## Auditoría de seguridad — nov 2026 (migración `20261102000000_security_hardening.sql`)
+
+**Sin aplicar todavía a ninguna base** — aplicar primero en Pruebas (`ymztoayxzewghbethahv`), probar, y luego en GOGO Food (`dlukaxbcyetcdbdjjgct`).
+
+- `orders`/`order_items`: se borraron las políticas del baseline que daban acceso total a cualquier autenticado (`orders_auth`, `"Cualquiera puede …"`) y lectura a anon. Cada rol ve solo lo suyo; el jefe de flota, los pedidos de sus riders. El trigger `guard_order_changes` congela todo menos `status`/`repartidor_id`/ubicación y valida transiciones por rol (cliente: `pending→cancelled`; dueño: `pending→restaurant_accepted`, cancelar; rider: tomar libre, `accepted→delivering→delivered`, soltar a `restaurant_accepted`). Admin y service_role sin restricción.
+- `sync_role_to_app_metadata`: solo copia roles de autoregistro (no `admin`/`jefe_flota`) y `restaurant_id` **solo si `restaurants.owner_id` es ese usuario**. Un registro (web o app) que no llene `owner_id` deja al dueño sin restaurante en el JWT.
+- Dueño solo escribe en SU restaurante/productos/categorías/banners (`owns_restaurant()`); jefe de flota solo su flota.
+- `rider_stats` se suman en el servidor al pasar a `delivered` (`trg_add_rider_stats_on_delivery`); `increment_rider_stats` quedó solo para admin.
+- Índice único: un solo retiro abierto por restaurante. `rider_calls` ya no lee `user_metadata`. `search_path` fijo en todas las SECURITY DEFINER.
+
+### Pedidos y cobro con montos del servidor (migración `20261102010000_server_side_orders.sql`)
+
+Antes el celular calculaba total/envío/descuento/precios, los insertaba directo y le pedía a Stripe cobrar el `amount` que él mandaba; además cobraba ANTES de crear el pedido. Ahora:
+
+1. `checkout_screen.dart` → `SupabaseService.placeOrder` → RPC `place_order()`: precios de `products` (con promo por platillo % / 2x1 vigente — `CartItem.total` usa el mismo cálculo), envío con `platform_config` + coordenadas del restaurante (con 2 restaurantes: mismo `group_id`, máx. 2 piernas, recargo `multi_restaurant_surcharge` en la primera), promoción validada y marcada como usada, todo en una transacción. Insertar directo en `orders`/`order_items` quedó solo para admin.
+2. Efectivo: nace `pending`. Tarjeta: nace **`awaiting_payment`** (nadie lo ve todavía).
+3. Edge Function `create-payment-intent` (ahora con acciones): `create` cobra la suma de `orders.total`; `confirm` verifica con Stripe y pasa a `paid` + `pending`; `abandon` cancela pedidos y PaymentIntent. Cancelar un pedido ya creado es siempre por `reject-order` (dueño/admin, y ahora también el cliente mientras siga `pending`), que reembolsa; `cancel_my_order(uuid)` se eliminó porque nunca funcionó (los ids de pedido son texto). El webhook hace lo mismo que `confirm` y revisa que `amount_received` cuadre.
+4. `send-order-notification` exige sesión y solo acepta `{orderId}` — token y texto los pone el servidor.
+
+**Para desplegar todo esto** (en Pruebas primero): las 2 migraciones + `supabase functions deploy create-payment-intent` (SIN `--no-verify-jwt`) + `stripe-webhook` + `send-order-notification` + `reject-order`, y **publicar el build nuevo de la app al mismo tiempo** — los builds viejos insertan pedidos directo y dejan de poder pedir.
+
+### Retiros sin doble pago (migración `20261102020000_withdrawal_safety.sql`)
+
+- `rider-withdrawal-transfer` / `restaurant-withdrawal-transfer` (misma lógica en los dos): se pueden **reintentar** desde `en_proceso` (botón "Reintentar pago por Stripe" en Admin). El id de la transferencia se guarda en `stripe_payout_id` apenas Stripe la acepta; con eso lleno no se vuelve a transferir y el trigger `trg_block_cancel_after_transfer` impide rechazar/cancelar (antes eso liberaba el saldo para cobrarlo otra vez).
+- `stripe_connect_account_id`/`stripe_onboarding_status` de las cuentas de cobro: solo los escribe el servidor (`trg_protect_payout_stripe_fields`).
+- `create-premium-checkout`: URLs de regreso fijas, ya no lee `user_metadata`. `admin-user-lookup`: admin = correo `admin@fercadi.com` o `app_metadata.role`, ya no `user_metadata.role` (cualquiera se lo ponía).
+
+Desplegar también: la migración 3 + `rider-withdrawal-transfer`, `restaurant-withdrawal-transfer`, `create-premium-checkout`, `admin-user-lookup`.
+
+Pendiente (no hecho): políticas de Storage abiertas (se ponen a mano en el dashboard); el % de banner se sigue mostrando tachado aunque no se aplica; `main_flota.dart`/`flota_login_screen.dart` aceptan `user_metadata.role` (solo UI — RLS ya lo bloquea).

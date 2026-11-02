@@ -114,18 +114,56 @@ Deno.serve(async (req) => {
       else if (event.type === 'payment_intent.canceled') newStatus = 'failed'
 
       if (newStatus) {
-        const { data: updated } = await supabase
+        // Un mismo pago puede cubrir varios pedidos (carrito con varios
+        // restaurantes) — antes se usaba .maybeSingle(), que truena con más
+        // de uno.
+        const { data: orders } = await supabase
           .from('orders')
-          .update({ payment_status: newStatus })
+          .select('id, total, status')
           .eq('stripe_payment_intent_id', paymentIntentId)
-          .select('id')
-          .maybeSingle()
+        const ids = (orders ?? []).map((o) => o.id as string)
+
+        if (ids.length > 0 && newStatus === 'paid') {
+          // Solo se marca pagado si Stripe cobró exactamente lo que suman
+          // los pedidos en la BD; si no, se deja para revisión manual.
+          const expectedCents = (orders ?? []).reduce(
+            (sum, o) => sum + Math.round(Number(o.total) * 100), 0)
+          if (intent.amount_received === expectedCents) {
+            await supabase.from('orders').update({ payment_status: 'paid' }).in('id', ids)
+            // Pedidos que esperaban el pago ya pasan al restaurante.
+            await supabase
+              .from('orders')
+              .update({ status: 'pending' })
+              .in('id', ids)
+              .eq('status', 'awaiting_payment')
+          } else {
+            await supabase.from('alerts').insert({
+              title: 'Monto cobrado no coincide con el pedido',
+              description: `Pedidos ${ids.join(', ')} · PaymentIntent ${paymentIntentId}: Stripe cobró ${intent.amount_received / 100}, pedidos suman ${expectedCents / 100}`,
+              priority: 'alta',
+              category: 'pagos',
+              status: 'pendiente',
+            })
+          }
+        } else if (ids.length > 0) {
+          await supabase.from('orders').update({ payment_status: newStatus }).in('id', ids)
+          // Un intento rechazado (payment_failed) todavía se puede reintentar
+          // en el mismo PaymentSheet; solo un PaymentIntent cancelado da por
+          // perdido el pedido.
+          if (event.type === 'payment_intent.canceled') {
+            await supabase
+              .from('orders')
+              .update({ status: 'cancelled' })
+              .in('id', ids)
+              .eq('status', 'awaiting_payment')
+          }
+        }
 
         if (newStatus === 'failed') {
           const reason = intent?.last_payment_error?.message ?? event.type
           await supabase.from('alerts').insert({
             title: 'Pago rechazado o fallido',
-            description: `Pedido ${updated?.id ?? '—'} · PaymentIntent ${paymentIntentId}: ${reason}`,
+            description: `Pedidos ${ids.join(', ') || '—'} · PaymentIntent ${paymentIntentId}: ${reason}`,
             priority: 'alta',
             category: 'pagos',
             status: 'pendiente',

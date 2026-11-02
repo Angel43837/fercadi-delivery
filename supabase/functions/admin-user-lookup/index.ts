@@ -34,8 +34,12 @@ Deno.serve(async (req) => {
       { global: { headers: { Authorization: authHeader } } },
     )
     const { data: callerData } = await callerClient.auth.getUser()
-    const role = callerData?.user?.app_metadata?.role ?? callerData?.user?.user_metadata?.role
-    if (role !== 'admin') {
+    // Mismo criterio que is_admin() en la BD (correo del admin) + role en
+    // app_metadata. NUNCA user_metadata: el propio usuario lo puede editar
+    // (auth.updateUser) y se ponía role='admin' para entrar aquí.
+    const isAdmin = callerData?.user?.email === 'admin@fercadi.com' ||
+      callerData?.user?.app_metadata?.role === 'admin'
+    if (!isAdmin) {
       return new Response(JSON.stringify({ error: 'No autorizado' }), {
         status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

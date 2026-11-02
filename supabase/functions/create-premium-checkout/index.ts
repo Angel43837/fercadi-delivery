@@ -41,7 +41,9 @@ Deno.serve(async (req) => {
       })
     }
 
-    const { restaurantId, successUrl, cancelUrl } = await req.json()
+    // success_url/cancel_url fijas abajo — ya no se aceptan del cliente (se
+    // podían usar para mandar al dueño a un sitio ajeno después de pagar).
+    const { restaurantId } = await req.json()
     if (!restaurantId) {
       return new Response(JSON.stringify({ error: 'Falta restaurantId' }), {
         status: 400,
@@ -52,7 +54,6 @@ Deno.serve(async (req) => {
     // Quien llama debe ser el dueño de ESTE restaurante — nunca se confía
     // en el restaurantId que mande el cliente sin cruzarlo contra su JWT.
     const ownRestaurantId = (user.app_metadata as Record<string, unknown> | null)?.restaurant_id
-      ?? (user.user_metadata as Record<string, unknown> | null)?.restaurant_id
     if (ownRestaurantId !== restaurantId) {
       return new Response(JSON.stringify({ error: 'No autorizado para este restaurante' }), {
         status: 403,
@@ -115,8 +116,8 @@ Deno.serve(async (req) => {
     const body = new URLSearchParams({
       mode: 'subscription',
       customer: customerId!,
-      success_url: successUrl ?? 'https://gogo-food-web.vercel.app/dueno-login?premium=ok',
-      cancel_url: cancelUrl ?? 'https://gogo-food-web.vercel.app/dueno-login?premium=cancelado',
+      success_url: 'https://gogo-food-web.vercel.app/dueno-login?premium=ok',
+      cancel_url: 'https://gogo-food-web.vercel.app/dueno-login?premium=cancelado',
       'line_items[0][quantity]': '1',
       'line_items[0][price_data][currency]': 'mxn',
       'line_items[0][price_data][unit_amount]': String(PREMIUM_PRICE_MXN_CENTS),

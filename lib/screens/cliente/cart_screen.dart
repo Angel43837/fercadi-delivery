@@ -209,7 +209,7 @@ class _CartItemTileState extends State<_CartItemTile> {
                                 style: TextStyle(color: cardSub, fontSize: 11)),
                           ],
                           const SizedBox(height: 4),
-                          Text('\$${(item.product.price * item.quantity).toStringAsFixed(0)} MXN',
+                          Text('\$${item.total.toStringAsFixed(0)} MXN',
                               style: const TextStyle(color: accent, fontWeight: FontWeight.bold, fontSize: 13)),
                         ],
                       ),

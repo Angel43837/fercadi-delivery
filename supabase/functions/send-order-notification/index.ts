@@ -15,6 +15,7 @@
 //   supabase secrets set FCM_SERVICE_ACCOUNT_JSON='{"type":"service_account",...}'
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -88,31 +89,69 @@ async function getAccessToken(sa: ServiceAccount): Promise<string> {
   return data.access_token as string;
 }
 
+// Texto de cada aviso, fijo en el servidor — antes la app mandaba token,
+// título y cuerpo libres, y cualquiera con la anon key podía mandar
+// cualquier push a cualquier teléfono.
+const MESSAGES: Record<string, [string, string]> = {
+  accepted: ['🍳 ¡Pedido aceptado!', 'Tu pedido está siendo preparado.'],
+  delivering: ['🛵 ¡Repartidor en camino!', 'Tu pedido ya viene para acá.'],
+  delivered: ['✅ ¡Pedido entregado!', '¡Buen provecho!'],
+};
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
+
 serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
 
   try {
-    const { token, title, body } = await req.json() as {
-      token: string;
-      title: string;
-      body: string;
-    };
-    if (!token) {
-      return new Response(JSON.stringify({ error: 'No token' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    // Solo usuarios con sesión, y solo sobre un pedido donde participan
+    // (repartidor asignado, dueño del restaurante o admin).
+    const authHeader = req.headers.get('Authorization') ?? '';
+    const callerClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+      { global: { headers: { Authorization: authHeader } } },
+    );
+    const { data: callerData } = await callerClient.auth.getUser();
+    const caller = callerData?.user;
+    if (!caller) return json({ error: 'No autenticado' }, 401);
+
+    const { orderId } = await req.json() as { orderId: string };
+    if (!orderId) return json({ error: 'Falta orderId' }, 400);
+
+    const admin = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+    );
+    const { data: order } = await admin
+      .from('orders')
+      // '*' y no la columna por nombre: orders.client_fcm_token todavía no
+      // existe (FCM sigue sin configurarse) y pedirla haría tronar la consulta.
+      .select('*')
+      .eq('id', orderId)
+      .maybeSingle();
+    if (!order) return json({ error: 'Pedido no encontrado' }, 404);
+
+    const isAdmin = caller.email === 'admin@fercadi.com';
+    const isRider = order.repartidor_id === caller.id;
+    const isOwner = caller.app_metadata?.role === 'dueno' &&
+      caller.app_metadata?.restaurant_id === order.restaurant_id;
+    if (!isAdmin && !isRider && !isOwner) return json({ error: 'No autorizado' }, 403);
+
+    const message = MESSAGES[order.status as string];
+    const token = (order.client_fcm_token ?? null) as string | null;
+    if (!message || !token) return json({ sent: false });
+    const [title, body] = message;
 
     const raw = Deno.env.get('FCM_SERVICE_ACCOUNT_JSON');
-    if (!raw) {
-      return new Response(JSON.stringify({ error: 'No FCM_SERVICE_ACCOUNT_JSON' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    if (!raw) return json({ error: 'No FCM_SERVICE_ACCOUNT_JSON' }, 500);
     const sa = JSON.parse(raw) as ServiceAccount;
     const accessToken = await getAccessToken(sa);
 
@@ -136,14 +175,8 @@ serve(async (req: Request) => {
     );
 
     const result = await fcmRes.json();
-    return new Response(JSON.stringify(result), {
-      status: fcmRes.status,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return json(result, fcmRes.status);
   } catch (e) {
-    return new Response(JSON.stringify({ error: String(e) }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return json({ error: String(e) }, 500);
   }
 });

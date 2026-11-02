@@ -1,5 +1,6 @@
 // Supabase Edge Function — un dueño rechaza un pedido de SU restaurante (o
-// Admin rechaza cualquiera). Antes `dueno_screen.dart` llamaba directo a
+// Admin rechaza cualquiera, o el cliente cancela el suyo mientras siga
+// 'pending'). Antes `dueno_screen.dart` llamaba directo a
 // updateOrderStatus(id, 'cancelled') sin tocar nada del pago — hueco real
 // confirmado en esta sesión: un pedido pagado con tarjeta que el dueño
 // rechazaba se quedaba cobrado para siempre, el cliente nunca recibía su
@@ -73,7 +74,7 @@ Deno.serve(async (req) => {
 
     const { data: order, error: orderError } = await admin
       .from('orders')
-      .select('id, restaurant_id, status, payment_status, stripe_payment_intent_id, total')
+      .select('id, restaurant_id, customer_id, status, payment_status, stripe_payment_intent_id, total')
       .eq('id', orderId)
       .maybeSingle()
     if (orderError || !order) {
@@ -91,7 +92,18 @@ Deno.serve(async (req) => {
     const appMeta = (user.app_metadata ?? {}) as Record<string, unknown>
     const isOwnerOfThisRestaurant =
       appMeta.role === 'dueno' && appMeta.restaurant_id === order.restaurant_id
-    if (!isAdmin && !isOwnerOfThisRestaurant) {
+    // El cliente también puede cancelar SU pedido, pero solo mientras el
+    // restaurante no lo haya confirmado (status 'pending') — mismo límite que
+    // promete el Aviso de Términos. Antes usaba cancel_my_order(uuid), que
+    // nunca funcionó (los ids de pedido son texto) y no reembolsaba.
+    const isCustomer = order.customer_id === user.id
+    if (!isAdmin && !isOwnerOfThisRestaurant && isCustomer && order.status !== 'pending') {
+      return new Response(JSON.stringify({ error: 'Tu pedido ya está siendo preparado, ya no se puede cancelar.' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+    if (!isAdmin && !isOwnerOfThisRestaurant && !isCustomer) {
       return new Response(JSON.stringify({ error: 'No autorizado' }), {
         status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -144,6 +156,9 @@ Deno.serve(async (req) => {
       headers: {
         Authorization: `Bearer ${stripeSecretKey}`,
         'Content-Type': 'application/x-www-form-urlencoded',
+        // Un reintento (p. ej. tras un timeout) regresa el mismo reembolso
+        // en vez de reembolsar dos veces.
+        'Idempotency-Key': `gogo-refund-${order.id}`,
       },
       body: new URLSearchParams({
         payment_intent: order.stripe_payment_intent_id,
