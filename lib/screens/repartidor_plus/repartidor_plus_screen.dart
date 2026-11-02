@@ -19,6 +19,7 @@ import '../../repositories/rider_withdrawal_repository.dart';
 import '../../services/auth_service.dart';
 import '../../services/location_service.dart';
 import '../../services/supabase_service.dart';
+import '../../widgets/gogo_rider_3d.dart';
 import 'entrega_activa_screen.dart';
 
 // La tienda de coins ya no vive dentro de la app — el repartidor la usa
@@ -1093,16 +1094,13 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
                   ),
                   const SizedBox(height: 12),
                   if (_pedidosPendientes.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 24),
-                      child: Center(
-                        child: SizedBox(
-                          width: 18, height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white24,
-                          ),
-                        ),
-                      ),
+                    // Mientras no hay pedidos, la moto GOGO en 3D girando
+                    // (antes solo una ruedita de carga). En web el panel de
+                    // repartidor ni se muestra, así que no hace falta otro
+                    // camino para kIsWeb.
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: GogoRider3D(height: 240),
                     )
                   else
                     // Un pedido de 2 restaurantes llega aquí como 2 filas —

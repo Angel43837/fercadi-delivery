@@ -39,6 +39,8 @@ dependencies:
   phone_form_field: ^3.0.1
   pinput: ^6.0.2
   sign_in_with_apple: ^6.1.4
+  # Moto 3D de GOGO (assets/models/gogo_rider.glb) en la pantalla del repartidor
+  model_viewer_plus: ^1.10.0
 
 dev_dependencies:
   flutter_test:
@@ -59,6 +61,7 @@ flutter:
 
   assets:
     - assets/images/
+    - assets/models/
 
   fonts:
     - family: Baloo2

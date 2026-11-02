@@ -29,6 +29,7 @@ import '../../providers/theme_provider.dart';
 import '../../services/location_service.dart';
 import '../../services/notification_service.dart';
 import '../../services/supabase_service.dart';
+import '../../widgets/gogo_rider_3d.dart';
 import '../../services/auth_service.dart';
 import '../chat_screen.dart';
 import '../rating_dialog.dart';
@@ -926,9 +927,9 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
           SliverFillRemaining(
             child: Center(
               child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                Icon(Icons.delivery_dining,
-                    size: 80, color: Colors.white.withValues(alpha: 0.2)),
-                const SizedBox(height: 16),
+                // Moto GOGO en 3D (antes un ícono plano de Material).
+                const GogoRider3D(height: 220),
+                const SizedBox(height: 8),
                 Text('No hay pedidos por ahora',
                     style: TextStyle(
                         color: Colors.white.withValues(alpha: 0.5), fontSize: 15)),
