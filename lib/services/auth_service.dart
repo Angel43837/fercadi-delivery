@@ -520,6 +520,13 @@ class AuthService {
 
   // ── ID del restaurante del dueño ─────────────────────────────────────────────
 
+  // Antes, si no había restaurant_id en el JWT ni en SharedPreferences, caía
+  // en un '1' fijo — cualquier dueño nuevo cuya sesión no hubiera
+  // sincronizado todavía terminaba viendo y administrando el restaurante de
+  // OTRO dueño (confirmado en Pruebas: varias cuentas distintas entrando al
+  // mismo restaurante). Ahora, si falta en el JWT/caché local, se busca de
+  // verdad por restaurants.owner_id — y si tampoco existe ahí, se avisa con
+  // un error claro en vez de adivinar.
   static Future<String> getRestaurantId() async {
     final user = Supabase.instance.client.auth.currentUser;
     if (user != null) {
@@ -527,7 +534,25 @@ class AuthService {
       if (id != null && id.isNotEmpty) return id;
     }
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_keyRestaurantId) ?? '1';
+    final cached = prefs.getString(_keyRestaurantId);
+    if (cached != null && cached.isNotEmpty) return cached;
+
+    if (user != null) {
+      final row = await Supabase.instance.client
+          .from('restaurants')
+          .select('id')
+          .eq('owner_id', user.id)
+          .limit(1)
+          .maybeSingle();
+      final foundId = row?['id'] as String?;
+      if (foundId != null && foundId.isNotEmpty) {
+        await saveRestaurantId(foundId);
+        return foundId;
+      }
+    }
+    throw Exception(
+      'No se encontró el restaurante de esta cuenta. Contacta a soporte para resolverlo.',
+    );
   }
 
   static Future<void> saveRestaurantId(String id) async {

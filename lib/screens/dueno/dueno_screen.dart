@@ -117,7 +117,8 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
   final Set<String> _rejectingIds = {};
 
   // ID del restaurante de este dueño
-  String _restaurantId = '1';
+  String _restaurantId = '';
+  String? _restaurantIdError;
   bool   _isPremium    = false;
   // _initRestaurant() todavía no ha hecho su primera consulta real de
   // is_premium cuando esto es false — sin este candado, _checkPremiumActivated
@@ -248,7 +249,14 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _initRestaurant() async {
-    _restaurantId = await AuthService.getRestaurantId();
+    try {
+      _restaurantId = await AuthService.getRestaurantId();
+    } catch (e) {
+      if (mounted) {
+        setState(() => _restaurantIdError = e.toString().replaceFirst('Exception: ', ''));
+      }
+      return;
+    }
     if (!SupabaseService.useMock) {
       final seenClosedGate = await AuthService.hasSeenDuenoOnboarding('closed_gate', _restaurantId);
       final seenMenuTutorial = await AuthService.hasSeenDuenoOnboarding('menu_tutorial', _restaurantId);
@@ -473,6 +481,32 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    if (_restaurantIdError != null) {
+      return Scaffold(
+        backgroundColor: _bg,
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.error_outline, color: Colors.white, size: 48),
+              const SizedBox(height: 16),
+              Text(_restaurantIdError!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white, fontSize: 15)),
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: () async {
+                  await AuthService.clearDuenoSession();
+                  if (mounted) context.go(kIsWeb ? '/restaurante' : '/login');
+                },
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                child: const Text('Cerrar sesión', style: TextStyle(color: Colors.white)),
+              ),
+            ]),
+          ),
+        ),
+      );
+    }
     if (!SupabaseService.useMock && !_approvalLoaded) {
       return Scaffold(
         backgroundColor: _bg,
