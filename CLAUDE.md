@@ -634,3 +634,10 @@ Aplicadas y verificadas en Pruebas (`ymztoayxzewghbethahv`) el 2 nov 2026.
 - Edge Functions: `restaurant-call-rider` y `restaurant-payment-method` usan `owns_restaurant` (antes `user_metadata`: cualquiera cobraba a la tarjeta de otro restaurante); `process-order-refund` reembolsa solo el total de ESE pedido con llave de idempotencia; `rider-call-expire-check` exige ser dueño con `callId`, cancela antes de reembolsar y no marca "reembolsado" si Stripe falló.
 
 **Bug conocido sin arreglar:** `rating_dialog.dart` llama a la Edge Function `create-tip-payment-intent`, que no existe — si el cliente elige propina, el cobro falla y su calificación no se guarda.
+
+## Moto 3D de GOGO (repartidor) — nov 2026
+
+`assets/models/gogo_rider.glb` (~1 MB, formato glTF binario) — repartidor en moto construido en Blender con primitivas, a partir de la ilustración oficial. Se muestra con `GogoRider3D` (`lib/widgets/gogo_rider_3d.dart`, paquete `model_viewer_plus`) en el estado vacío de `repartidor_plus_screen.dart` ("Esperando pedidos...") y `repartidor_screen.dart` ("No hay pedidos por ahora"): gira solo y se puede girar con el dedo.
+
+- Fuente: `documentos/modelos_3d/gogo_rider.py` (script de Blender) y `gogo_rider.blend`. Para regenerar: `blender --background --factory-startup --python documentos/modelos_3d/gogo_rider.py -- <carpeta_salida>` → copia el `.glb` resultante a `assets/models/`.
+- Android: `model_viewer_plus` sirve el modelo por HTTP local → `res/xml/network_security_config.xml` permite texto plano SOLO para localhost/127.0.0.1 (no usar `usesCleartextTraffic="true"`, que lo abre para todo). iOS: `io.flutter.embedded_views_preview` en `Info.plist`/`Info-Pruebas.plist`.

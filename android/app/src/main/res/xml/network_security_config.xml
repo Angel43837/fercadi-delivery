@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- model_viewer_plus sirve el modelo 3D (assets/models/gogo_rider.glb)
+     desde un servidor local dentro de la app — Android 9+ bloquea HTTP sin
+     cifrar, así que se permite SOLO para localhost. Todo lo demás sigue
+     exigiendo HTTPS (a diferencia de usesCleartextTraffic="true", que lo
+     abriría para todos los dominios). -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>
