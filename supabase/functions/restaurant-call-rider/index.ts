@@ -48,9 +48,12 @@ Deno.serve(async (req) => {
       })
     }
 
-    const ownRestaurantId = (user.app_metadata as Record<string, unknown> | null)?.restaurant_id
-      ?? (user.user_metadata as Record<string, unknown> | null)?.restaurant_id
-    if (ownRestaurantId !== restaurantId) {
+    // owns_restaurant() (app_metadata o restaurants.owner_id) — antes se
+    // aceptaba user_metadata.restaurant_id, que cualquier usuario edita con
+    // auth.updateUser: bastaba ponerse el id de otro restaurante para
+    // cobrarle a SU tarjeta guardada en bucle.
+    const { data: owns } = await userClient.rpc('owns_restaurant', { p_restaurant_id: restaurantId })
+    if (owns !== true) {
       return new Response(JSON.stringify({ error: 'No autorizado para este restaurante' }), {
         status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -146,6 +149,7 @@ Deno.serve(async (req) => {
         headers: {
           Authorization: `Bearer ${stripeSecretKey}`,
           'Content-Type': 'application/x-www-form-urlencoded',
+          'Idempotency-Key': `rider-call-refund-pi-${pi.id}`,
         },
         body: new URLSearchParams({ payment_intent: pi.id }),
       })

@@ -622,3 +622,15 @@ Antes el celular calculaba total/envío/descuento/precios, los insertaba directo
 Desplegar también: la migración 3 + `rider-withdrawal-transfer`, `restaurant-withdrawal-transfer`, `create-premium-checkout`, `admin-user-lookup`.
 
 Pendiente (no hecho): políticas de Storage abiertas (se ponen a mano en el dashboard); el % de banner se sigue mostrando tachado aunque no se aplica; `main_flota.dart`/`flota_login_screen.dart` aceptan `user_metadata.role` (solo UI — RLS ya lo bloquea).
+
+### Storage, likes, calificaciones y funciones de oct 2026 (migraciones `20261102030000` y `20261102040000`)
+
+Aplicadas y verificadas en Pruebas (`ymztoayxzewghbethahv`) el 2 nov 2026.
+
+- **Storage**: `product-images`, `profile-photos` y `rider-avatars` tenían "acceso total" para `public` (cualquiera, sin sesión, podía borrar o reemplazar cualquier imagen). La lectura sigue pública; escribir/borrar solo el dueño del archivo según su nombre (`storage_can_write()`: `profile_<uid>`, `profile_restaurant_<rid>`, `profile_banner_<rid>_…`, `avatars/<uid>`, `<rid>_…` en product-images; jefe de flota para fotos de sus riders; admin todo). Sí se puede por SQL (rol `postgres`), ya no hace falta el dashboard.
+- Likes: se borraron `write_*_likes` (dejaban editar likes ajenos). Calificaciones: solo el cliente o el repartidor del pedido.
+- `rider_calls` y `order_refund_requests` ya no aceptan INSERT directo (solo Edge Function / RPC). `legal_acceptances.accepted_at` lo pone el servidor.
+- Llaves a `auth.users` sin `ON DELETE` → `SET NULL` (borrar cuenta tronaba). `delete_my_account` bloquea si hay pedidos/entregas/llamadas en curso.
+- Edge Functions: `restaurant-call-rider` y `restaurant-payment-method` usan `owns_restaurant` (antes `user_metadata`: cualquiera cobraba a la tarjeta de otro restaurante); `process-order-refund` reembolsa solo el total de ESE pedido con llave de idempotencia; `rider-call-expire-check` exige ser dueño con `callId`, cancela antes de reembolsar y no marca "reembolsado" si Stripe falló.
+
+**Bug conocido sin arreglar:** `rating_dialog.dart` llama a la Edge Function `create-tip-payment-intent`, que no existe — si el cliente elige propina, el cobro falla y su calificación no se guarda.

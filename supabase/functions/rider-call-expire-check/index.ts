@@ -8,8 +8,9 @@
 // cuanto alguien vuelva a abrir una.
 //
 // Deploy: supabase functions deploy rider-call-expire-check
-// (SIN --no-verify-jwt: la llama cualquier usuario ya logueado, pero solo
-// actúa sobre filas que de verdad ya vencieron, nunca sobre las de otros)
+// (SIN --no-verify-jwt: la llama cualquier usuario ya logueado; sin callId
+// solo actúa sobre llamadas ya vencidas, con callId solo el dueño de ese
+// restaurante)
 //
 // body: {} — procesa todo lo vencido (3h)
 //     | { callId } — reembolsa ESA llamada específica ya mismo, sin
@@ -20,6 +21,13 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  })
 }
 
 Deno.serve(async (req) => {
@@ -51,48 +59,71 @@ Deno.serve(async (req) => {
     let callId: string | undefined
     try { ({ callId } = await req.json()) } catch (_) { /* body vacío, modo normal */ }
 
-    let expired: { id: string; payment_intent_id: string | null }[] | null
+    // 1. Primero se CANCELA (update condicional status='pendiente') y solo
+    // después se reembolsa: así un rider ya no puede aceptar una llamada
+    // cuyo dinero se está devolviendo (antes el update no tenía condición y
+    // una llamada recién aceptada quedaba 'cancelado' con el rider sin
+    // cobrar).
     if (callId) {
-      const { data } = await admin
+      // Con callId solo el restaurante dueño de esa llamada (o Admin) —
+      // antes cualquier usuario podía cancelar y reembolsar llamadas ajenas.
+      const { data: call } = await admin
         .from('rider_calls')
-        .select('id, payment_intent_id')
+        .select('restaurant_id')
+        .eq('id', callId)
+        .maybeSingle()
+      if (!call) return json({ refunded: 0 })
+      const { data: owns } = await userClient.rpc('owns_restaurant', { p_restaurant_id: call.restaurant_id })
+      if (owns !== true) return json({ error: 'No autorizado' }, 403)
+      await admin.from('rider_calls')
+        .update({ status: 'cancelado' })
         .eq('id', callId)
         .eq('status', 'pendiente')
         .eq('payment_status', 'cobrado')
-        .limit(1)
-      expired = data
     } else {
       const cutoff = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
-      const { data } = await admin
-        .from('rider_calls')
-        .select('id, payment_intent_id')
+      await admin.from('rider_calls')
+        .update({ status: 'cancelado' })
         .eq('status', 'pendiente')
         .eq('payment_status', 'cobrado')
         .lt('created_at', cutoff)
-        .limit(25)
-      expired = data
     }
 
+    // 2. Reembolsa todo lo cancelado que siga cobrado — incluye los que
+    // fallaron en una pasada anterior (antes se marcaba 'reembolsado'
+    // aunque Stripe hubiera rechazado el reembolso).
+    let pendingQuery = admin
+      .from('rider_calls')
+      .select('id, payment_intent_id')
+      .eq('status', 'cancelado')
+      .eq('payment_status', 'cobrado')
+      .limit(25)
+    if (callId) pendingQuery = pendingQuery.eq('id', callId)
+    const { data: toRefund } = await pendingQuery
+
     let refunded = 0
-    for (const call of expired ?? []) {
+    for (const call of toRefund ?? []) {
+      if (!stripeSecretKey || !call.payment_intent_id) continue
       try {
-        if (stripeSecretKey && call.payment_intent_id) {
-          await fetch('https://api.stripe.com/v1/refunds', {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${stripeSecretKey}`,
-              'Content-Type': 'application/x-www-form-urlencoded',
-            },
-            body: new URLSearchParams({ payment_intent: call.payment_intent_id }),
-          })
-        }
+        const refundRes = await fetch('https://api.stripe.com/v1/refunds', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${stripeSecretKey}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+            // Una misma llamada nunca se reembolsa dos veces, aunque esta
+            // función corra en paralelo desde varias apps.
+            'Idempotency-Key': `rider-call-refund-${call.id}`,
+          },
+          body: new URLSearchParams({ payment_intent: call.payment_intent_id }),
+        })
+        const refund = await refundRes.json()
+        if (!refundRes.ok || refund.status === 'failed') continue
         await admin.from('rider_calls')
-          .update({ status: 'cancelado', payment_status: 'reembolsado' })
+          .update({ payment_status: 'reembolsado' })
           .eq('id', call.id)
         refunded++
       } catch (_) {
-        // Sigue con las demás aunque una falle — se reintenta sola la
-        // próxima vez que alguien vuelva a llamar a esta función.
+        // Sigue con las demás — se reintenta sola la próxima vez.
       }
     }
 
