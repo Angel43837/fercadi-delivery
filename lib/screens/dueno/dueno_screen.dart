@@ -661,21 +661,34 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(
                 _restName.isNotEmpty ? _restName : 'Mi Restaurante',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(color: _text, fontWeight: FontWeight.bold, fontSize: 16)),
               Text('Panel del restaurante',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: _textMid, fontSize: 12)),
             ]),
           ),
+          // Botones compactos a propósito — con 4 (antes 3) ya no cabían con
+          // su padding normal de IconButton (~48px cada uno) sin apachurrar
+          // el nombre del restaurante hasta partirlo letra por letra.
           IconButton(
             icon: Icon(Icons.headset_mic_outlined, color: _textMid, size: 20),
             tooltip: 'Soporte',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
             onPressed: () => context.push('/soporte'),
           ),
+          const SizedBox(width: 10),
           IconButton(
             icon: Icon(Icons.account_balance_wallet_outlined, color: _textMid, size: 20),
             tooltip: 'Retiros',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
             onPressed: _showRetiros,
           ),
+          const SizedBox(width: 10),
           IconButton(
             icon: Icon(
               _isDark ? Icons.wb_sunny_rounded : Icons.nightlight_round,
@@ -683,11 +696,16 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
               size: 22,
             ),
             tooltip: _isDark ? 'Modo claro' : 'Modo oscuro',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
             onPressed: () => setState(() => _isDark = !_isDark),
           ),
+          const SizedBox(width: 10),
           IconButton(
             icon: Icon(Icons.logout, color: _textMid, size: 20),
             tooltip: 'Cerrar sesión',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
             onPressed: () async {
               await AuthService.clearDuenoSession();
               if (!mounted) return;
@@ -697,6 +715,7 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
               context.go(kIsWeb ? '/restaurante' : '/login');
             },
           ),
+          const SizedBox(width: 8),
           GestureDetector(
             onTap: () => appData.setRestaurantOpen(_restaurantId, !isOpen),
             child: AnimatedContainer(

@@ -1134,14 +1134,9 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
             const Spacer(),
             GestureDetector(
               onTap: () => context.push('/soporte'),
-              child: Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(Icons.headset_mic_outlined,
-                    color: Colors.white70, size: 18),
+              child: const Padding(
+                padding: EdgeInsets.all(6),
+                child: Icon(Icons.headset_mic_outlined, color: Colors.white, size: 20),
               ),
             ),
             const SizedBox(width: 6),
