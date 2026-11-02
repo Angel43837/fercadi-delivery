@@ -17,6 +17,14 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+// La URL de regreso de Stripe solo puede ser del sitio oficial — antes se
+// aceptaba cualquiera del body (redirección abierta: después de guardar su
+// tarjeta, el dueño podía terminar en un sitio ajeno).
+const ALLOWED_RETURN_ORIGIN = 'https://pagina-web-gogo-rho.vercel.app/'
+function safeReturnUrl(url: unknown, fallback: string): string {
+  return typeof url === 'string' && url.startsWith(ALLOWED_RETURN_ORIGIN) ? url : fallback
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -46,9 +54,12 @@ Deno.serve(async (req) => {
       })
     }
 
-    const ownRestaurantId = (user.app_metadata as Record<string, unknown> | null)?.restaurant_id
-      ?? (user.user_metadata as Record<string, unknown> | null)?.restaurant_id
-    if (ownRestaurantId !== restaurantId) {
+    // owns_restaurant() (app_metadata o restaurants.owner_id) — antes se
+    // aceptaba user_metadata.restaurant_id, que cualquier usuario edita:
+    // bastaba ponerse el id de otro restaurante para ver su tarjeta o
+    // agregarle una.
+    const { data: owns } = await userClient.rpc('owns_restaurant', { p_restaurant_id: restaurantId })
+    if (owns !== true) {
       return new Response(JSON.stringify({ error: 'No autorizado para este restaurante' }), {
         status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -122,8 +133,8 @@ Deno.serve(async (req) => {
       const body = new URLSearchParams({
         mode: 'setup',
         customer: customerId!,
-        success_url: successUrl ?? 'https://pagina-web-gogo-rho.vercel.app/pago-confirmado',
-        cancel_url: cancelUrl ?? 'https://pagina-web-gogo-rho.vercel.app/?pago=cancelado',
+        success_url: safeReturnUrl(successUrl, 'https://pagina-web-gogo-rho.vercel.app/pago-confirmado'),
+        cancel_url: safeReturnUrl(cancelUrl, 'https://pagina-web-gogo-rho.vercel.app/?pago=cancelado'),
         'payment_method_types[0]': 'card',
       })
       const sessionRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {

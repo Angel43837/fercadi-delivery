@@ -107,7 +107,7 @@ Deno.serve(async (req) => {
     // se confía en nada que mande el body sobre el pago.
     const { data: order, error: orderError } = await admin
       .from('orders')
-      .select('id, stripe_payment_intent_id, payment_status')
+      .select('id, stripe_payment_intent_id, payment_status, total')
       .eq('id', reqRow.order_id)
       .maybeSingle()
     if (orderError || !order) {
@@ -138,8 +138,18 @@ Deno.serve(async (req) => {
       headers: {
         Authorization: `Bearer ${stripeSecretKey}`,
         'Content-Type': 'application/x-www-form-urlencoded',
+        // Misma llave que reject-order: un pedido nunca se reembolsa dos
+        // veces, venga de donde venga.
+        'Idempotency-Key': `gogo-refund-${order.id}`,
       },
-      body: new URLSearchParams({ payment_intent: order.stripe_payment_intent_id }),
+      // SOLO el total de ESTE pedido — antes se reembolsaba el PaymentIntent
+      // completo, que en un pedido de 2 restaurantes también cubre la pierna
+      // hermana (que sigue 'paid' y se le sigue pagando a su restaurante y
+      // repartidor).
+      body: new URLSearchParams({
+        payment_intent: order.stripe_payment_intent_id,
+        amount: String(Math.round(Number(order.total) * 100)),
+      }),
     })
     const refund = await refundRes.json()
 
