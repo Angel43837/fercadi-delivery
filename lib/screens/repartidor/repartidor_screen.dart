@@ -1309,6 +1309,11 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
               if (_routePoints.isNotEmpty)
                 PolylineLayer(
                   polylines: [
+                    // Resplandor: varias líneas iguales, cada vez más anchas
+                    // y transparentes, apiladas detrás de la línea nítida.
+                    Polyline(points: _routePoints, strokeWidth: 22.0, color: _routeColor.withValues(alpha: 0.08)),
+                    Polyline(points: _routePoints, strokeWidth: 14.0, color: _routeColor.withValues(alpha: 0.18)),
+                    Polyline(points: _routePoints, strokeWidth: 9.0, color: _routeColor.withValues(alpha: 0.35)),
                     Polyline(
                       points: _routePoints,
                       strokeWidth: 5.0,

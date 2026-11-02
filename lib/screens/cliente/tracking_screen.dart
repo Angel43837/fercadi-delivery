@@ -512,8 +512,15 @@ class _TrackingScreenState extends State<TrackingScreen> {
             // repartidor → cliente (paso 2). Se recalcula al cambiar de
             // tramo (_fetchRoute en _pollStatus); no se muestra ya
             // entregado/cancelado.
+            // Resplandor del camino: varias líneas iguales, cada vez más
+            // anchas y transparentes, apiladas detrás de la línea nítida de
+            // siempre — flutter_map no tiene un "glow" nativo (sin
+            // box-shadow/blur como en CSS), así que se simula apilando.
             if (_routePoints.isNotEmpty && _step >= 1 && _step < 3)
               PolylineLayer(polylines: [
+                Polyline(points: _routePoints, strokeWidth: 22.0, color: const Color(0xFF2196F3).withValues(alpha: 0.08)),
+                Polyline(points: _routePoints, strokeWidth: 14.0, color: const Color(0xFF2196F3).withValues(alpha: 0.18)),
+                Polyline(points: _routePoints, strokeWidth: 9.0, color: const Color(0xFF2196F3).withValues(alpha: 0.35)),
                 Polyline(
                   points: _routePoints,
                   strokeWidth: 5.0,
