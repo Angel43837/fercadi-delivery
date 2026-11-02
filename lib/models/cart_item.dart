@@ -15,10 +15,14 @@ class CartItem {
     this.notes = '',
   });
 
-  // product.promoPrice (no product.price): si el producto tiene un
-  // descuento activo (promo_discount_percent + promo_expires_at vigente),
-  // antes se mostraba la insignia de descuento pero se cobraba el precio
-  // completo igual — el carrito nunca aplicaba el precio con descuento en
-  // ningún lado.
-  double get total => product.promoPrice * quantity;
+  // Precio unitario que de verdad se cobra: el de la promo por platillo si
+  // sigue vigente (el mismo que se muestra tachado en la lista). Mismo
+  // cálculo que place_order() en el servidor, que es quien decide el monto.
+  double get unitPrice => product.promoPrice;
+
+  // Con 2x1 vigente se paga la mitad redondeada hacia arriba.
+  int get paidQuantity =>
+      product.isPromoActive && product.promoIs2x1 ? quantity - quantity ~/ 2 : quantity;
+
+  double get total => unitPrice * paidQuantity;
 }

@@ -603,7 +603,12 @@ class _RetiroDetailSheetState extends State<_RetiroDetailSheet> {
         ];
       case WithdrawalStatus.enProceso:
         return [
-          AdminPrimaryButton(label: 'Marcar como completado', onPressed: () => run(widget.onComplete)),
+          // Si Stripe falló la primera vez (o el registro bancario no
+          // estaba listo), el retiro se queda aquí — antes ya no había forma
+          // de reintentar el pago por Stripe.
+          AdminPrimaryButton(label: 'Reintentar pago por Stripe', onPressed: () => run(widget.onApprove)),
+          const SizedBox(height: 10),
+          _actionButton('Marcar como completado', AdminColors.textSecondary, () => run(widget.onComplete)),
           const SizedBox(height: 10),
           _actionButton('Rechazar', AdminColors.statusCancelled, () => run(widget.onReject), filled: true),
           const SizedBox(height: 10),

@@ -11,7 +11,6 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/constants.dart';
 import '../../services/location_service.dart';
@@ -310,9 +309,36 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
     } catch (_) {}
   }
 
+  // Evita el doble toque: mientras el primer toque sigue en su await, un
+  // segundo caía en la rama de "entregado" y saltaba el paso "en camino".
+  bool _avanzando = false;
+
   Future<void> _avanzarStep() async {
+    if (_avanzando) return;
+    setState(() => _avanzando = true);
+    try {
+      await _avanzarStepInner();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo actualizar el pedido. Intenta de nuevo.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _avanzando = false);
+    }
+  }
+
+  Future<void> _avanzarStepInner() async {
     final finalizeIndex = _finalizeIndex;
     if (_step < finalizeIndex) {
+      if (_step + 1 == finalizeIndex) {
+        // Primero el servidor, después la UI — si falla, el paso no avanza.
+        await SupabaseService.updateOrderStatus(widget.orderId, 'delivering');
+        if (widget.secondOrderId != null) {
+          await SupabaseService.updateOrderStatus(widget.secondOrderId!, 'delivering');
+        }
+      }
       setState(() => _step++);
       // Pedido de 2 restaurantes: pasar de "recoge en A" a "ve a B" también
       // necesita ruta nueva (destino cambia de restaurante), aunque todavía
@@ -326,10 +352,6 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
         _fetchRoute(from, dest, color: _colorForStep(_step));
       }
       if (_step == finalizeIndex) {
-        await SupabaseService.updateOrderStatus(widget.orderId, 'delivering');
-        if (widget.secondOrderId != null) {
-          await SupabaseService.updateOrderStatus(widget.secondOrderId!, 'delivering');
-        }
         _broadcastTimer = Timer.periodic(const Duration(seconds: 5), (_) {
           if (_myPos != null) {
             SupabaseService.broadcastLocation(_myPos!.latitude, _myPos!.longitude);
@@ -343,29 +365,17 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
         _fetchRoute(from, clientPos, color: const Color(0xFF2196F3));
       }
     } else {
-      _broadcastTimer?.cancel();
       await SupabaseService.updateOrderStatus(widget.orderId, 'delivered');
       if (widget.secondOrderId != null) {
         await SupabaseService.updateOrderStatus(widget.secondOrderId!, 'delivered');
       }
+      _broadcastTimer?.cancel();
       SupabaseService.stopLocationBroadcast();
-      // Coins/repartos/dinero se dan aquí, al completar de verdad la
-      // entrega — antes se daban desde que el rider le daba "Aceptar", así
-      // que se los quedaba aunque después cancelara y nunca entregara.
-      // También se bajó el monto de coins (era 500 por pedido, demasiado
-      // considerando que la tienda de premios ni precios tiene definidos
-      // todavía). Con 2 restaurantes, dineroAdd/notificación usan el total
-      // COMBINADO (las 2 piernas) — es un solo viaje desde la perspectiva
-      // del rider.
-      final uid = Supabase.instance.client.auth.currentUser?.id;
-      if (uid != null) {
-        await SupabaseService.incrementRiderStats(
-          uid,
-          coinsAdd:    100,
-          repartosAdd: 1,
-          dineroAdd:   widget.combinedTotal,
-        );
-      }
+      // Coins/repartos/dinero los suma el servidor al pasar a 'delivered'
+      // (trigger trg_add_rider_stats_on_delivery: un solo reparto por viaje
+      // aunque sean 2 restaurantes, dinero = total combinado) — antes los
+      // mandaba la app con el monto que quisiera, y un doble toque los
+      // duplicaba.
       NotificationService.entregaCompletada(widget.combinedTotal * 0.15);
       if (!mounted) return;
       await showRatingDialog(context, orderId: widget.orderId, isDriver: true);
@@ -805,7 +815,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
-                        onPressed: _avanzarStep,
+                        onPressed: _avanzando ? null : _avanzarStep,
                         icon: const Icon(Icons.check, size: 20),
                         label: Text(stepActions[_step],
                             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),

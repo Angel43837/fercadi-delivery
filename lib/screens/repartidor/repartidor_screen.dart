@@ -648,22 +648,20 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         : order.restaurantPos;
     _fetchRoute(from, order.restaurantPos, color: const Color(0xFFFFB300));
 
-    if (!order.isGrouped) {
-      SupabaseService.updateOrderStatus(order.id, 'accepted').then((_) => _loadCustomerProfile(order));
-      SupabaseService.startLocationBroadcast(order.id);
-      return;
-    }
-
+    // Reclama con claim_group_order también el pedido de un solo
+    // restaurante — antes ese caso hacía un update "a ciegas" sin esperar
+    // respuesta: si otro repartidor lo tomó primero, la pantalla se quedaba
+    // con un pedido que no era suyo y transmitía su GPS sobre él.
     // Pedido de 2 restaurantes: reclama AMBAS piernas en una sola
-    // transacción (claim_group_order) — si entre que se cargó la lista y
-    // este tap otro repartidor ya se adelantó con una de las 2, se sigue
-    // solo con la que sí se logró reclamar (nunca es un error, mientras se
-    // haya reclamado al menos una).
+    // transacción — si entre que se cargó la lista y este tap otro
+    // repartidor ya se adelantó con una de las 2, se sigue solo con la que
+    // sí se logró reclamar (nunca es un error, mientras se haya reclamado al
+    // menos una).
     try {
       final claimed = await SupabaseService.claimGroupOrder(order.id);
       if (!mounted || _activeOrder?.id != order.id) return;
       _Order effective = order;
-      if (claimed.length < 2) {
+      if (order.isGrouped && claimed.length < 2) {
         final gotFirst = claimed.contains(order.id);
         effective = gotFirst ? order.firstLegSolo : order.secondLegSolo;
         setState(() {
@@ -751,10 +749,40 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     try { _mapCtrl.move(_geocodedCustomerPos!, 15.0); } catch (_) {}
   }
 
+  // Evita el doble toque: un segundo toque durante el await saltaba el paso
+  // "en camino" y marcaba el pedido como entregado.
+  bool _avanzando = false;
+
   Future<void> _avanzarStep() async {
+    if (_avanzando) return;
+    setState(() => _avanzando = true);
+    try {
+      await _avanzarStepInner();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo actualizar el pedido. Intenta de nuevo.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _avanzando = false);
+    }
+  }
+
+  Future<void> _avanzarStepInner() async {
     final order = _activeOrder!;
     final finalizeIndex = _finalizeIndexFor(order);
     if (_step < finalizeIndex) {
+      if (_step + 1 == finalizeIndex) {
+        // Pedido de 1 o 2 restaurantes: a partir de aquí se considera
+        // "delivering" para TODAS sus piernas (cada fila de "orders" avanza
+        // su propio status, pero desde la perspectiva del rider es un solo
+        // viaje continuo). Primero el servidor, después la UI.
+        await SupabaseService.updateOrderStatus(order.id, 'delivering');
+        if (order.secondOrderId != null) {
+          await SupabaseService.updateOrderStatus(order.secondOrderId!, 'delivering');
+        }
+      }
       setState(() => _step++);
       // En un pedido de 2 restaurantes, pasar de "recoge en A" a "ve a B"
       // (step 1→2) también necesita una ruta nueva (destino cambia de
@@ -770,14 +798,6 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         _fetchRoute(from, dest, color: color);
       }
       if (_step == finalizeIndex) {
-        // Pedido de 1 o 2 restaurantes: a partir de aquí se considera
-        // "delivering" para TODAS sus piernas (cada fila de "orders" avanza
-        // su propio status, pero desde la perspectiva del rider es un solo
-        // viaje continuo).
-        SupabaseService.updateOrderStatus(order.id, 'delivering');
-        if (order.secondOrderId != null) {
-          SupabaseService.updateOrderStatus(order.secondOrderId!, 'delivering');
-        }
         _broadcastTimer = Timer.periodic(const Duration(seconds: 5), (_) {
           if (_myPos != null) {
             SupabaseService.broadcastLocation(_myPos!.latitude, _myPos!.longitude);
@@ -791,14 +811,14 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         _fetchRoute(from, clientPos, color: const Color(0xFF2196F3));
       }
     } else {
-      _broadcastTimer?.cancel();
-      _broadcastTimer = null;
       final orderId = order.id;
       final ganancia = order.combinedTotal * 0.15;
-      SupabaseService.updateOrderStatus(orderId, 'delivered');
+      await SupabaseService.updateOrderStatus(orderId, 'delivered');
       if (order.secondOrderId != null) {
-        SupabaseService.updateOrderStatus(order.secondOrderId!, 'delivered');
+        await SupabaseService.updateOrderStatus(order.secondOrderId!, 'delivered');
       }
+      _broadcastTimer?.cancel();
+      _broadcastTimer = null;
       SupabaseService.stopLocationBroadcast();
       NotificationService.entregaCompletada(ganancia);
       setState(() {
@@ -1549,7 +1569,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: _avanzarStep,
+                onPressed: _avanzando ? null : _avanzarStep,
                 icon: Icon(_step == steps.length - 1 ? Icons.arrow_forward : Icons.check, size: 20),
                 label: Text(stepActions[_step],
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),

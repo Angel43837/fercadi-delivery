@@ -704,25 +704,6 @@ class SupabaseService {
     return (data as Map).cast<String, dynamic>();
   }
 
-  // Se llama justo después de que el pedido ya se creó de verdad. Si esto
-  // falla, el pedido en sí ya se completó igual — no fatal (mismo criterio
-  // que el resto de los "side effects" de esta app).
-  static Future<void> applyPromotionToOrder({
-    required String claimId,
-    required String orderId,
-    required double discountAmount,
-  }) async {
-    try {
-      await _client.rpc('apply_promotion_to_order', params: {
-        'p_claim_id': claimId,
-        'p_order_id': orderId,
-        'p_discount_amount': discountAmount,
-      });
-    } catch (e) {
-      debugPrint('applyPromotionToOrder falló (el pedido ya se creó igual): $e');
-    }
-  }
-
   // ── Promociones — administración ─────────────────────────────────────────
 
   static Future<List<Map<String, dynamic>>> adminGetPromotions() async {
@@ -1772,11 +1753,16 @@ class SupabaseService {
 
   // ── Pedidos ───────────────────────────────────────────────────────────────
 
-  // Crea un nuevo pedido en la BD y sus ítems asociados
-  // Retorna el ID del pedido generado (ej. "ord_1717800000000")
-  static Future<String> createOrder({
+  // Crea un pedido con place_order() — el servidor toma los precios de
+  // products, calcula envío y descuento de la promoción, y guarda pedido +
+  // platillos + promoción usada en una sola transacción. La app solo manda
+  // qué se pidió y a dónde; nunca montos.
+  // items: [{'product_id': ..., 'quantity': n, 'notes': ...}]
+  // Regresa {id, total, delivery_fee, discount, status}. Con tarjeta el
+  // pedido nace 'awaiting_payment' y no lo ve nadie hasta confirmar el pago
+  // (ver confirmCardPayment).
+  static Future<Map<String, dynamic>> placeOrder({
     required String restaurantId,
-    required double total,
     required String customerName,
     required String customerPhone,
     required String address,
@@ -1784,22 +1770,13 @@ class SupabaseService {
     required List<Map<String, dynamic>> items,
     double? lat,
     double? lng,
-    double deliveryFee = 0,
-    // Envío NOMINAL, antes de cualquier descuento de promoción — lo que de
-    // verdad se le paga al repartidor (ver nota en la migración
-    // 20261015000000_rider_delivery_fee.sql). Si no se manda, se usa
-    // deliveryFee tal cual (mismo valor, sin descuento que restar).
-    double? riderDeliveryFee,
-    String? clientFcmToken,
-    String? paymentStatus,
-    String? stripePaymentIntentId,
     // Comparte este mismo id entre las 2 filas de un pedido de 2
     // restaurantes (ver 20261031000000_multi_restaurant_orders.sql) — nulo
-    // para un pedido normal de un solo restaurante, que es el default para
-    // no romper a ningún llamador existente.
+    // para un pedido normal de un solo restaurante. El servidor le suma el
+    // recargo de pedido combinado a la primera pierna del grupo.
     String? groupId,
+    String? promotionClaimId,
   }) async {
-    final orderId = 'ord_${DateTime.now().millisecondsSinceEpoch}';
     final deliveryJson = jsonEncode({
       'name': customerName,
       'phone': customerPhone,
@@ -1808,27 +1785,60 @@ class SupabaseService {
       'lat': lat,
       'lng': lng,
     });
-    await _client.from('orders').insert({
-      'id': orderId,
-      'restaurant_id': restaurantId,
-      'total': total,
-      'delivery_fee': deliveryFee,
-      'rider_delivery_fee': riderDeliveryFee ?? deliveryFee,
-      'status': 'pending',
-      'customer_name': deliveryJson,
-      'customer_id': _client.auth.currentUser?.id,
-      if (paymentStatus != null) 'payment_status': paymentStatus,
-      if (stripePaymentIntentId != null)
-        'stripe_payment_intent_id': stripePaymentIntentId,
-      if (clientFcmToken != null) 'client_fcm_token': clientFcmToken,
-      if (groupId != null) 'group_id': groupId,
+    final data = await _client.rpc('place_order', params: {
+      'p_restaurant_id': restaurantId,
+      'p_items': items,
+      'p_customer_name': deliveryJson,
+      'p_lat': lat,
+      'p_lng': lng,
+      'p_payment_method': paymentMethod == 'card' ? 'card' : 'cash',
+      'p_group_id': groupId,
+      'p_promotion_claim_id': promotionClaimId,
     });
-    if (items.isNotEmpty) {
-      await _client
-          .from('order_items')
-          .insert(items.map((i) => {'order_id': orderId, ...i}).toList());
+    return (data as Map).cast<String, dynamic>();
+  }
+
+  // Cobro con tarjeta de pedidos ya creados — el monto lo pone el servidor
+  // (suma de orders.total). Regresa {clientSecret, id, amount} o {error}.
+  static Future<Map<String, dynamic>> createCardPayment(List<String> orderIds) async {
+    try {
+      final res = await _client.functions.invoke('create-payment-intent', body: {
+        'action': 'create',
+        'orderIds': orderIds,
+      });
+      return ((res.data as Map?) ?? {}).cast<String, dynamic>();
+    } on FunctionException catch (e) {
+      final details = e.details;
+      return details is Map
+          ? details.cast<String, dynamic>()
+          : {'error': 'No se pudo iniciar el pago. Intenta de nuevo.'};
     }
-    return orderId;
+  }
+
+  // Le pide al servidor que verifique con Stripe que el pago se completó; si
+  // sí, los pedidos pasan a 'pending' (visibles para el restaurante). Si
+  // esto falla por red, el webhook de Stripe hace lo mismo después.
+  static Future<bool> confirmCardPayment(List<String> orderIds) async {
+    try {
+      final res = await _client.functions.invoke('create-payment-intent', body: {
+        'action': 'confirm',
+        'orderIds': orderIds,
+      });
+      return (res.data as Map?)?['paid'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // El cliente canceló o no pudo pagar: cancela el cobro y los pedidos (el
+  // cupón de promoción se devuelve solo, ver trg_revert_promo_claim_on_cancel).
+  static Future<void> abandonCardPayment(List<String> orderIds) async {
+    try {
+      await _client.functions.invoke('create-payment-intent', body: {
+        'action': 'abandon',
+        'orderIds': orderIds,
+      });
+    } catch (_) {}
   }
 
   // Genera un uuid v4 en el celular, para ligar las 2 filas de un pedido de
@@ -1856,11 +1866,21 @@ class SupabaseService {
   // solo se canceló (efectivo, o sin pago confirmado). Propaga el mensaje
   // real del servidor si algo sale mal — nunca lo swallowea.
   static Future<bool> rejectOrder(String orderId, {String? reason}) async {
-    final res = await _client.functions.invoke('reject-order', body: {
-      'orderId': orderId,
-      if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
-    });
-    final data = res.data as Map<String, dynamic>?;
+    final Map<String, dynamic>? data;
+    try {
+      final res = await _client.functions.invoke('reject-order', body: {
+        'orderId': orderId,
+        if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+      });
+      data = (res.data as Map?)?.cast<String, dynamic>();
+    } on FunctionException catch (e) {
+      // supabase_flutter v2 lanza en cualquier respuesta no-2xx — el
+      // mensaje real del servidor viene en e.details, no en res.data.
+      final details = e.details;
+      throw Exception(details is Map && details['error'] is String
+          ? details['error']
+          : 'No se pudo cancelar el pedido.');
+    }
     if (data == null || data['ok'] != true) {
       throw Exception(data?['error'] as String? ?? 'No se pudo rechazar el pedido.');
     }
@@ -1973,6 +1993,11 @@ class SupabaseService {
     String status,
   ) async {
     if (useMock) return;
+    // Cancelar siempre por reject-order (reembolsa si estaba pagado).
+    if (status == 'cancelled') {
+      await rejectOrder(orderId);
+      return;
+    }
     await _client.from('orders').update({'status': status}).eq('id', orderId);
     await _sendFcmForStatus(orderId, status);
   }
@@ -2424,58 +2449,59 @@ class SupabaseService {
   }
 
   // El cliente cancela SU propio pedido antes de que el restaurante lo
-  // confirme — vía RPC (cancel_my_order), no un .update() directo: desde
-  // que se cerró el hueco de RLS de "orders" (ver migración
-  // 20261026010000_close_orders_update_hole.sql), un cliente ya no tiene
-  // permiso de escritura directa sobre esa tabla, a propósito.
+  // confirme — por reject-order (que solo se lo permite mientras siga
+  // 'pending', y reembolsa si se pagó con tarjeta). Antes usaba el RPC
+  // cancel_my_order(uuid), que tronaba siempre: los ids de pedido son texto
+  // ('ord_…'), no uuid — el cliente nunca podía cancelar.
   static Future<void> cancelMyOrder(String orderId) async {
-    await _client.rpc('cancel_my_order', params: {'p_order_id': orderId});
+    await rejectOrder(orderId, reason: 'Cancelado por el cliente');
   }
 
   static Future<void> updateOrderStatus(String orderId, String status) async {
     final userId = _client.auth.currentUser?.id;
     if (userId == null) throw Exception('No autenticado');
-    final updates = <String, dynamic>{'status': status};
-    if (status == 'accepted') updates['repartidor_id'] = userId;
-    await _client.from('orders').update(updates).eq('id', orderId);
+    if (status == 'cancelled') {
+      await rejectOrder(orderId);
+      return;
+    }
+    if (status == 'accepted') {
+      // Reclamar solo si sigue libre — si otro repartidor lo tomó primero
+      // no se actualiza ninguna fila (RLS ya no lo deja ver) y se avisa.
+      final rows = await _client
+          .from('orders')
+          .update({'status': status, 'repartidor_id': userId})
+          .eq('id', orderId)
+          .eq('status', 'restaurant_accepted')
+          .isFilter('repartidor_id', null)
+          .select('id');
+      if ((rows as List).isEmpty) {
+        throw Exception('El pedido ya no está disponible');
+      }
+    } else {
+      await _client.from('orders').update({'status': status}).eq('id', orderId);
+    }
     await _sendFcmForStatus(orderId, status);
   }
 
   // El repartidor cancela SU entrega ya aceptada — el pedido vuelve a
-  // 'pending' y sin repartidor asignado para que otro lo pueda tomar. No es
-  // lo mismo que cancelar el pedido del cliente (ese sigue siendo 'cancelled').
+  // 'restaurant_accepted' sin repartidor para que otro lo pueda tomar (antes
+  // volvía a 'pending', estado que ningún repartidor ve). No es lo mismo que
+  // cancelar el pedido del cliente (ese sigue siendo 'cancelled').
   static Future<void> releaseOrderFromRider(String orderId) async {
     await _client
         .from('orders')
-        .update({'status': 'pending', 'repartidor_id': null})
+        .update({'status': 'restaurant_accepted', 'repartidor_id': null})
         .eq('id', orderId);
   }
 
+  // Token del cliente y texto del aviso los pone la Edge Function según el
+  // estado real del pedido — aquí solo se dice cuál pedido cambió.
   static Future<void> _sendFcmForStatus(String orderId, String status) async {
+    if (!const {'accepted', 'delivering', 'delivered'}.contains(status)) return;
     try {
-      final data = await _client
-          .from('orders')
-          .select('client_fcm_token')
-          .eq('id', orderId)
-          .single();
-      final token = data['client_fcm_token'] as String?;
-      if (token == null || token.isEmpty) return;
-      final (title, body) = switch (status) {
-        'accepted' => (
-          '🍳 ¡Pedido aceptado!',
-          'Tu pedido está siendo preparado.',
-        ),
-        'delivering' => (
-          '🛵 ¡Repartidor en camino!',
-          'Tu pedido ya viene para acá.',
-        ),
-        'delivered' => ('✅ ¡Pedido entregado!', '¡Buen provecho!'),
-        _ => ('', ''),
-      };
-      if (title.isEmpty) return;
       await _client.functions.invoke(
         'send-order-notification',
-        body: {'token': token, 'title': title, 'body': body},
+        body: {'orderId': orderId},
       );
     } catch (_) {}
   }
