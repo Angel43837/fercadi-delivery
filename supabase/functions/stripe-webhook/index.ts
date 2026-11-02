@@ -159,6 +159,23 @@ Deno.serve(async (req) => {
           }
         }
 
+        if (ids.length === 0) {
+          // No es un pedido normal (orders.stripe_payment_intent_id no lo
+          // tiene) — puede ser una propina, que usa su propia tabla
+          // order_tips en vez de orders.
+          const { data: tip } = await supabase
+            .from('order_tips')
+            .select('id, status')
+            .eq('stripe_payment_intent_id', paymentIntentId)
+            .maybeSingle()
+          if (tip && tip.status === 'pending_payment') {
+            await supabase
+              .from('order_tips')
+              .update({ status: newStatus === 'paid' ? 'paid' : 'failed' })
+              .eq('id', tip.id)
+          }
+        }
+
         if (newStatus === 'failed') {
           const reason = intent?.last_payment_error?.message ?? event.type
           await supabase.from('alerts').insert({

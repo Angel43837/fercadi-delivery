@@ -33,6 +33,11 @@ class TrackingScreen extends StatefulWidget {
   final String address;
   final double total;
   final String orderId;
+  // Todas las piernas del pedido cuando son 2 restaurantes (mismo group_id);
+  // null o de un solo elemento en un pedido normal. Sin esto, cancelar desde
+  // aquí solo cancelaba `orderId` y la otra pierna quedaba huérfana, cobrada
+  // o por cobrar sin que el cliente la hubiera querido ya.
+  final List<String>? orderIds;
   final double? lat;
   final double? lng;
   final double? restaurantLat;
@@ -50,6 +55,7 @@ class TrackingScreen extends StatefulWidget {
     required this.address,
     required this.total,
     this.orderId = 'o1',
+    this.orderIds,
     this.lat,
     this.lng,
     this.restaurantLat,
@@ -110,6 +116,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
 
   int get _step {
     switch (_orderStatus) {
+      case 'awaiting_payment': return 0;
       case 'restaurant_accepted': return 1;
       case 'accepted':   return 1;
       case 'delivering': return 2;
@@ -120,6 +127,11 @@ class _TrackingScreenState extends State<TrackingScreen> {
   }
 
   bool get _isCancelled => _orderStatus == 'cancelled';
+  // El pago con tarjeta no se confirmó al instante (reintentos en
+  // checkout_screen) y quedó pendiente de verificación en segundo plano —
+  // sin este estado se veía igual que un pedido ya aceptado ('Pedido
+  // recibido'), cuando en realidad todavía podría fallar o tardar.
+  bool get _isAwaitingPayment => _orderStatus == 'awaiting_payment';
 
   static final _statusData = [
     (iconAsset: 'assets/images/step_recibido.svg' as String?,   icon: null as IconData?, label: 'Pedido recibido',              color: const Color(0xFFFFB300)),
@@ -397,7 +409,11 @@ class _TrackingScreenState extends State<TrackingScreen> {
   Future<void> _pushWidgetData() async {
     try {
       final active = !_isCancelled && _step < 3;
-      final label  = _isCancelled ? 'Pedido cancelado' : _statusData[_step].label;
+      final label  = _isCancelled
+          ? 'Pedido cancelado'
+          : _isAwaitingPayment
+              ? 'Verificando tu pago...'
+              : _statusData[_step].label;
       await HomeWidget.saveWidgetData<String>('orderId', widget.orderId);
       await HomeWidget.saveWidgetData<String>(
           'authToken', Supabase.instance.client.auth.currentSession?.accessToken ?? '');
@@ -461,19 +477,41 @@ class _TrackingScreenState extends State<TrackingScreen> {
           TextButton(
             onPressed: () async {
               Navigator.pop(dialogCtx);
-              try {
-                await SupabaseService.cancelMyOrder(widget.orderId);
-                await OrderHistoryService.clearActiveOrder();
-                if (mounted) context.go('/restaurants');
-              } catch (e) {
-                if (!mounted) return;
-                final message = e.toString().contains('ya está siendo preparado')
-                    ? 'Tu pedido ya está siendo preparado, ya no se puede cancelar.'
+              // Con 2 restaurantes hay que cancelar y reembolsar las DOS
+              // piernas del pedido combinado, no solo la que abrió esta
+              // pantalla — si una pierna individual ya no se puede cancelar
+              // (el restaurante ya la aceptó), se intenta la otra de todos
+              // modos en vez de abortar entera la acción.
+              final idsToCancel = (widget.orderIds?.isNotEmpty ?? false)
+                  ? widget.orderIds!
+                  : [widget.orderId];
+              var anySucceeded = false;
+              Object? lastError;
+              for (final oid in idsToCancel) {
+                try {
+                  await SupabaseService.cancelMyOrder(oid);
+                  anySucceeded = true;
+                } catch (e) {
+                  lastError = e;
+                }
+              }
+              if (anySucceeded) await OrderHistoryService.clearActiveOrder();
+              if (!mounted) return;
+              if (lastError == null) {
+                context.go('/restaurants');
+                return;
+              }
+              {
+                final message = lastError.toString().contains('ya está siendo preparado')
+                    ? (anySucceeded
+                        ? 'Se canceló una parte del pedido; la otra ya está siendo preparada y no se pudo cancelar.'
+                        : 'Tu pedido ya está siendo preparado, ya no se puede cancelar.')
                     : 'No se pudo cancelar el pedido. Intenta de nuevo.';
                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                   content: Text(message),
                   backgroundColor: Colors.red[700],
                 ));
+                if (anySucceeded) context.go('/restaurants');
               }
             },
             child: const Text('Sí, cancelar',
@@ -495,7 +533,9 @@ class _TrackingScreenState extends State<TrackingScreen> {
   Widget build(BuildContext context) {
     final sd = _isCancelled
         ? (iconAsset: null as String?, icon: Icons.cancel_outlined as IconData?, label: 'Pedido cancelado', color: Colors.redAccent)
-        : _statusData[_step];
+        : _isAwaitingPayment
+            ? (iconAsset: null as String?, icon: Icons.hourglass_top_rounded as IconData?, label: 'Verificando tu pago...', color: const Color(0xFFFFB300))
+            : _statusData[_step];
 
     return Scaffold(
       body: Stack(children: [

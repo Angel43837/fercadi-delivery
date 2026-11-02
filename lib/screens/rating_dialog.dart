@@ -51,23 +51,30 @@ class _RatingDialogState extends State<_RatingDialog> {
     }
     setState(() { _sending = true; _tipError = null; });
 
-    // Si hay propina, cobrar con Stripe antes de guardar calificación
+    // Si hay propina, se intenta cobrar con Stripe — pero la calificación se
+    // guarda de todos modos aunque la propina falle o se cancele. Antes un
+    // pago de propina rechazado se llevaba entre las patas la calificación
+    // completa (el cliente perdía su estrella/comentario sin enterarse).
+    var tipPaid = false;
     if (!widget.isDriver && _tipAmount > 0) {
-      final paid = await _chargeStripeTip(_tipAmount);
-      if (!paid) {
-        if (mounted) setState(() { _sending = false; });
-        return;
-      }
+      tipPaid = await _chargeStripeTip(_tipAmount);
     }
 
     await SupabaseService.submitRating(
       orderId: widget.orderId,
       stars: _stars,
       comment: _commentCtrl.text.trim(),
-      tip: (!widget.isDriver && _tipAmount > 0) ? _tipAmount : null,
+      tip: tipPaid ? _tipAmount : null,
       isDriver: widget.isDriver,
     );
-    if (mounted) Navigator.of(context).pop();
+    if (!mounted) return;
+    setState(() { _sending = false; });
+    if (!widget.isDriver && _tipAmount > 0 && !tipPaid) {
+      // No se cierra solo: se deja ver el error de la propina para que el
+      // cliente decida si reintenta o cierra sin ella.
+      return;
+    }
+    Navigator.of(context).pop();
   }
 
   Future<bool> _chargeStripeTip(double amount) async {

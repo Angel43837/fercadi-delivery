@@ -197,6 +197,7 @@ final appRouter = GoRouter(
           address: extra['address'] as String,
           total: extra['total'] as double,
           orderId: extra['orderId'] as String? ?? 'o1',
+          orderIds: (extra['orderIds'] as List?)?.cast<String>(),
           lat: extra['lat'] as double?,
           lng: extra['lng'] as double?,
           restaurantLat: extra['restaurantLat'] as double?,

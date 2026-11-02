@@ -405,10 +405,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       ).timeout(const Duration(seconds: 20));
       debugPrint('[Stripe] PaymentSheet inicializado, presentando...');
 
-      // 3. Mostrar la hoja de pago — timeout amplio porque el usuario puede
-      // tardar en escribir su tarjeta, pero acotado para no quedarse
-      // cargando para siempre si el sheet nunca llega a mostrarse.
-      await Stripe.instance.presentPaymentSheet().timeout(const Duration(seconds: 90));
+      // 3. Mostrar la hoja de pago. Sin timeout propio: un pago con 3DS puede
+      // tardar legítimamente más de 90s (esperando al banco), y aunque esto
+      // se quede esperando, confirmCardPayment/abandonCardPayment después
+      // verifican con Stripe el resultado real — no se necesita un límite
+      // artificial aquí encima del que ya tiene el SDK de Stripe.
+      await Stripe.instance.presentPaymentSheet();
       debugPrint('[Stripe] Pago confirmado.');
       return true;
     } on TimeoutException {
@@ -544,26 +546,57 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       }
     }
 
-    if (orderIds.isEmpty || (isCard && anyError)) {
-      if (orderIds.isNotEmpty) await SupabaseService.abandonCardPayment(orderIds);
+    if (anyError) {
+      // Todo o nada: si una pierna se creó pero la otra falló, se cancela la
+      // que sí se creó en vez de dejarla huérfana (antes esto solo pasaba
+      // con tarjeta; en efectivo las piernas nacen 'pending' directo, así
+      // que necesitan la misma limpieza).
+      if (orderIds.isNotEmpty) {
+        if (isCard) {
+          await SupabaseService.abandonCardPayment(orderIds);
+        } else {
+          for (final oid in orderIds) {
+            try {
+              await SupabaseService.rejectOrder(oid, reason: 'Falló al crear el pedido combinado');
+            } catch (_) {}
+          }
+        }
+      }
       if (mounted) setState(() => _loading = false);
       return;
     }
 
     // 2. Tarjeta: se cobra exactamente lo que guardó el servidor (la suma de
     // los pedidos del grupo, en un solo cobro).
+    var paymentAwaitingVerification = false;
     if (isCard) {
       final paid = await _payWithStripe(orderIds);
       if (!paid) {
-        // Cancela los pedidos y el cobro (si Stripe dice que sí se cobró,
-        // el servidor los confirma en vez de cancelarlos).
-        await SupabaseService.abandonCardPayment(orderIds);
-        if (mounted) setState(() => _loading = false);
-        return;
+        // abandonCardPayment cancela el cobro y los pedidos — salvo que
+        // Stripe sí alcanzó a cobrar justo cuando la app decidió que había
+        // fallado (ej. el sheet se cerró tarde): ahí el servidor regresa
+        // paid:true en vez de cancelar, y entonces sí se trata como pago
+        // exitoso en vez de perder el pedido.
+        final reallyPaid = await SupabaseService.abandonCardPayment(orderIds);
+        if (!reallyPaid) {
+          if (mounted) setState(() => _loading = false);
+          return;
+        }
+      } else {
+        // Confirma con el servidor que el cobro se completó, con reintentos
+        // y espera creciente — el webhook puede tardar, o la red del celular
+        // puede fallar justo aquí. Si tras los reintentos sigue sin
+        // confirmarse, NO se muestra éxito: el pedido se queda
+        // 'awaiting_payment' (el webhook o el job de limpieza lo resuelven
+        // después) y el cliente lo sigue desde tracking_screen.
+        var confirmed = false;
+        const waits = [Duration(seconds: 2), Duration(seconds: 4), Duration(seconds: 8)];
+        for (var attempt = 0; !confirmed && attempt <= waits.length; attempt++) {
+          if (attempt > 0) await Future.delayed(waits[attempt - 1]);
+          confirmed = await SupabaseService.confirmCardPayment(orderIds);
+        }
+        paymentAwaitingVerification = !confirmed;
       }
-      // Pasa los pedidos al restaurante. Si esto no llega (red), el webhook
-      // de Stripe hace lo mismo después.
-      await SupabaseService.confirmCardPayment(orderIds);
     }
 
     if (!mounted) return;
@@ -590,6 +623,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       'address': _addressCtrl.text.trim(),
       'total': orderTotal,
       'orderId': firstOrderId,
+      'orderIds': orderIds,
       'restaurants': restaurantsList,
       if (_selectedPos != null) 'lat': _selectedPos!.latitude,
       if (_selectedPos != null) 'lng': _selectedPos!.longitude,
@@ -635,6 +669,21 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       restaurantImageUrl: byRestaurant.length == 1 ? _primaryRestaurant?.imageUrl : null,
     );
     cart.clear();
+    if (paymentAwaitingVerification) {
+      // No se muestra la pantalla de éxito todavía: el pago sigue sin
+      // confirmarse del lado del servidor. El cliente ya puede ver y seguir
+      // su pedido en tracking_screen (que ahora sabe mostrar el estado
+      // 'awaiting_payment'); si el pago en realidad sí se completó, el
+      // webhook/job lo confirma solo y el pedido avanza sin que el cliente
+      // tenga que hacer nada más.
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Tu pago se está verificando. Te avisamos en cuanto se confirme.'),
+        backgroundColor: Color(0xFFBF360C),
+        duration: Duration(seconds: 5),
+      ));
+      context.go('/tracking', extra: orderData);
+      return;
+    }
     _showSuccess(orderData);
   }
 

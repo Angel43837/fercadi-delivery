@@ -1833,13 +1833,19 @@ class SupabaseService {
 
   // El cliente canceló o no pudo pagar: cancela el cobro y los pedidos (el
   // cupón de promoción se devuelve solo, ver trg_revert_promo_claim_on_cancel).
-  static Future<void> abandonCardPayment(List<String> orderIds) async {
+  // Si Stripe ya había cobrado de verdad (pago tardío que llegó después de
+  // que la UI decidió que había fallado), el servidor lo detecta y regresa
+  // paid:true en vez de cancelar — por eso el resultado ya no se ignora.
+  static Future<bool> abandonCardPayment(List<String> orderIds) async {
     try {
-      await _client.functions.invoke('create-payment-intent', body: {
+      final res = await _client.functions.invoke('create-payment-intent', body: {
         'action': 'abandon',
         'orderIds': orderIds,
       });
-    } catch (_) {}
+      return (res.data as Map?)?['paid'] == true;
+    } catch (_) {
+      return false;
+    }
   }
 
   // Genera un uuid v4 en el celular, para ligar las 2 filas de un pedido de
@@ -2386,7 +2392,7 @@ class SupabaseService {
         .from('orders')
         .select('*, restaurants(name, image_url, lat, lng, address)')
         .eq('customer_id', uid)
-        .inFilter('status', ['pending', 'restaurant_accepted', 'accepted', 'delivering'])
+        .inFilter('status', ['awaiting_payment', 'pending', 'restaurant_accepted', 'accepted', 'delivering'])
         .order('created_at', ascending: false);
     return (data as List).cast<Map<String, dynamic>>();
   }
@@ -2415,6 +2421,7 @@ class SupabaseService {
         : (restaurant?['name'] as String? ?? 'Restaurante');
     return {
       'orderId': o['id'],
+      if (isGroup) 'orderIds': [o['id'], sibling['id']],
       'restaurantName': restaurantName,
       'address': delivery['address'] as String? ?? '',
       'total': (o['total'] as num?)?.toDouble() ?? 0.0,
