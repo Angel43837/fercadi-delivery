@@ -23,6 +23,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants.dart';
+import 'package:provider/provider.dart';
+import '../providers/cart_provider.dart';
 import '../services/auth_service.dart';
 import '../services/location_service.dart';
 import '../services/supabase_service.dart';
@@ -737,6 +739,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             icon: const Icon(Icons.logout),
             tooltip: 'Cerrar sesión',
             onPressed: () async {
+              context.read<CartProvider>().clear();
               final router = GoRouter.of(context);
               await AuthService.clearSession();
               if (!mounted) return;
@@ -1046,6 +1049,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 subtitle: Text('Mantiene tus datos guardados', style: TextStyle(color: cardSub, fontSize: 12)),
                 trailing: Icon(Icons.chevron_right, color: cardChev),
                 onTap: () async {
+                  context.read<CartProvider>().clear();
                   final router = GoRouter.of(context);
                   await AuthService.clearSession();
                   if (!mounted) return;
@@ -1140,6 +1144,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     try {
       await SupabaseService.deleteMyAccount();
       if (!mounted) return;
+      context.read<CartProvider>().clear();
       Navigator.of(context).pop(); // cierra el spinner
       final router = GoRouter.of(context);
       await AuthService.clearSession();

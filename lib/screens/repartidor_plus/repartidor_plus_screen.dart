@@ -417,7 +417,7 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
   // Extrae nombre/dirección/posición/total/productos de UNA fila cruda de
   // "orders" — factorizado para poder leer tanto la pierna principal como
   // la hermana (pedido de 2 restaurantes) con el mismo código.
-  ({String name, String? address, LatLng? pos, double total, List<String> items}) _legFields(
+  ({String name, String? address, LatLng? pos, double total, double deliveryFee, List<String> items}) _legFields(
       Map<String, dynamic> m) {
     final restaurantData = m['restaurants'] as Map<String, dynamic>?;
     final name = restaurantData?['name'] as String? ?? 'Restaurante';
@@ -431,6 +431,10 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
         ? LatLng((restLat as num).toDouble(), (restLng as num).toDouble())
         : null;
     final total = (m['total'] as num?)?.toDouble() ?? 0.0;
+    // El envío NOMINAL (antes de descuentos de promoción) es lo que de
+    // verdad se le paga al repartidor — mismo campo que ya usa
+    // get_rider_balance() y repartidor_screen.dart.
+    final deliveryFee = ((m['rider_delivery_fee'] ?? m['delivery_fee']) as num?)?.toDouble() ?? 0.0;
     final orderItems = (m['order_items'] as List<dynamic>? ?? []);
     final items = orderItems.map((i) {
       final qty = i['quantity'] as int? ?? 1;
@@ -438,7 +442,7 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
       final pname = product?['name'] as String? ?? 'Producto';
       return '$qty× $pname';
     }).toList();
-    return (name: name, address: address, pos: pos, total: total, items: items);
+    return (name: name, address: address, pos: pos, total: total, deliveryFee: deliveryFee, items: items);
   }
 
   Future<void> _aceptarPedido(String orderId) async {
@@ -508,12 +512,14 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
             address: delivery['address'] as String? ?? 'Dirección no especificada',
             customerPos: customerPos,
             total: primaryLeg.total,
+            deliveryFee: primaryLeg.deliveryFee,
             items: primaryLeg.items.isEmpty ? ['Pedido #${primaryId.substring(0, 6)}'] : primaryLeg.items,
             secondOrderId: secondRaw?['id'] as String?,
             secondRestaurantName: secondLeg?.name,
             secondRestaurantAddress: secondLeg?.address,
             secondRestaurantPos: secondLeg?.pos,
             secondTotal: secondLeg?.total,
+            secondDeliveryFee: secondLeg?.deliveryFee,
             secondItems: secondLeg?.items,
           ),
         ));

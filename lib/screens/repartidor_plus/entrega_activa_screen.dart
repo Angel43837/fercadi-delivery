@@ -37,6 +37,10 @@ class EntregaActivaScreen extends StatefulWidget {
   final String address;
   final LatLng? customerPos;
   final double total;
+  // Envío nominal (antes de descuento de promoción) — lo que de verdad se
+  // le paga al repartidor, no el total del pedido (ver get_rider_balance()
+  // y repartidor_screen.dart, que ya usan este mismo campo).
+  final double deliveryFee;
   final List<String> items;
 
   // Segunda pierna de un pedido de 2 restaurantes (ver
@@ -48,6 +52,7 @@ class EntregaActivaScreen extends StatefulWidget {
   final String? secondRestaurantAddress;
   final LatLng? secondRestaurantPos;
   final double? secondTotal;
+  final double? secondDeliveryFee;
   final List<String>? secondItems;
 
   const EntregaActivaScreen({
@@ -62,12 +67,14 @@ class EntregaActivaScreen extends StatefulWidget {
     required this.address,
     required this.customerPos,
     required this.total,
+    this.deliveryFee = 0,
     required this.items,
     this.secondOrderId,
     this.secondRestaurantName,
     this.secondRestaurantAddress,
     this.secondRestaurantPos,
     this.secondTotal,
+    this.secondDeliveryFee,
     this.secondItems,
   });
 
@@ -376,7 +383,14 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
       // aunque sean 2 restaurantes, dinero = total combinado) — antes los
       // mandaba la app con el monto que quisiera, y un doble toque los
       // duplicaba.
-      NotificationService.entregaCompletada(widget.combinedTotal * 0.15);
+      // Antes usaba combinedTotal*0.15 (15% del total del pedido, sin
+      // relación con lo que de verdad cobra un repartidor) — ahora el envío
+      // real menos la comisión de la plataforma, igual que
+      // repartidor_screen.dart y get_rider_balance().
+      NotificationService.entregaCompletada(
+        (widget.deliveryFee + (widget.secondDeliveryFee ?? 0)) *
+            (1 - LocationService.comisionRepartidorPct / 100),
+      );
       if (!mounted) return;
       await showRatingDialog(context, orderId: widget.orderId, isDriver: true);
       if (mounted) Navigator.of(context).pop();

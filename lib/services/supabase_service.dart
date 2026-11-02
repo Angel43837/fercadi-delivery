@@ -1976,18 +1976,18 @@ class SupabaseService {
       now.month,
       now.day,
     ).toUtc().toIso8601String();
+    // El filtro de "hoy" solo debe aplicar a delivered/cancelled (el
+    // histórico del día) — un pedido que SIGUE activo (pending..delivering)
+    // debe seguir apareciendo aunque se haya creado ayer o antes; antes el
+    // .gte aplicaba a los 6 estados por igual y un pedido activo viejo
+    // simplemente desaparecía del panel del dueño sin ningún aviso.
     var query = _client
         .from('orders')
         .select('*, order_items(quantity, price, notes, products(id, name))')
-        .inFilter('status', [
-          'pending',
-          'restaurant_accepted',
-          'accepted',
-          'delivering',
-          'delivered',
-          'cancelled',
-        ])
-        .gte('created_at', startOfDay);
+        .or(
+          'status.in.(pending,restaurant_accepted,accepted,delivering),'
+          'and(status.in.(delivered,cancelled),created_at.gte.$startOfDay)',
+        );
     if (restaurantId != null && restaurantId.isNotEmpty) {
       query = query.eq('restaurant_id', restaurantId);
     }
@@ -2307,44 +2307,34 @@ class SupabaseService {
         .eq('id', restaurantId);
   }
 
+  // Antes esto intentaba borrar de 'product_images', una tabla que no existe
+  // en este proyecto — tronaba con cualquier restaurante que tuviera
+  // productos. De paso borraba productos/categorías (order_items.product_id
+  // no tiene ON DELETE, así que esto también habría tronado contra
+  // cualquier producto con pedidos ya entregados) y TODOS los pedidos del
+  // restaurante, incluidos los ya entregados/pagados — se perdían
+  // calificaciones, propinas y el historial real de ventas.
+  //
+  // Ahora no se borra nada de eso: el restaurante se desactiva
+  // (approval_status='eliminado' + is_open=false, ya invisible para
+  // clientes vía read_restaurants) en vez de borrarse — se puede reactivar
+  // después si fue un error, sin perder nada — y solo se cancelan los
+  // pedidos que SIGUEN activos (para no dejar a un cliente/repartidor
+  // esperando un pedido de un restaurante que ya no existe); los ya
+  // entregados/cancelados se quedan intactos como historial.
   static Future<void> deleteRestaurant(String restaurantId) async {
     if (useMock) return;
-    // Obtiene IDs de categorías y productos para borrar en cascada
-    final catRows = await _client
-        .from('categories')
-        .select('id')
-        .eq('restaurant_id', restaurantId);
-    final catIds = (catRows as List).map((r) => r['id'] as String).toList();
 
-    if (catIds.isNotEmpty) {
-      final prodRows = await _client
-          .from('products')
-          .select('id')
-          .inFilter('category_id', catIds);
-      final prodIds = (prodRows as List).map((r) => r['id'] as String).toList();
-      if (prodIds.isNotEmpty) {
-        await _client
-            .from('product_images')
-            .delete()
-            .inFilter('product_id', prodIds);
-        await _client
-            .from('product_likes')
-            .delete()
-            .inFilter('product_id', prodIds);
-        await _client
-            .from('order_items')
-            .delete()
-            .inFilter('product_id', prodIds);
-        await _client.from('products').delete().inFilter('category_id', catIds);
-      }
-      await _client
-          .from('categories')
-          .delete()
-          .eq('restaurant_id', restaurantId);
-    }
+    await _client
+        .from('orders')
+        .update({'status': 'cancelled'})
+        .eq('restaurant_id', restaurantId)
+        .inFilter('status', ['pending', 'awaiting_payment', 'restaurant_accepted', 'accepted', 'delivering']);
 
-    await _client.from('orders').delete().eq('restaurant_id', restaurantId);
-    await _client.from('restaurants').delete().eq('id', restaurantId);
+    await _client
+        .from('restaurants')
+        .update({'approval_status': 'eliminado', 'is_open': false})
+        .eq('id', restaurantId);
   }
 
   // Elimina la cuenta de QUIEN LLAMA (cliente, repartidor o dueño) —

@@ -1009,6 +1009,10 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
           title: Text('Cerrar sesión',
               style: TextStyle(color: isDark ? Colors.redAccent : Colors.white70)),
           onTap: () async {
+            // Antes el carrito y el cupón elegido sobrevivían al logout —
+            // el siguiente usuario en el mismo celular podía terminar
+            // viendo (o pagando) el carrito de otra cuenta.
+            context.read<CartProvider>().clear();
             Navigator.pop(context);
             final router = GoRouter.of(context);
             await AuthService.clearSession();

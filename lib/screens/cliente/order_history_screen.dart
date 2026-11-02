@@ -35,11 +35,18 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
   }
 
   Future<void> _load() async {
-    final results = await Future.wait([
-      OrderHistoryService.getAll(),
-      SupabaseService.getMyActiveOrders(),
-    ]);
-    var orders = results[0] as List<HistoryEntry>;
+    // Antes un solo Future.wait sin try/catch dejaba el loading pegado para
+    // siempre si getMyActiveOrders fallaba (ej. sin internet) — ahora cada
+    // parte se resuelve por su cuenta: sin conexión, igual se ve el
+    // historial local, solo sin los pedidos activos en vivo.
+    var orders = <HistoryEntry>[];
+    try {
+      orders = await OrderHistoryService.getAll();
+    } catch (_) {}
+    var activeRaw = <Map<String, dynamic>>[];
+    try {
+      activeRaw = await SupabaseService.getMyActiveOrders();
+    } catch (_) {}
     if (!mounted) return;
     setState(() {
       _orders = orders;
@@ -47,7 +54,7 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
       // aquí (mergeGroupedOrders) para que, al tocar la tarjeta de ese
       // pedido, se mande a /tracking el resumen combinado (ambos
       // restaurantes) en vez de solo la info de UNA de las 2 piernas.
-      _activeOrders = SupabaseService.mergeGroupedOrders(results[1] as List<Map<String, dynamic>>);
+      _activeOrders = SupabaseService.mergeGroupedOrders(activeRaw);
       _loading = false;
     });
     await _backfillMissingData(orders);

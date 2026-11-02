@@ -1267,8 +1267,16 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
                     // estado que usa un repartidor al reclamarlo — un
                     // repartidor ya podía tomar el pedido ANTES de que el
                     // restaurante confirmara nada).
-                    await SupabaseService.adminUpdateOrderStatus(
-                        filtered[i]['id'] as String, 'restaurant_accepted');
+                    final messenger = ScaffoldMessenger.of(context);
+                    try {
+                      await SupabaseService.adminUpdateOrderStatus(
+                          filtered[i]['id'] as String, 'restaurant_accepted');
+                    } catch (e) {
+                      messenger.showSnackBar(SnackBar(
+                        content: Text('No se pudo aceptar el pedido: $e'),
+                        backgroundColor: Colors.redAccent,
+                      ));
+                    }
                     _loadRealOrders();
                   },
                   onCancel: () async {

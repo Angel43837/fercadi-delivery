@@ -813,7 +813,12 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
       }
     } else {
       final orderId = order.id;
-      final ganancia = order.combinedTotal * 0.15;
+      // Antes usaba combinedTotal*0.15 (15% del total del pedido, sin
+      // relación con lo que de verdad cobra un repartidor) — ahora el mismo
+      // cálculo que ya se usa para la estimación en la lista (línea ~1087):
+      // el envío real menos la comisión de la plataforma.
+      final ganancia = (order.deliveryFee + (order.secondDeliveryFee ?? 0)) *
+          (1 - LocationService.comisionRepartidorPct / 100);
       await SupabaseService.updateOrderStatus(orderId, 'delivered');
       if (order.secondOrderId != null) {
         await SupabaseService.updateOrderStatus(order.secondOrderId!, 'delivered');

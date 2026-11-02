@@ -565,8 +565,11 @@ Hasta el 7 de octubre de 2026, **todos** los flavors de iOS/Android usaban la mi
 ```
 flutter build ios --release \
   --dart-define=SUPABASE_URL=https://dlukaxbcyetcdbdjjgct.supabase.co \
-  --dart-define=SUPABASE_ANON_KEY=sb_publishable_MH72EXetLYHXKgklsUJ2Lw_zGLRohVY
+  --dart-define=SUPABASE_ANON_KEY=sb_publishable_MH72EXetLYHXKgklsUJ2Lw_zGLRohVY \
+  --dart-define=STRIPE_PUBLISHABLE_KEY=pk_live_...
 ```
+
+**`STRIPE_PUBLISHABLE_KEY` (nov 2026):** antes `lib/core/constants.dart` traía la `pk_test_...` de Stripe escrita fija, así que un build de producción real seguía cobrando (o más bien, intentando cobrar) con la llave de pruebas sin que nadie lo notara — ningún pago real habría funcionado, pero tampoco habría dado ningún error obvio hasta que un cliente de verdad intentara pagar. Ahora sale de `String.fromEnvironment('STRIPE_PUBLISHABLE_KEY', ...)`, con la `pk_test` como default (igual que `SUPABASE_URL`/`SUPABASE_ANON_KEY`) — GOGO Food necesita pasar la `pk_live_...` real de la cuenta de Stripe de producción al compilar, GOGO Pruebas se queda sin tocar nada.
 
 **Admin y Flota necesitan el mismo `--dart-define`** si deben administrar la base real de GOGO Food — de lo contrario siguen apuntando a Pruebas por default (`lib/core/constants.dart`) sin que nadie lo note, y Admin queda ciego a lo que pasa en la app real. GOGO Pruebas se sigue compilando sin ningún `--dart-define` (usa el default de `constants.dart`).
 

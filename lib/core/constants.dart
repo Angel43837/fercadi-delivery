@@ -24,7 +24,15 @@ class AppConstants {
   static const String googleMapsApiKey = 'AIzaSyDGxOWhjgxZsHjsgDtZdMlJ7q2OYzdYHDE';
 
   // Stripe — obtén tus claves en dashboard.stripe.com > Developers > API Keys
-  static const String stripePublishableKey = 'pk_test_51ThAd2JlrTraAKwstUDr3pynDCZiLz88mldbch47FD6Fa4XVMjPKl9CGvdbAGkE4UG85mxwkrXXgIMdxF2SpbmlV00e1EnYwvc';
+  // El default de abajo es la pk_test de Pruebas. GOGO Food (producción)
+  // DEBE compilarse con --dart-define=STRIPE_PUBLISHABLE_KEY=pk_live_...
+  // (ver CLAUDE.md, sección de compilación de producción) — sin esto, un
+  // build de producción cobraría con la llave de pruebas, sin cobrar nada
+  // de verdad, sin ningún aviso.
+  static const String stripePublishableKey = String.fromEnvironment(
+    'STRIPE_PUBLISHABLE_KEY',
+    defaultValue: 'pk_test_51ThAd2JlrTraAKwstUDr3pynDCZiLz88mldbch47FD6Fa4XVMjPKl9CGvdbAGkE4UG85mxwkrXXgIMdxF2SpbmlV00e1EnYwvc',
+  );
   // La clave secreta NUNCA va aquí — va en la Supabase Edge Function como variable de entorno
 
   // Sentry — obtén tu DSN en sentry.io > tu proyecto > Settings > Client Keys
