@@ -667,6 +667,11 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
             ]),
           ),
           IconButton(
+            icon: Icon(Icons.headset_mic_outlined, color: _textMid, size: 20),
+            tooltip: 'Soporte',
+            onPressed: () => context.push('/soporte'),
+          ),
+          IconButton(
             icon: Icon(Icons.account_balance_wallet_outlined, color: _textMid, size: 20),
             tooltip: 'Retiros',
             onPressed: _showRetiros,

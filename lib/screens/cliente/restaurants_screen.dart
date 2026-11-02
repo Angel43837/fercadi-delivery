@@ -741,8 +741,13 @@ class _RestaurantsScreenState extends State<RestaurantsScreen> {
                       fontSize: 11)),
           ],
         ),
-        // ── Carrito + menú 3 líneas a la derecha ────────────────────────────
+        // ── Soporte + carrito + menú 3 líneas a la derecha ──────────────────
         actions: [
+          _appBarIconButton(
+            icon: Icons.headset_mic_outlined,
+            isDark: isDark,
+            onTap: () => context.push('/soporte'),
+          ),
           Stack(clipBehavior: Clip.none, children: [
             _appBarIconButton(
               icon: Icons.shopping_bag_outlined,

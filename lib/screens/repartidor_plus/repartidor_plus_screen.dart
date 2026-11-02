@@ -1135,6 +1135,19 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
           children: [
             const Spacer(),
             GestureDetector(
+              onTap: () => context.push('/soporte'),
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.headset_mic_outlined,
+                    color: Colors.white70, size: 18),
+              ),
+            ),
+            const SizedBox(width: 6),
+            GestureDetector(
               onTap: () async {
                 // La tienda de coins ahora vive en la página web (login
                 // propio ahí, mismo saldo de rider_stats) — se abre en el

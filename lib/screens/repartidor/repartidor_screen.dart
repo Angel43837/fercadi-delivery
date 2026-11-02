@@ -990,6 +990,11 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
                     style: TextStyle(color: textSub, fontSize: 13)),
               ]),
             ),
+            IconButton(
+              icon: Icon(Icons.headset_mic_outlined, color: iconColor, size: 20),
+              tooltip: 'Soporte',
+              onPressed: () => context.push('/soporte'),
+            ),
             // Toggle modo oscuro/claro
             Consumer<ThemeProvider>(
               builder: (_, tp, _) => IconButton(
