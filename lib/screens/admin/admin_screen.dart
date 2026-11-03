@@ -2943,17 +2943,20 @@ class _RealOrderCard extends StatelessWidget {
         ? orderId.substring(0, 6).toUpperCase()
         : orderId.toUpperCase();
 
-    // Botones de acción según el estado actual
+    // Botones de acción según el estado actual. 'restaurant_accepted' ya NO
+    // avanza aquí a 'accepted' — antes este botón genérico ponía
+    // status='accepted' sin asignar ningún repartidor_id (simulando que un
+    // rider lo reclamó sin que ninguno lo hiciera); ese paso solo debe
+    // pasar cuando un repartidor de verdad lo reclama (claim_group_order/
+    // updateOrderStatus con su propio uid), nunca desde este botón.
     final nextStatus = switch (status) {
       'pending' => 'restaurant_accepted',
-      'restaurant_accepted' => 'accepted',
       'accepted' => 'delivering',
       'delivering' => 'delivered',
       _ => null,
     };
     final nextLabel = switch (status) {
       'pending' => 'Confirmar',
-      'restaurant_accepted' => 'Aceptar',
       'accepted' => 'En camino',
       'delivering' => 'Entregado',
       _ => null,
@@ -3067,7 +3070,33 @@ class _RealOrderCard extends StatelessWidget {
               const Spacer(),
               if (canCancel)
                 GestureDetector(
-                  onTap: () => onStatusChange?.call(orderId, 'cancelled'),
+                  onTap: () async {
+                    // Antes cancelaba de inmediato al primer toque, sin
+                    // ninguna confirmación — un toque accidental cancelaba
+                    // (y, si ya estaba pagado, reembolsaba) un pedido real.
+                    final confirmed = await showDialog<bool>(
+                      context: context,
+                      builder: (dialogCtx) => AlertDialog(
+                        backgroundColor: AdminColors.surface,
+                        title: const Text('¿Cancelar este pedido?', style: TextStyle(color: Colors.white)),
+                        content: const Text(
+                          'Si ya estaba pagado con tarjeta, se reembolsa. Esta acción no se puede deshacer.',
+                          style: TextStyle(color: Colors.white70),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(dialogCtx, false),
+                            child: const Text('No'),
+                          ),
+                          TextButton(
+                            onPressed: () => Navigator.pop(dialogCtx, true),
+                            child: const Text('Sí, cancelar', style: TextStyle(color: Colors.red)),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (confirmed == true) onStatusChange?.call(orderId, 'cancelled');
+                  },
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 12,
@@ -3090,6 +3119,13 @@ class _RealOrderCard extends StatelessWidget {
                     ),
                   ),
                 ),
+              if (status == 'restaurant_accepted') ...[
+                const SizedBox(width: 8),
+                Text(
+                  'Esperando repartidor…',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 12),
+                ),
+              ],
               if (nextStatus != null) ...[
                 const SizedBox(width: 8),
                 GestureDetector(

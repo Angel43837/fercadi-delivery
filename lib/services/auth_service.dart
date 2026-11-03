@@ -167,6 +167,11 @@ class AuthService {
   static Future<void> clearDuenoSession() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_keyDuenoEmail);
+    // Antes esto no se borraba: un dueño distinto que iniciara sesión en el
+    // mismo celular podía leer el restaurant_id en caché de la cuenta
+    // ANTERIOR (getRestaurantId() lo usa como respaldo local) antes de que
+    // el servidor tuviera oportunidad de corregirlo.
+    await prefs.remove(_keyRestaurantId);
     try { await Supabase.instance.client.auth.signOut(); } catch (_) {}
   }
 

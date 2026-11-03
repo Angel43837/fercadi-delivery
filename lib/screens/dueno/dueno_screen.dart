@@ -493,7 +493,22 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
               Text(_restaurantIdError!,
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: Colors.white, fontSize: 15)),
+              const SizedBox(height: 8),
+              const Text(
+                'Si todavía no registras tu restaurante, hazlo desde nuestra página web.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white70, fontSize: 13),
+              ),
               const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: () => launchUrl(
+                  Uri.parse('https://pagina-web-gogo-rho.vercel.app'),
+                  mode: LaunchMode.externalApplication,
+                ),
+                style: ElevatedButton.styleFrom(backgroundColor: AppConstants.primaryColor),
+                child: const Text('Registrar mi restaurante', style: TextStyle(color: Colors.white)),
+              ),
+              const SizedBox(height: 12),
               ElevatedButton(
                 onPressed: () async {
                   await AuthService.clearDuenoSession();
