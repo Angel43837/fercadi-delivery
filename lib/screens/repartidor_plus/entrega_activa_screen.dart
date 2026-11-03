@@ -183,6 +183,51 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
     if (widget.customerPos == null) _geocodeCustomer(widget.address);
     _initGPS();
     _loadCustomerProfile();
+    _initResumeStep();
+    _watchForCancellation();
+  }
+
+  // Si esta pantalla se abrió para RETOMAR una entrega ya avanzada (la app
+  // se cerró a medio camino), antes siempre arrancaba en el paso 0 ("ve al
+  // restaurante") sin importar qué tan lejos iba de verdad el repartidor —
+  // si ya estaba 'delivering' (ya recogió, va para el cliente), lo mandaba
+  // de regreso al restaurante sin sentido.
+  Future<void> _initResumeStep() async {
+    try {
+      final status = await SupabaseService.getOrderStatus(widget.orderId);
+      if (!mounted || status != 'delivering') return;
+      setState(() => _step = _finalizeIndex);
+      final clientPos = _geocodedCustomerPos ?? widget.customerPos;
+      if (clientPos != null) {
+        _fetchRoute(_restaurantPos, clientPos, color: const Color(0xFF2196F3));
+      }
+    } catch (_) {}
+  }
+
+  Timer? _cancelCheckTimer;
+
+  // Revisa cada 6s si el restaurante/admin canceló este pedido mientras el
+  // repartidor ya iba en camino — antes nada lo revisaba del lado del
+  // rider, así que seguía "entregando" un pedido que ya no existía hasta
+  // que llegaba y se enteraba a mano.
+  void _watchForCancellation() {
+    _cancelCheckTimer = Timer.periodic(const Duration(seconds: 6), (_) async {
+      String? status;
+      try {
+        status = await SupabaseService.getOrderStatus(widget.orderId);
+      } catch (_) {
+        return;
+      }
+      if (!mounted || status != 'cancelled') return;
+      _cancelCheckTimer?.cancel();
+      _broadcastTimer?.cancel();
+      SupabaseService.stopLocationBroadcast();
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('El restaurante canceló este pedido.'),
+        backgroundColor: Colors.redAccent,
+      ));
+      Navigator.of(context).pop();
+    });
   }
 
   // Nombre/foto reales de la cuenta del cliente (como en Uber) — solo se
@@ -203,6 +248,7 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
     _gpsSub?.cancel();
     _broadcastTimer?.cancel();
     _gpsStuckTimer?.cancel();
+    _cancelCheckTimer?.cancel();
     SupabaseService.stopLocationBroadcast();
     _mapCtrl.dispose();
     _sheetController.dispose();
@@ -421,11 +467,30 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
               Navigator.pop(dialogCtx);
               _broadcastTimer?.cancel();
               SupabaseService.stopLocationBroadcast();
-              await SupabaseService.releaseOrderFromRider(widget.orderId);
-              if (widget.secondOrderId != null) {
-                await SupabaseService.releaseOrderFromRider(widget.secondOrderId!);
+              // Antes sin try/catch: si esto fallaba (sin red, por ejemplo)
+              // el pedido se quedaba asignado a este rider sin que se
+              // enterara — ni error ni forma de reintentar.
+              Object? error;
+              try {
+                await SupabaseService.releaseOrderFromRider(widget.orderId);
+              } catch (e) {
+                error = e;
               }
-              if (mounted) Navigator.of(context).pop();
+              if (widget.secondOrderId != null) {
+                try {
+                  await SupabaseService.releaseOrderFromRider(widget.secondOrderId!);
+                } catch (e) {
+                  error = e;
+                }
+              }
+              if (!mounted) return;
+              if (error != null) {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: const Text('No se pudo soltar el pedido del todo. Si sigue asignado a ti, avísanos.'),
+                  backgroundColor: Colors.red[700],
+                ));
+              }
+              Navigator.of(context).pop();
             },
             child: const Text('Sí, cancelar',
                 style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),

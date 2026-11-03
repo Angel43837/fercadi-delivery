@@ -122,6 +122,7 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
       end: Offset.zero,
     ).animate(CurvedAnimation(parent: _logroController, curve: Curves.elasticOut));
     _loadOrders();
+    _resumeActiveDelivery();
     _orderTimer = Timer.periodic(const Duration(seconds: 10), (_) => _loadOrders());
     _loadRiderCalls();
     _callChannel = SupabaseService.subscribeToRiderCalls(_loadRiderCalls);
@@ -445,6 +446,84 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
     return (name: name, address: address, pos: pos, total: total, deliveryFee: deliveryFee, items: items);
   }
 
+  // Compartido entre _aceptarPedido (recién reclamado) y
+  // _resumeActiveDelivery (retomado al reabrir la app) — antes esta lógica
+  // solo vivía adentro de _aceptarPedido, así que no había forma de volver
+  // a abrir la pantalla de entrega sin reclamar el pedido de nuevo.
+  Future<void> _openEntregaActiva(Map<String, dynamic> primaryRaw, Map<String, dynamic>? secondRaw) async {
+    final primaryId = primaryRaw['id'] as String;
+    final primaryLeg = _legFields(primaryRaw);
+    final secondLeg = secondRaw != null ? _legFields(secondRaw) : null;
+
+    Map<String, dynamic> delivery = {};
+    try { delivery = jsonDecode(primaryRaw['customer_name'] as String? ?? '{}') as Map<String, dynamic>; } catch (_) {}
+    final rawLat = delivery['lat'];
+    final rawLng = delivery['lng'];
+    final customerPos = (rawLat != null && rawLng != null)
+        ? LatLng((rawLat as num).toDouble(), (rawLng as num).toDouble())
+        : null;
+
+    if (!mounted) return;
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => EntregaActivaScreen(
+        orderId: primaryId,
+        restaurantName: primaryLeg.name,
+        restaurantAddress: primaryLeg.address,
+        restaurantPos: primaryLeg.pos,
+        customerName: delivery['name'] as String? ?? 'Cliente',
+        customerId: primaryRaw['customer_id'] as String?,
+        customerPhone: delivery['phone'] as String? ?? '',
+        address: delivery['address'] as String? ?? 'Dirección no especificada',
+        customerPos: customerPos,
+        total: primaryLeg.total,
+        deliveryFee: primaryLeg.deliveryFee,
+        items: primaryLeg.items.isEmpty ? ['Pedido #${primaryId.substring(0, 6)}'] : primaryLeg.items,
+        secondOrderId: secondRaw?['id'] as String?,
+        secondRestaurantName: secondLeg?.name,
+        secondRestaurantAddress: secondLeg?.address,
+        secondRestaurantPos: secondLeg?.pos,
+        secondTotal: secondLeg?.total,
+        secondDeliveryFee: secondLeg?.deliveryFee,
+        secondItems: secondLeg?.items,
+      ),
+    ));
+    // Al volver de la entrega (completada o cancelada), se refresca
+    // coins/repartos/dinero desde el servidor — si sí se completó,
+    // entrega_activa_screen.dart ya los incrementó allá.
+    final uid = Supabase.instance.client.auth.currentUser?.id;
+    if (uid != null && mounted) {
+      final prev = _repartos;
+      await _loadStats(uid);
+      _checkLogros(prev);
+    }
+  }
+
+  // Al reabrir la app con una entrega ya en curso (accepted/delivering),
+  // antes se perdía por completo: esta pantalla solo mostraba "pedidos
+  // disponibles", sin ninguna forma de retomarla — el rider se quedaba
+  // bloqueado hasta que alguien le ayudara por fuera de la app.
+  Future<void> _resumeActiveDelivery() async {
+    final uid = Supabase.instance.client.auth.currentUser?.id;
+    if (uid == null) return;
+    try {
+      final rows = await SupabaseService.getMyAssignedOrders();
+      if (rows.isEmpty || !mounted) return;
+      final primaryRaw = rows.first;
+      final groupId = primaryRaw['group_id'] as String?;
+      Map<String, dynamic>? secondRaw;
+      if (groupId != null) {
+        for (final o in rows) {
+          if (o['id'] != primaryRaw['id'] && o['group_id'] == groupId) { secondRaw = o; break; }
+        }
+      }
+      await _openEntregaActiva(primaryRaw, secondRaw);
+    } catch (_) {
+      // Sin red justo al abrir la app: no es grave, _loadOrders() de abajo
+      // sigue su curso y el rider puede reintentar manualmente más tarde
+      // (ej. recargando la pantalla) — no vale la pena un SnackBar aquí.
+    }
+  }
+
   Future<void> _aceptarPedido(String orderId) async {
     if (_aceptandoIds.contains(orderId)) return;
     _aceptandoIds.add(orderId);
@@ -487,52 +566,7 @@ class _RepartidorPlusScreenState extends State<RepartidorPlusScreen>
 
       final primaryRaw = gotPrimary ? pedido : siblingRaw!;
       final secondRaw = (gotPrimary && gotSibling) ? siblingRaw : null;
-      final primaryId = primaryRaw['id'] as String;
-      final primaryLeg = _legFields(primaryRaw);
-      final secondLeg = secondRaw != null ? _legFields(secondRaw) : null;
-
-      Map<String, dynamic> delivery = {};
-      try { delivery = jsonDecode(primaryRaw['customer_name'] as String? ?? '{}') as Map<String, dynamic>; } catch (_) {}
-      final rawLat = delivery['lat'];
-      final rawLng = delivery['lng'];
-      final customerPos = (rawLat != null && rawLng != null)
-          ? LatLng((rawLat as num).toDouble(), (rawLng as num).toDouble())
-          : null;
-
-      if (mounted) {
-        await Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => EntregaActivaScreen(
-            orderId: primaryId,
-            restaurantName: primaryLeg.name,
-            restaurantAddress: primaryLeg.address,
-            restaurantPos: primaryLeg.pos,
-            customerName: delivery['name'] as String? ?? 'Cliente',
-            customerId: primaryRaw['customer_id'] as String?,
-            customerPhone: delivery['phone'] as String? ?? '',
-            address: delivery['address'] as String? ?? 'Dirección no especificada',
-            customerPos: customerPos,
-            total: primaryLeg.total,
-            deliveryFee: primaryLeg.deliveryFee,
-            items: primaryLeg.items.isEmpty ? ['Pedido #${primaryId.substring(0, 6)}'] : primaryLeg.items,
-            secondOrderId: secondRaw?['id'] as String?,
-            secondRestaurantName: secondLeg?.name,
-            secondRestaurantAddress: secondLeg?.address,
-            secondRestaurantPos: secondLeg?.pos,
-            secondTotal: secondLeg?.total,
-            secondDeliveryFee: secondLeg?.deliveryFee,
-            secondItems: secondLeg?.items,
-          ),
-        ));
-        // Al volver de la entrega (completada o cancelada), se refresca
-        // coins/repartos/dinero desde el servidor — si sí se completó,
-        // entrega_activa_screen.dart ya los incrementó allá.
-        final uid = Supabase.instance.client.auth.currentUser?.id;
-        if (uid != null && mounted) {
-          final prev = _repartos;
-          await _loadStats(uid);
-          _checkLogros(prev);
-        }
-      }
+      if (mounted) await _openEntregaActiva(primaryRaw, secondRaw);
     } catch (e) {
       if (mounted) {
         final yaNoDisponible = e.toString().contains('Ya se lo llevó otro repartidor');

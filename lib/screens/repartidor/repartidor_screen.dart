@@ -281,6 +281,7 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     super.initState();
     _initGPS();
     _loadOrders();
+    _resumeActiveDelivery();
     _ordersChannel = SupabaseService.subscribeToOrders(_loadOrders);
     _pollTimer = Timer.periodic(const Duration(seconds: 8), (_) => _loadOrders());
     AuthService.getDisplayName().then((n) { if (mounted) setState(() => _displayName = n); });
@@ -539,7 +540,69 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
     return result;
   }
 
+  // Antes nada revisaba si un pedido YA ACEPTADO por este repartidor se
+  // cancelaba mientras seguía "en curso" en pantalla — el repartidor podía
+  // seguir viajando hacia un pedido que el restaurante ya había cancelado,
+  // y solo se enteraba al llegar. Se aprovecha este mismo timer de 8s en
+  // vez de agregar uno nuevo.
+  Future<void> _checkActiveOrderCancelled() async {
+    if (_activeOrder == null) return;
+    String? status;
+    try {
+      status = await SupabaseService.getOrderStatus(_activeOrder!.id);
+    } catch (_) {
+      return;
+    }
+    if (!mounted || status != 'cancelled') return;
+    _broadcastTimer?.cancel();
+    SupabaseService.stopLocationBroadcast();
+    setState(() { _activeOrder = null; _step = 0; _routePoints = []; _lastRouteFetchPos = null; });
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('El restaurante canceló este pedido.'),
+      backgroundColor: Colors.redAccent,
+    ));
+  }
+
+  // Al reabrir la app con una entrega ya en curso (accepted/delivering),
+  // antes se perdía: esta pantalla siempre arrancaba mostrando la lista de
+  // pedidos disponibles, sin forma de retomarla.
+  Future<void> _resumeActiveDelivery() async {
+    try {
+      final data = await SupabaseService.getMyAssignedOrders();
+      if (!mounted || data.isEmpty) return;
+      final merged = _mergeGrouped(data.map(_Order.fromMap).toList());
+      if (merged.isEmpty) return;
+      final order = merged.first;
+      setState(() {
+        _activeOrder = order;
+        _geocodedCustomerPos = order.hasExactCoords ? order.customerPos : null;
+        _step = 0;
+        _routePoints = [];
+        _lastRouteFetchPos = null;
+      });
+      if (!order.hasExactCoords) _geocodeCustomer(order.address);
+      SupabaseService.startLocationBroadcast(order.id);
+      _loadCustomerProfile(order);
+
+      final status = await SupabaseService.getOrderStatus(order.id);
+      if (!mounted) return;
+      final from = _myPos != null ? LatLng(_myPos!.latitude, _myPos!.longitude) : order.restaurantPos;
+      if (status == 'delivering') {
+        final finalStep = _finalizeIndexFor(order);
+        final clientPos = _geocodedCustomerPos ?? order.customerPos;
+        setState(() => _step = finalStep);
+        _fetchRoute(from, clientPos, color: _colorForStep(order, finalStep));
+      } else {
+        _fetchRoute(from, order.restaurantPos, color: const Color(0xFFFFB300));
+      }
+    } catch (_) {
+      // Sin red justo al abrir la app: no es grave, el rider puede
+      // reintentar recargando la pantalla más tarde.
+    }
+  }
+
   Future<void> _loadOrders() async {
+    await _checkActiveOrderCancelled();
     try {
       final data = await SupabaseService.getOrdersForRepartidor();
       if (!mounted) return;
@@ -1647,11 +1710,29 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
               _broadcastTimer?.cancel();
               _broadcastTimer = null;
               SupabaseService.stopLocationBroadcast();
-              await SupabaseService.releaseOrderFromRider(order.id);
+              // Antes sin try/catch: si esto fallaba (sin red, por ejemplo)
+              // el pedido se quedaba asignado a este rider sin que se
+              // enterara — ni error ni forma de reintentar.
+              Object? error;
+              try {
+                await SupabaseService.releaseOrderFromRider(order.id);
+              } catch (e) {
+                error = e;
+              }
               if (order.secondOrderId != null) {
-                await SupabaseService.releaseOrderFromRider(order.secondOrderId!);
+                try {
+                  await SupabaseService.releaseOrderFromRider(order.secondOrderId!);
+                } catch (e) {
+                  error = e;
+                }
               }
               if (!mounted) return;
+              if (error != null) {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: const Text('No se pudo soltar el pedido del todo. Si sigue asignado a ti, avísanos.'),
+                  backgroundColor: Colors.red[700],
+                ));
+              }
               setState(() {
                 _activeOrder = null;
                 _step = 0;

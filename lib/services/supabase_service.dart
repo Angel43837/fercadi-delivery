@@ -2428,6 +2428,25 @@ class SupabaseService {
     };
   }
 
+  // Para retomar una entrega en curso al reabrir la app (antes se perdía
+  // por completo: ni EntregaActivaScreen guarda nada local, ni
+  // getOrdersForRepartidor incluye 'delivering'). Misma forma que
+  // getOrdersForRepartidor para poder reusar _legFields/_openEntregaActiva
+  // tal cual del lado de la app.
+  static Future<List<Map<String, dynamic>>> getMyAssignedOrders() async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) return [];
+    final data = await _client
+        .from('orders')
+        .select(
+          '*, restaurants(name, address, image_url, lat, lng), order_items(quantity, price, notes, products(id, name))',
+        )
+        .eq('repartidor_id', userId)
+        .inFilter('status', ['accepted', 'delivering'])
+        .order('created_at', ascending: false);
+    return (data as List).cast<Map<String, dynamic>>();
+  }
+
   static Future<List<Map<String, dynamic>>> getOrdersForRepartidor() async {
     final userId = _client.auth.currentUser?.id;
     // Solo pedidos ya confirmados por el restaurante y sin repartidor
