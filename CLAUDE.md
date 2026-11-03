@@ -644,3 +644,27 @@ Aplicadas y verificadas en Pruebas (`ymztoayxzewghbethahv`) el 2 nov 2026.
 
 - Fuente: `documentos/modelos_3d/gogo_rider.py` (script de Blender) y `gogo_rider.blend`. Para regenerar: `blender --background --factory-startup --python documentos/modelos_3d/gogo_rider.py -- <carpeta_salida>` → copia el `.glb` resultante a `assets/models/`.
 - Android: `model_viewer_plus` sirve el modelo por HTTP local → `res/xml/network_security_config.xml` permite texto plano SOLO para localhost/127.0.0.1 (no usar `usesCleartextTraffic="true"`, que lo abre para todo). iOS: `io.flutter.embedded_views_preview` en `Info.plist`/`Info-Pruebas.plist`.
+
+---
+
+## Ronda grande de pagos/pedidos/tiendas — nov 2026 (rama `fix/seguridad-dev`)
+
+Aplicado y probado en Pruebas (`ymztoayxzewghbethahv`); **falta aplicar a GOGO Food** (`dlukaxbcyetcdbdjjgct`) y probar en dispositivo real antes de mezclar a `dev`. Commits de esta ronda: `6c5a164` (pagos), `2297e12` (pedidos/cuentas), `ee37ecd` (repartidor), `419d2d3` (tiendas), `5c78238` (admin/dueño).
+
+**Pagos**: `confirmCardPayment` se reintenta 3 veces con espera creciente antes de rendirse; si Stripe de verdad cobró tarde, `abandonCardPayment` ya lo detecta (antes lo ignoraba). Pedido que se queda `awaiting_payment` más de 30 min: lo resuelve solo un job nuevo (`sweep-awaiting-payments`, pg_cron cada 10 min — **Edge Function sin desplegar todavía, pendiente de confirmación explícita**, ver abajo). Pedido de 2 restaurantes: si una pierna falla (efectivo o tarjeta) se cancela la otra en vez de dejarla huérfana; cancelar desde tracking_screen cancela las dos piernas. Propinas: `create-tip-payment-intent` + tabla `order_tips` (nueva), `get_rider_balance()` ya las suma, `rating_dialog` ya no pierde la calificación si falla el cobro.
+
+**Repartidor**: GOGO Riders y Motos Flota retoman solas una entrega `accepted`/`delivering` al reabrir la app (antes se perdía); si ya iba `delivering` retoman directo ahí, no de vuelta al restaurante. Ambas pantallas detectan si el restaurante canceló el pedido mientras el rider seguía en camino. `releaseOrderFromRider` ya tiene try/catch.
+
+**Cuentas/pedidos**: `getActiveOrders` (panel del dueño) ya no oculta un pedido activo viejo. Cerrar sesión/borrar cuenta vacían el carrito y el cupón. `deleteRestaurant` ya no borra historial (desactiva + cancela solo lo activo) ni trona (ya no toca `product_images`, que no existe). Ganancia mostrada al repartidor: envío real menos comisión, no 15% del total. `delete_my_account` ya no bloquea por un `awaiting_payment` viejo abandonado.
+
+**Tiendas (Apple/Google)**: se quita el permiso de push al arrancar y `UIBackgroundModes=remote-notification` (FCM no está configurado todavía); textos de ubicación/cámara/red local más claros, ya no se pide ubicación "siempre"; nuevo `PrivacyInfo.xcprivacy` (**falta agregarlo al proyecto de Xcode a mano, ver pendiente abajo**); aviso de privacidad ampliado (datos de repartidor/dueño, chat, propinas, consentimiento para CLABE); `privacy_policy.html` reescrita (ya no tiene el Gmail personal); nuevo `eliminar_cuenta.html`; `profile_screen.dart` ya enlaza privacidad/términos. `STRIPE_PUBLISHABLE_KEY` ya sale por `--dart-define` (ver sección de compilación de producción, arriba) — antes GOGO Food habría compilado con la llave de pruebas.
+
+**Admin/dueño**: Admin "Aceptar" ya no avanza `restaurant_accepted→accepted` sin repartidor asignado; Admin "Cancelar" pide confirmación. Dueño sin restaurante encontrado: se le ofrece ir a registrar su restaurante en la página web (el registro dentro de la app ya no existe). `clearDuenoSession` ya borra también el `restaurant_id` en caché. El banner con % de descuento tachado ahora sí se cobra de verdad en `place_order` (antes solo se mostraba).
+
+**Pendiente, necesita algo de tu parte:**
+- Desplegar la Edge Function `sweep-awaiting-payments` (ya escrita, `--no-verify-jwt` porque la llama un cron job, no una persona) — el modo automático pidió confirmación explícita antes de desplegar algo con esa bandera.
+- Correr a mano en el SQL Editor de Supabase (nunca en un archivo): guardar el `service_role_key` en Vault y la URL del proyecto — ver el comentario completo en `supabase/migrations/20261103000000_sweep_awaiting_payments.sql`. Sin esto el cron job existe pero no hace nada (falla en silencio).
+- Agregar `ios/Runner/PrivacyInfo.xcprivacy` al proyecto de Xcode a mano (File → Add Files to "Runner"...) — el archivo ya existe en disco pero Xcode no lo va a incluir en el build solo por eso.
+- `lib/core/legal_content.dart`: `kLegalFullAddress` sigue en `[DOMICILIO_COMPLETO]` — falta el domicilio fiscal/real.
+- Probar en dispositivo real los flujos de esta ronda (efectivo y tarjeta de 1 y 2 restaurantes, 3DS tardado, cancelar un pedido de 2 restaurantes, el rider reiniciando la app a medio reparto, borrar cuenta con un `awaiting_payment` viejo) — no se pudo probar en un iPhone real desde esta sesión.
+- `git push` de la rama `fix/seguridad-dev` — pendiente, el modo automático bloqueó pasar el token por la URL del remoto (por diseño); hace falta decidir cómo autenticar el push.
