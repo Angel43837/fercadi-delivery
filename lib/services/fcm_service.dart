@@ -32,7 +32,13 @@ class FcmService {
     try {
       await Firebase.initializeApp();
       final messaging = FirebaseMessaging.instance;
-      await messaging.requestPermission(alert: true, badge: true, sound: true);
+      // Sin FCM configurado de verdad (sin los archivos de arriba,
+      // Firebase.initializeApp() ya truena antes de llegar aquí), pedir
+      // permiso de notificaciones push no tiene caso — y Apple/Google
+      // revisan mal una app que pide un permiso para algo que todavía no
+      // hace nada. Se quita hasta que haya un proyecto de Firebase real;
+      // reactivar entonces junto con una pantalla propia explicando para
+      // qué sirve, en vez de pedirlo a ciegas al abrir la app.
       _token = await messaging.getToken();
       messaging.onTokenRefresh.listen((newToken) => _token = newToken);
 

@@ -999,6 +999,36 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ),
 
+          const SizedBox(height: 20),
+          _SectionLabel('Legal'),
+          const SizedBox(height: 8),
+          Container(
+            decoration: BoxDecoration(color: cardBg, borderRadius: BorderRadius.circular(16)),
+            child: Column(children: [
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: Colors.blueGrey.withValues(alpha: 0.12), shape: BoxShape.circle),
+                  child: Icon(Icons.privacy_tip_outlined, color: Colors.blueGrey, size: 20),
+                ),
+                title: Text('Aviso de privacidad', style: TextStyle(color: cardText, fontWeight: FontWeight.w600)),
+                trailing: Icon(Icons.chevron_right, color: cardChev),
+                onTap: () => context.push('/privacy-policy'),
+              ),
+              Divider(height: 1, color: cardDiv, indent: 16, endIndent: 16),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: Colors.blueGrey.withValues(alpha: 0.12), shape: BoxShape.circle),
+                  child: Icon(Icons.description_outlined, color: Colors.blueGrey, size: 20),
+                ),
+                title: Text('Términos y condiciones', style: TextStyle(color: cardText, fontWeight: FontWeight.w600)),
+                trailing: Icon(Icons.chevron_right, color: cardChev),
+                onTap: () => context.push('/terms'),
+              ),
+            ]),
+          ),
+
           // ── Sesión ──────────────────────────────────────────────────────────
           _SectionLabel('Sesión'),
           const SizedBox(height: 8),

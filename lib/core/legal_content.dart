@@ -7,8 +7,13 @@
 const String kPrivacyContactEmail = 'privacidad@fercadi.com';
 const String kLegalBusinessName = 'Grupo Fercadi';
 const String kLegalCity = 'Maravatío, Michoacán';
+// Domicilio completo (calle y número) — todavía no se tiene el dato real;
+// cambiar por el domicilio fiscal/real en cuanto se tenga. A diferencia de
+// kLegalBusinessName/kPrivacyContactEmail (ya tienen un valor real puesto),
+// esto nunca se llenó.
+const String kLegalFullAddress = '[DOMICILIO_COMPLETO]';
 
-const String kLastUpdatedLegal = 'Octubre de 2026';
+const String kLastUpdatedLegal = 'Noviembre de 2026';
 
 // Versión corta para registrar en `legal_acceptances` (qué versión aceptó
 // cada cuenta y cuándo) — deliberadamente separada de kLastUpdatedLegal:
@@ -19,14 +24,14 @@ const String kLastUpdatedLegal = 'Octubre de 2026';
 // este valor identifica a las cuentas que aceptaron una versión vieja —
 // no se construyó ningún flujo de "re-aceptación forzosa" todavía (fuera
 // de alcance de esta sesión), queda como posible mejora futura.
-const String kLegalVersion = '2026-10';
+const String kLegalVersion = '2026-11';
 
 const String kPrivacyPolicy = '''
 AVISO DE PRIVACIDAD
 
 Última actualización: $kLastUpdatedLegal
 
-$kLegalBusinessName ("GOGO Food", "nosotros"), con domicilio en $kLegalCity, México, es responsable del tratamiento de tus datos personales conforme a la Ley Federal de Protección de Datos Personales en Posesión de los Particulares.
+$kLegalBusinessName ("GOGO Food", "nosotros"), con domicilio en $kLegalFullAddress, $kLegalCity, México, es responsable del tratamiento de tus datos personales conforme a la Ley Federal de Protección de Datos Personales en Posesión de los Particulares.
 
 1. DATOS PERSONALES QUE RECABAMOS
 
@@ -36,11 +41,21 @@ Para poder ofrecerte el servicio de pedidos y entrega a domicilio, recabamos:
 • Dirección de entrega y ubicación (GPS), para calcular la zona de cobertura y rastrear tu pedido en tiempo real.
 • Fotografía de perfil, si decides subir una.
 • Historial de pedidos: qué pediste, en qué restaurante, fecha y monto.
+• Mensajes del chat de soporte y del chat del pedido (cliente-repartidor), para poder ayudarte y resolver incidencias.
+• Calificaciones y propinas que das o recibes al terminar un pedido.
 • Datos de pago: los procesa directamente nuestro proveedor de pagos (Stripe); nosotros no almacenamos el número completo de tu tarjeta.
 • Si inicias sesión con Google, Facebook o Apple ("Iniciar sesión con Apple", disponible en iPhone), recibimos tu nombre, correo y foto de perfil públicos de esas plataformas.
 • Datos técnicos de fallos de la app (reporte de errores), recabados automáticamente por nuestro proveedor de monitoreo (Sentry) para poder corregir problemas — no incluyen tu contraseña ni datos de pago.
 
+Si te registras como REPARTIDOR, además recabamos: identificación oficial (frente y reverso), comprobante de domicilio, tipo de vehículo, ciudad donde operas, y tu CLABE interbancaria para poder pagarte tus retiros.
+
+Si te registras como DUEÑO DE RESTAURANTE, además recabamos: el teléfono y la dirección de tu local, y los datos de tu cuenta de cobro de Stripe Connect (para poder transferirte lo que vendes).
+
 No recabamos datos personales sensibles (salud, origen étnico, creencias religiosas, etc.).
+
+1.1 DATOS FINANCIEROS Y PATRIMONIALES (CLABE Y CUENTA DE COBRO)
+
+Tu CLABE interbancaria (si eres repartidor) o los datos de tu cuenta de cobro de Stripe Connect (si eres dueño de restaurante) son datos financieros/patrimoniales — se recaban únicamente con tu consentimiento expreso, que nos das al capturarlos en la pantalla correspondiente de la app (no se piden ni se usan para ningún otro fin). Puedes revocar este consentimiento eliminando tu cuenta, lo que borra esos datos de inmediato — ver sección 4.
 
 2. FINALIDADES DEL TRATAMIENTO
 
