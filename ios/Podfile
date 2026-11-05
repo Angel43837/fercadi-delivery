@@ -55,5 +55,19 @@ post_install do |installer|
       config.build_settings['ARCHS'] = 'arm64'
       config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'i386 armv7'
     end
+    # La app nunca pide ubicación "siempre" (se quitó
+    # NSLocationAlwaysAndWhenInUseUsageDescription de los Info.plist) — pero
+    # el binario de geolocator_apple sigue trayendo la llamada a
+    # requestAlwaysAuthorization aunque nunca se ejecute en tiempo real, y el
+    # escáner estático de Apple revisa el binario, no el flujo real: eso solo
+    # ya puede disparar el rechazo ITMS-90683 ("falta el texto de uso para
+    # una API que sí usa el binario"). Este flag saca esa llamada del
+    # binario por completo (ver geolocator_apple/CHANGELOG.md).
+    if target.name == 'geolocator_apple'
+      target.build_configurations.each do |config|
+        config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= ['$(inherited)']
+        config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] << 'BYPASS_PERMISSION_LOCATION_ALWAYS=1'
+      end
+    end
   end
 end
