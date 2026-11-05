@@ -13,7 +13,13 @@ import WidgetKit
 import MapKit
 import UIKit
 
-private let appGroupId = "group.com.fercadi.app"
+// Antes fijo a "group.com.fercadi.app" — GOGO Food y GOGO Pruebas ya usan
+// App Groups separados por flavor (ver Bloque 2, nov 2026), así que el
+// widget necesita leer el suyo real en vez de un valor fijo compartido. Se
+// inyecta vía APP_GROUP_ID (build setting por flavor) -> AppGroupID (clave
+// de Info.plist) -> aquí. El fallback solo cubre un Info.plist roto/viejo.
+private let appGroupId =
+  (Bundle.main.object(forInfoDictionaryKey: "AppGroupID") as? String) ?? "group.com.fercadi.app"
 private let mapSnapshotTimeout: TimeInterval = 4.0
 private let mapSnapshotSize = CGSize(width: 342, height: 162)
 

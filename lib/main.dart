@@ -57,7 +57,7 @@ void main() async {
   await SystemChrome.setPreferredOrientations(
       [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown]);
   if (kIsWeb) usePathUrlStrategy();
-  if (!kIsWeb) await HomeWidget.setAppGroupId('group.com.fercadi.app');
+  if (!kIsWeb) await HomeWidget.setAppGroupId(AppConstants.appGroupId);
 
   // Sin DSN no hay a dónde reportar: inicializar Sentry igual prende sesión
   // replay, tracking de vistas y capturas de pantalla en segundo plano,

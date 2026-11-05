@@ -20,6 +20,19 @@ class AppConstants {
   // Service role key — Settings > API > service_role en tu dashboard de Supabase
   static const String supabaseServiceRoleKey = '';
 
+  // App Group de iOS (HomeWidget, para pasarle datos al widget de
+  // seguimiento) — antes fijo a "group.com.fercadi.app" sin importar el
+  // flavor, igual que pasaba del lado nativo (ver Bloque 2, nov 2026: ahora
+  // Xcode ya usa un grupo separado por flavor vía APP_GROUP_ID). GOGO Food
+  // DEBE compilarse con --dart-define=APP_GROUP_ID=group.com.fercadi.app
+  // para que coincida con el entitlement real de ese flavor — si no
+  // coincide, HomeWidget simplemente no encuentra los datos (falla en
+  // silencio, el widget se queda en su estado vacío).
+  static const String appGroupId = String.fromEnvironment(
+    'APP_GROUP_ID',
+    defaultValue: 'group.com.fercadi.app.pruebas',
+  );
+
   // Google Maps — usada tanto para el SDK de mapas como para Geocoding API
   static const String googleMapsApiKey = 'AIzaSyDGxOWhjgxZsHjsgDtZdMlJ7q2OYzdYHDE';
 

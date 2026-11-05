@@ -1,4 +1,5 @@
 {
   "SUPABASE_URL": "https://ymztoayxzewghbethahv.supabase.co",
-  "SUPABASE_ANON_KEY": "sb_publishable_eEimQboqykVjDWpnXG8VNQ_iVlNhgbo"
+  "SUPABASE_ANON_KEY": "sb_publishable_eEimQboqykVjDWpnXG8VNQ_iVlNhgbo",
+  "APP_GROUP_ID": "group.com.fercadi.app.pruebas"
 }

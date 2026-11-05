@@ -566,8 +566,11 @@ Hasta el 7 de octubre de 2026, **todos** los flavors de iOS/Android usaban la mi
 flutter build ios --release \
   --dart-define=SUPABASE_URL=https://dlukaxbcyetcdbdjjgct.supabase.co \
   --dart-define=SUPABASE_ANON_KEY=sb_publishable_MH72EXetLYHXKgklsUJ2Lw_zGLRohVY \
-  --dart-define=STRIPE_PUBLISHABLE_KEY=pk_live_...
+  --dart-define=STRIPE_PUBLISHABLE_KEY=pk_live_... \
+  --dart-define=APP_GROUP_ID=group.com.fercadi.app
 ```
+
+**`APP_GROUP_ID` (nov 2026, Bloque 2):** sin este define, GOGO Food usaría por default el App Group de Pruebas (`group.com.fercadi.app.pruebas`) — el widget de seguimiento nunca encontraría los datos reales del pedido (`HomeWidget` lee del grupo equivocado, falla en silencio). El lado nativo (entitlements de `Runner` y de `GOGOTrackingWidgetExtension`) ya usa `group.com.fercadi.app` para este flavor automáticamente vía los xcconfig de Xcode — este `--dart-define` solo es para que el lado Flutter (`HomeWidget.setAppGroupId`) coincida.
 
 **`STRIPE_PUBLISHABLE_KEY` (nov 2026):** antes `lib/core/constants.dart` traía la `pk_test_...` de Stripe escrita fija, así que un build de producción real seguía cobrando (o más bien, intentando cobrar) con la llave de pruebas sin que nadie lo notara — ningún pago real habría funcionado, pero tampoco habría dado ningún error obvio hasta que un cliente de verdad intentara pagar. Ahora sale de `String.fromEnvironment('STRIPE_PUBLISHABLE_KEY', ...)`, con la `pk_test` como default (igual que `SUPABASE_URL`/`SUPABASE_ANON_KEY`) — GOGO Food necesita pasar la `pk_live_...` real de la cuenta de Stripe de producción al compilar, GOGO Pruebas se queda sin tocar nada.
 
