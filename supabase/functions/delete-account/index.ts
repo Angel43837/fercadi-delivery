@@ -75,6 +75,27 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     )
+
+    // La fila de `drivers` se borra sola al borrar auth.users (FK ON DELETE
+    // CASCADE), pero los ARCHIVOS reales en el bucket privado
+    // `identificaciones` (INE frente/reverso, comprobante de domicilio) no
+    // se cascadean nunca — se quedarían huérfanos en Storage para siempre,
+    // justo el tipo de dato más sensible que la cuenta tiene. Se borran
+    // aquí, antes de borrar la cuenta, con service_role (el bucket es
+    // privado — ni el propio dueño puede borrarlos directo).
+    const { data: driver } = await admin
+      .from('drivers')
+      .select('id_front_path, id_back_path, proof_of_address_path')
+      .eq('id', user.id)
+      .maybeSingle()
+    if (driver) {
+      const paths = [driver.id_front_path, driver.id_back_path, driver.proof_of_address_path]
+        .filter((p): p is string => typeof p === 'string' && p.length > 0)
+      if (paths.length > 0) {
+        await admin.storage.from('identificaciones').remove(paths)
+      }
+    }
+
     const { error: deleteError } = await admin.auth.admin.deleteUser(user.id)
     if (deleteError) {
       return new Response(
