@@ -205,6 +205,24 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
   }
 
   Timer? _cancelCheckTimer;
+  // En un pedido de 2 restaurantes cada pierna se puede cancelar aparte —
+  // antes esto solo vigilaba widget.orderId: si la OTRA pierna se cancelaba,
+  // nadie se enteraba, y si ESTA se cancelaba, cerraba toda la pantalla
+  // aunque la otra entrega siguiera viva. Ahora se vigilan las dos y la
+  // pantalla solo se cierra si las dos ya están canceladas.
+  bool _firstLegCancelled = false;
+  bool _secondLegCancelled = false;
+
+  // Cierra cualquier diálogo abierto (ej. el de "¿cancelar entrega?") antes
+  // de navegar fuera de esta pantalla — si un pop automático (esta misma
+  // vigilancia) ocurre con un diálogo abierto encima, el Navigator se queda
+  // en un estado roto.
+  void _dismissAnyDialog() {
+    final nav = Navigator.of(context, rootNavigator: true);
+    if (nav.canPop()) {
+      nav.popUntil((route) => route is! DialogRoute);
+    }
+  }
 
   // Revisa cada 6s si el restaurante/admin canceló este pedido mientras el
   // repartidor ya iba en camino — antes nada lo revisaba del lado del
@@ -212,21 +230,52 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
   // que llegaba y se enteraba a mano.
   void _watchForCancellation() {
     _cancelCheckTimer = Timer.periodic(const Duration(seconds: 6), (_) async {
-      String? status;
-      try {
-        status = await SupabaseService.getOrderStatus(widget.orderId);
-      } catch (_) {
+      if (!mounted) return;
+      final wasFirst = _firstLegCancelled;
+      final wasSecond = _secondLegCancelled;
+
+      if (!_firstLegCancelled) {
+        try {
+          if (await SupabaseService.getOrderStatus(widget.orderId) == 'cancelled') {
+            _firstLegCancelled = true;
+          }
+        } catch (_) {}
+      }
+      if (widget.secondOrderId != null && !_secondLegCancelled) {
+        try {
+          if (await SupabaseService.getOrderStatus(widget.secondOrderId!) == 'cancelled') {
+            _secondLegCancelled = true;
+          }
+        } catch (_) {}
+      }
+      if (!mounted) return;
+
+      final newlyFirst = _firstLegCancelled && !wasFirst;
+      final newlySecond = _secondLegCancelled && !wasSecond;
+      if (!newlyFirst && !newlySecond) return;
+
+      final bothGone = _firstLegCancelled && (widget.secondOrderId == null || _secondLegCancelled);
+      if (bothGone) {
+        _cancelCheckTimer?.cancel();
+        _broadcastTimer?.cancel();
+        SupabaseService.stopLocationBroadcast();
+        _dismissAnyDialog();
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('El restaurante canceló este pedido.'),
+          backgroundColor: Colors.redAccent,
+        ));
+        Navigator.of(context).pop();
         return;
       }
-      if (!mounted || status != 'cancelled') return;
-      _cancelCheckTimer?.cancel();
-      _broadcastTimer?.cancel();
-      SupabaseService.stopLocationBroadcast();
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('El restaurante canceló este pedido.'),
+
+      // Solo una pierna se canceló — se avisa y se sigue con la otra, no se
+      // cierra la pantalla ni se detiene la transmisión de ubicación.
+      setState(() {});
+      final canceledName = newlyFirst ? widget.restaurantName : widget.secondRestaurantName;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('$canceledName canceló su parte del pedido — sigue con la otra entrega.'),
         backgroundColor: Colors.redAccent,
       ));
-      Navigator.of(context).pop();
     });
   }
 
@@ -387,8 +436,13 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
     if (_step < finalizeIndex) {
       if (_step + 1 == finalizeIndex) {
         // Primero el servidor, después la UI — si falla, el paso no avanza.
-        await SupabaseService.updateOrderStatus(widget.orderId, 'delivering');
-        if (widget.secondOrderId != null) {
+        // Una pierna ya cancelada (ver _watchForCancellation) nunca se
+        // intenta mover de estado — guard_order_changes no permite
+        // 'cancelled' -> 'delivering' y tronaría el avance de la otra.
+        if (!_firstLegCancelled) {
+          await SupabaseService.updateOrderStatus(widget.orderId, 'delivering');
+        }
+        if (widget.secondOrderId != null && !_secondLegCancelled) {
           await SupabaseService.updateOrderStatus(widget.secondOrderId!, 'delivering');
         }
       }
@@ -418,8 +472,11 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
         _fetchRoute(from, clientPos, color: const Color(0xFF2196F3));
       }
     } else {
-      await SupabaseService.updateOrderStatus(widget.orderId, 'delivered');
-      if (widget.secondOrderId != null) {
+      // Mismo candado que arriba: una pierna ya cancelada no se toca.
+      if (!_firstLegCancelled) {
+        await SupabaseService.updateOrderStatus(widget.orderId, 'delivered');
+      }
+      if (widget.secondOrderId != null && !_secondLegCancelled) {
         await SupabaseService.updateOrderStatus(widget.secondOrderId!, 'delivered');
       }
       _broadcastTimer?.cancel();
@@ -432,10 +489,13 @@ class _EntregaActivaScreenState extends State<EntregaActivaScreen> with WidgetsB
       // Antes usaba combinedTotal*0.15 (15% del total del pedido, sin
       // relación con lo que de verdad cobra un repartidor) — ahora el envío
       // real menos la comisión de la plataforma, igual que
-      // repartidor_screen.dart y get_rider_balance().
+      // repartidor_screen.dart y get_rider_balance(). Una pierna cancelada
+      // nunca pasó a 'delivered', así que el trigger del servidor no la
+      // cuenta — tampoco debe aparecer aquí en la notificación local.
+      final earnedFee = (_firstLegCancelled ? 0 : widget.deliveryFee) +
+          (_secondLegCancelled ? 0 : (widget.secondDeliveryFee ?? 0));
       NotificationService.entregaCompletada(
-        (widget.deliveryFee + (widget.secondDeliveryFee ?? 0)) *
-            (1 - LocationService.comisionRepartidorPct / 100),
+        earnedFee * (1 - LocationService.comisionRepartidorPct / 100),
       );
       if (!mounted) return;
       await showRatingDialog(context, orderId: widget.orderId, isDriver: true);

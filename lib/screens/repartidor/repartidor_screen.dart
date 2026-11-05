@@ -545,20 +545,55 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
   // seguir viajando hacia un pedido que el restaurante ya había cancelado,
   // y solo se enteraba al llegar. Se aprovecha este mismo timer de 8s en
   // vez de agregar uno nuevo.
+  // ids de pierna ya confirmados como cancelados — nunca se limpia al
+  // cambiar de pedido activo: los ids de pedido son únicos y no se reusan,
+  // así que un id viejo aquí jamás coincide con un pedido nuevo.
+  final Set<String> _cancelledLegIds = {};
+
   Future<void> _checkActiveOrderCancelled() async {
-    if (_activeOrder == null) return;
-    String? status;
-    try {
-      status = await SupabaseService.getOrderStatus(_activeOrder!.id);
-    } catch (_) {
+    final order = _activeOrder;
+    if (order == null) return;
+    // Antes solo vigilaba order.id — en un pedido de 2 restaurantes, si la
+    // OTRA pierna se cancelaba, nadie se enteraba (el rider seguía
+    // "entregando" algo que ya no existía del todo), y si ESTA se
+    // cancelaba, se perdía TODO el viaje aunque la otra entrega siguiera
+    // viva. Ahora se vigilan las 2 por separado.
+    final candidates = [order.id, if (order.secondOrderId != null) order.secondOrderId!];
+    final newlyCancelled = <String>[];
+    for (final id in candidates) {
+      if (_cancelledLegIds.contains(id)) continue;
+      String? status;
+      try {
+        status = await SupabaseService.getOrderStatus(id);
+      } catch (_) {
+        continue;
+      }
+      if (status == 'cancelled') {
+        _cancelledLegIds.add(id);
+        newlyCancelled.add(id);
+      }
+    }
+    if (!mounted || newlyCancelled.isEmpty) return;
+
+    final firstGone = _cancelledLegIds.contains(order.id);
+    final secondGone = order.secondOrderId == null || _cancelledLegIds.contains(order.secondOrderId);
+    if (firstGone && secondGone) {
+      _broadcastTimer?.cancel();
+      SupabaseService.stopLocationBroadcast();
+      setState(() { _activeOrder = null; _step = 0; _routePoints = []; _lastRouteFetchPos = null; });
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('El restaurante canceló este pedido.'),
+        backgroundColor: Colors.redAccent,
+      ));
       return;
     }
-    if (!mounted || status != 'cancelled') return;
-    _broadcastTimer?.cancel();
-    SupabaseService.stopLocationBroadcast();
-    setState(() { _activeOrder = null; _step = 0; _routePoints = []; _lastRouteFetchPos = null; });
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-      content: Text('El restaurante canceló este pedido.'),
+
+    // Solo una pierna se canceló — se avisa y se sigue con la otra.
+    setState(() {});
+    final canceledId = newlyCancelled.first;
+    final canceledName = canceledId == order.id ? order.restaurantName : order.secondRestaurantName;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('$canceledName canceló su parte del pedido — sigue con la otra entrega.'),
       backgroundColor: Colors.redAccent,
     ));
   }
@@ -842,8 +877,12 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
         // "delivering" para TODAS sus piernas (cada fila de "orders" avanza
         // su propio status, pero desde la perspectiva del rider es un solo
         // viaje continuo). Primero el servidor, después la UI.
-        await SupabaseService.updateOrderStatus(order.id, 'delivering');
-        if (order.secondOrderId != null) {
+        // Una pierna ya cancelada (ver _checkActiveOrderCancelled) nunca se
+        // toca — guard_order_changes no permite 'cancelled' -> 'delivering'.
+        if (!_cancelledLegIds.contains(order.id)) {
+          await SupabaseService.updateOrderStatus(order.id, 'delivering');
+        }
+        if (order.secondOrderId != null && !_cancelledLegIds.contains(order.secondOrderId)) {
           await SupabaseService.updateOrderStatus(order.secondOrderId!, 'delivering');
         }
       }
@@ -876,14 +915,21 @@ class _RepartidorScreenState extends State<RepartidorScreen> {
       }
     } else {
       final orderId = order.id;
+      final firstCancelled = _cancelledLegIds.contains(order.id);
+      final secondCancelled = order.secondOrderId != null && _cancelledLegIds.contains(order.secondOrderId);
       // Antes usaba combinedTotal*0.15 (15% del total del pedido, sin
       // relación con lo que de verdad cobra un repartidor) — ahora el mismo
       // cálculo que ya se usa para la estimación en la lista (línea ~1087):
-      // el envío real menos la comisión de la plataforma.
-      final ganancia = (order.deliveryFee + (order.secondDeliveryFee ?? 0)) *
+      // el envío real menos la comisión de la plataforma. Una pierna
+      // cancelada nunca pasa a 'delivered' (el servidor no la cuenta), así
+      // que tampoco cuenta aquí.
+      final ganancia = ((firstCancelled ? 0 : order.deliveryFee) +
+              (secondCancelled ? 0 : (order.secondDeliveryFee ?? 0))) *
           (1 - LocationService.comisionRepartidorPct / 100);
-      await SupabaseService.updateOrderStatus(orderId, 'delivered');
-      if (order.secondOrderId != null) {
+      if (!firstCancelled) {
+        await SupabaseService.updateOrderStatus(orderId, 'delivered');
+      }
+      if (order.secondOrderId != null && !secondCancelled) {
         await SupabaseService.updateOrderStatus(order.secondOrderId!, 'delivered');
       }
       _broadcastTimer?.cancel();
