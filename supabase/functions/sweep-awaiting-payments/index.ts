@@ -72,7 +72,7 @@ Deno.serve(async (req) => {
   // Agrupa por payment intent (un mismo cobro puede cubrir 2 pedidos, los de
   // un pedido de 2 restaurantes) para no revisarlo dos veces ni confirmar
   // uno a medias.
-  const byIntent = new Map<string, { id: string; total: number }[]>()
+  const intentIds = new Set<string>()
   const noIntent: string[] = []
   for (const o of stale) {
     const intentId = o.stripe_payment_intent_id as string | null
@@ -80,9 +80,7 @@ Deno.serve(async (req) => {
       noIntent.push(o.id as string)
       continue
     }
-    const list = byIntent.get(intentId) ?? []
-    list.push({ id: o.id as string, total: o.total as number })
-    byIntent.set(intentId, list)
+    intentIds.add(intentId)
   }
 
   let confirmed = 0
@@ -96,8 +94,20 @@ Deno.serve(async (req) => {
     for (const id of noIntent) results[id] = 'cancelled (sin payment intent)'
   }
 
-  for (const [intentId, orders] of byIntent) {
-    const ids = orders.map((o) => o.id).sort()
+  for (const intentId of intentIds) {
+    // TODOS los pedidos de este PaymentIntent, no solo los que ya llevan 30
+    // min esperando — en un pedido de 2 restaurantes puede que una pierna ya
+    // se haya confirmado (webhook normal) y la otra se quedara atorada; si
+    // aquí solo se mira la pierna vieja, `ids` nunca va a calzar con
+    // `metadata.orderIds` (que trae las 2) y el pago se veía como "no
+    // cuadra" aunque Stripe sí cobró completo — eso cancelaba una pierna ya
+    // pagada de verdad.
+    const { data: siblings } = await admin
+      .from('orders')
+      .select('id, total, status')
+      .eq('stripe_payment_intent_id', intentId)
+    const orders = siblings ?? []
+    const ids = orders.map((o) => o.id as string).sort()
     const amountCents = orders.reduce((sum, o) => sum + Math.round(Number(o.total) * 100), 0)
     const { ok, data: intent } = await stripe(`payment_intents/${intentId}`, stripeSecretKey)
     if (!ok) {
@@ -105,10 +115,8 @@ Deno.serve(async (req) => {
       continue
     }
     const metaIds = String(intent.metadata?.orderIds ?? '').split(',').filter(Boolean).sort()
-    const paid =
-      intent.status === 'succeeded' &&
-      intent.amount_received === amountCents &&
-      metaIds.join(',') === ids.join(',')
+    const matches = intent.amount_received === amountCents && metaIds.join(',') === ids.join(',')
+    const paid = intent.status === 'succeeded' && matches
 
     if (paid) {
       await admin
@@ -121,7 +129,26 @@ Deno.serve(async (req) => {
       continue
     }
 
-    if (!['canceled', 'succeeded', 'processing'].includes(intent.status)) {
+    // Si Stripe dice que el cobro SÍ se completó pero el monto o los ids no
+    // cuadran con lo que hay en la BD, es justo el caso que no se debe tocar
+    // solo — podría ser un pedido editado a mano, una fuga de datos, o un
+    // bug nuevo. Se deja una alerta para revisión humana y no se cancela ni
+    // se confirma nada (mismo criterio que stripe-webhook con el monto).
+    if (intent.status === 'succeeded') {
+      await admin.from('alerts').insert({
+        title: 'Pago completado no coincide con el pedido (sweep)',
+        description: `PaymentIntent ${intentId} succeeded por ${intent.amount_received / 100}` +
+          ` pero los pedidos ${ids.join(', ') || '—'} suman ${amountCents / 100}.` +
+          ` orderIds del intent: ${metaIds.join(', ') || '—'}.`,
+        priority: 'alta',
+        category: 'pagos',
+        status: 'pendiente',
+      })
+      for (const id of ids) results[id] = 'revisión manual (pagado pero no coincide)'
+      continue
+    }
+
+    if (!['canceled', 'processing'].includes(intent.status)) {
       await stripe(`payment_intents/${intentId}/cancel`, stripeSecretKey, { method: 'POST' })
     }
     if (intent.status === 'processing') {
