@@ -81,8 +81,8 @@ class _SplashScreenState extends State<SplashScreen>
       return;
     }
 
-    final role = (supabaseSession.user.appMetadata['role'] ??
-                  supabaseSession.user.userMetadata?['role']) as String?;
+    // Solo app_metadata — ver nota en router.dart.
+    final role = supabaseSession.user.appMetadata['role'] as String?;
 
     final route = switch (role) {
       'dueno'          => '/dueno',

@@ -28,7 +28,10 @@ class _FlotaLoginScreenState extends State<FlotaLoginScreen> {
 
   void _checkExistingSession() {
     final user = Supabase.instance.client.auth.currentUser;
-    final role = (user?.appMetadata['role'] ?? user?.userMetadata?['role']) as String?;
+    // Solo app_metadata decide el rol — user_metadata lo puede editar
+    // cualquier usuario con auth.updateUser(), así que confiar en su
+    // fallback dejaba que cualquiera se autootorgara acceso de Flota.
+    final role = user?.appMetadata['role'] as String?;
     if (role == 'jefe_flota' && mounted) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) context.go('/flota');
@@ -52,7 +55,7 @@ class _FlotaLoginScreenState extends State<FlotaLoginScreen> {
         email: _emailCtrl.text.trim(),
         password: _passCtrl.text.trim(),
       );
-      final role = (res.user?.appMetadata['role'] ?? res.user?.userMetadata?['role']) as String?;
+      final role = res.user?.appMetadata['role'] as String?;
       if (role != 'jefe_flota') {
         await Supabase.instance.client.auth.signOut();
         setState(() { _error = 'Esta cuenta no es de jefe de flota.'; _loading = false; });

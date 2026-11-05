@@ -45,7 +45,8 @@ final _flotaRouter = GoRouter(
   redirect: (context, state) {
     if (state.matchedLocation == '/flota-login') return null;
     final user = Supabase.instance.client.auth.currentUser;
-    final role = (user?.appMetadata['role'] ?? user?.userMetadata?['role']) as String?;
+    // Solo app_metadata — ver nota en flota_login_screen.dart.
+    final role = user?.appMetadata['role'] as String?;
     if (role != 'jefe_flota') return '/flota-login';
     return null;
   },

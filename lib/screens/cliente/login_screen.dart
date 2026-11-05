@@ -113,7 +113,9 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
       if (data.event == AuthChangeEvent.signedIn && !_recovering && mounted) {
         final user  = data.session?.user;
         if (user == null) return;
-        final role  = (user.appMetadata['role'] ?? user.userMetadata?['role']) as String?;
+        // Solo app_metadata decide a dónde se enruta — user_metadata lo
+        // puede editar el propio usuario.
+        final role  = user.appMetadata['role'] as String?;
         final defaultRoute = role == 'repartidor'      ? '/repartidor'
                     : role == 'repartidor_plus' ? '/rider'
                     : role == 'dueno'           ? '/dueno'
@@ -157,7 +159,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     }
     final user = res.user;
     if (user == null) return;
-    final role = (user.appMetadata['role'] ?? user.userMetadata?['role']) as String?;
+    final role = user.appMetadata['role'] as String?;
     final defaultRoute = role == 'repartidor'      ? '/repartidor'
                 : role == 'repartidor_plus' ? '/rider'
                 : role == 'dueno'           ? '/dueno'
@@ -246,7 +248,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
           email: _emailController.text.trim(),
           password: _passwordController.text,
         );
-        final role = (res.user?.appMetadata['role'] ?? res.user?.userMetadata?['role']) as String?;
+        final role = res.user?.appMetadata['role'] as String?;
         final defaultRoute = role == 'repartidor'      ? '/repartidor'
                     : role == 'repartidor_plus' ? '/rider'
                     : role == 'dueno'           ? '/dueno'

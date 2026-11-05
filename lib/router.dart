@@ -94,7 +94,10 @@ final appRouter = GoRouter(
       return '/';
     }
 
-    final role = ((user.appMetadata['role'] ?? user.userMetadata?['role']) as String?) ?? 'cliente';
+    // Solo app_metadata — user_metadata lo puede editar el propio usuario
+    // (auth.updateUser), confiar en su fallback dejaría que cualquiera se
+    // enrutara a sí mismo al panel de otro rol.
+    final role = (user.appMetadata['role'] as String?) ?? 'cliente';
 
     // Cuenta de cliente nueva (por teléfono, correo, Google o Facebook —
     // cualquier método de alta cae aquí igual) que todavía no pasó por el

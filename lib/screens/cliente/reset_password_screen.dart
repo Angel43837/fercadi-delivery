@@ -45,7 +45,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
       final user = await Supabase.instance.client.auth.updateUser(
         UserAttributes(password: pass),
       );
-      final role = (user.user?.appMetadata['role'] ?? user.user?.userMetadata?['role']) as String?;
+      final role = user.user?.appMetadata['role'] as String?;
       final route = role == 'repartidor'      ? '/repartidor'
                   : role == 'repartidor_plus' ? '/rider'
                   : role == 'dueno'           ? '/dueno'
