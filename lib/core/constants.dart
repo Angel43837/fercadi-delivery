@@ -29,9 +29,15 @@ class AppConstants {
   // (ver CLAUDE.md, sección de compilación de producción) — sin esto, un
   // build de producción cobraría con la llave de pruebas, sin cobrar nada
   // de verdad, sin ningún aviso.
+  // nov 2026: la pk_test anterior pertenecía a OTRA cuenta de Stripe distinta
+  // a la que tiene configurado STRIPE_SECRET_KEY en la Edge Function — se
+  // descubrió al configurar el webhook (Bloque B, auditoría nov 2026): el
+  // webhook y la clave secreta no estaban en la misma cuenta, así que ningún
+  // evento le habría llegado nunca a stripe-webhook. Esta pk_test sí es de la
+  // cuenta correcta ("Grupo fercadi", acct_1ThAckJOgZRwLcU8).
   static const String stripePublishableKey = String.fromEnvironment(
     'STRIPE_PUBLISHABLE_KEY',
-    defaultValue: 'pk_test_51ThAd2JlrTraAKwstUDr3pynDCZiLz88mldbch47FD6Fa4XVMjPKl9CGvdbAGkE4UG85mxwkrXXgIMdxF2SpbmlV00e1EnYwvc',
+    defaultValue: 'pk_test_51ThAckJOgZRwLcU8dhFUinKBgjBYCCcs1TntgCxi4ZquDFIjoqrSdZI8VucUnrTSDeS90LAahjZzRaVePin0ADmS0043SkfH6U',
   );
   // La clave secreta NUNCA va aquí — va en la Supabase Edge Function como variable de entorno
 
