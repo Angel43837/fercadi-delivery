@@ -97,12 +97,6 @@ Deno.serve(async (req) => {
     // promete el Aviso de Términos. Antes usaba cancel_my_order(uuid), que
     // nunca funcionó (los ids de pedido son texto) y no reembolsaba.
     const isCustomer = order.customer_id === user.id
-    if (!isAdmin && !isOwnerOfThisRestaurant && isCustomer && order.status !== 'pending') {
-      return new Response(JSON.stringify({ error: 'Tu pedido ya está siendo preparado, ya no se puede cancelar.' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
     if (!isAdmin && !isOwnerOfThisRestaurant && !isCustomer) {
       return new Response(JSON.stringify({ error: 'No autorizado' }), {
         status: 403,
@@ -110,6 +104,12 @@ Deno.serve(async (req) => {
       })
     }
 
+    // El estado final (cancelado/entregado) se revisa ANTES que el límite de
+    // "solo mientras siga pending" del cliente — antes era al revés, así que
+    // un cliente que intentaba cancelar un pedido YA cancelado (ej. doble
+    // clic, o reintento tras perder la red) veía "tu pedido ya está siendo
+    // preparado" en vez del mensaje real. No cambiaba nada en la seguridad
+    // (de cualquier forma no se reembolsaba dos veces), solo el mensaje.
     if (order.status === 'cancelled') {
       return new Response(JSON.stringify({ error: 'Este pedido ya está cancelado.' }), {
         status: 400,
@@ -118,6 +118,16 @@ Deno.serve(async (req) => {
     }
     if (order.status === 'delivered') {
       return new Response(JSON.stringify({ error: 'Este pedido ya fue entregado, no se puede rechazar.' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+    // El cliente también puede cancelar SU pedido, pero solo mientras el
+    // restaurante no lo haya confirmado (status 'pending') — mismo límite que
+    // promete el Aviso de Términos. Antes usaba cancel_my_order(uuid), que
+    // nunca funcionó (los ids de pedido son texto) y no reembolsaba.
+    if (!isAdmin && !isOwnerOfThisRestaurant && isCustomer && order.status !== 'pending') {
+      return new Response(JSON.stringify({ error: 'Tu pedido ya está siendo preparado, ya no se puede cancelar.' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
