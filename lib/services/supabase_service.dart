@@ -2322,19 +2322,52 @@ class SupabaseService {
   // pedidos que SIGUEN activos (para no dejar a un cliente/repartidor
   // esperando un pedido de un restaurante que ya no existe); los ya
   // entregados/cancelados se quedan intactos como historial.
+  //
+  // Antes esto ponía 'cancelled' directo con un UPDATE — un pedido YA
+  // PAGADO con tarjeta se cancelaba sin devolverle nada al cliente. Ahora:
+  // los que siguen 'awaiting_payment' se resuelven con la acción 'abandon'
+  // de create-payment-intent (confirma si Stripe ya cobró, cancela si no);
+  // el resto (pending..delivering, posiblemente ya pagados) se cancelan con
+  // reject-order, que sí reembolsa. Si algo falla, el restaurante de todos
+  // modos se desactiva (no debe seguir visible a clientes mientras tanto) y
+  // al final se avisa cuántos pedidos quedaron pendientes de revisar a mano.
   static Future<void> deleteRestaurant(String restaurantId) async {
     if (useMock) return;
 
-    await _client
+    final active = await _client
         .from('orders')
-        .update({'status': 'cancelled'})
+        .select('id, status')
         .eq('restaurant_id', restaurantId)
         .inFilter('status', ['pending', 'awaiting_payment', 'restaurant_accepted', 'accepted', 'delivering']);
+
+    var failures = 0;
+    for (final row in (active as List)) {
+      final orderId = row['id'] as String;
+      final status = row['status'] as String;
+      try {
+        if (status == 'awaiting_payment') {
+          await _client.functions.invoke('create-payment-intent', body: {
+            'action': 'abandon',
+            'orderIds': [orderId],
+          });
+        } else {
+          await rejectOrder(orderId, reason: 'Restaurante dado de baja por Admin');
+        }
+      } catch (_) {
+        failures++;
+      }
+    }
 
     await _client
         .from('restaurants')
         .update({'approval_status': 'eliminado', 'is_open': false})
         .eq('id', restaurantId);
+
+    if (failures > 0) {
+      throw Exception(
+        'El restaurante se desactivó, pero $failures pedido(s) no se pudieron cancelar/reembolsar automáticamente — revísalos a mano.',
+      );
+    }
   }
 
   // Elimina la cuenta de QUIEN LLAMA (cliente, repartidor o dueño) —

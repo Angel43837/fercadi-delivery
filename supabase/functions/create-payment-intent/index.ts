@@ -88,8 +88,18 @@ Deno.serve(async (req) => {
       return json({ error: 'Pedido no encontrado' }, 404)
     }
 
-    if (orders.some((o) => o.customer_id !== callerId)) {
-      return json({ error: 'No autorizado' }, 403)
+    // 'abandon' también lo necesita Admin: al borrar/desactivar un
+    // restaurante (deleteRestaurant), un pedido awaiting_payment ajeno (no
+    // es el cliente quien llama) necesita resolverse igual que cuando el
+    // propio cliente cierra el pago — confirmarlo si Stripe ya cobró,
+    // cancelarlo si no. 'create'/'confirm' siguen siendo solo del cliente
+    // dueño del pedido.
+    const isOwnOrders = !orders.some((o) => o.customer_id !== callerId)
+    if (!isOwnOrders) {
+      const isAdminForAbandon = action === 'abandon' && (await callerClient.rpc('is_admin')).data === true
+      if (!isAdminForAbandon) {
+        return json({ error: 'No autorizado' }, 403)
+      }
     }
 
     const amountCents = toCents(orders)
