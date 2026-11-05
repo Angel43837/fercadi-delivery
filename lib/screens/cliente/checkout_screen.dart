@@ -21,6 +21,7 @@ import '../../core/constants.dart';
 import '../../core/guest_prompt.dart';
 import '../../models/cart_item.dart';
 import '../../models/restaurant.dart';
+import '../../models/restaurant_banner.dart';
 import '../../models/promotion_claim.dart';
 import '../../providers/cart_provider.dart';
 import '../../services/location_service.dart';
@@ -51,6 +52,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   LatLng? _selectedPos;
   List<Map<String, dynamic>> _savedAddresses = [];
   final Map<String, Restaurant> _restaurants = {}; // restaurantId → Restaurant
+  final Map<String, List<RestaurantBanner>> _banners = {}; // restaurantId → banners activos
 
   Restaurant? get _primaryRestaurant =>
       _restaurants.values.firstOrNull;
@@ -124,12 +126,40 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final ids = context.read<CartProvider>().itemsByRestaurant.keys.toList();
     for (final id in ids) {
       final restaurant = await SupabaseService.getRestaurantById(id);
+      final banners = await SupabaseService.getBanners(id);
       if (!mounted) return;
-      if (restaurant != null) {
-        setState(() => _restaurants[id] = restaurant);
-      }
+      setState(() {
+        if (restaurant != null) _restaurants[id] = restaurant;
+        _banners[id] = banners;
+      });
     }
   }
+
+  // Mismo precio unitario que de verdad cobra place_order() en el servidor
+  // (ver 20261103050000_place_order_banner_discount.sql): la promo propia
+  // del platillo gana si sigue vigente; si no, un banner activo del
+  // restaurante — primero uno específico de ESTE producto, si no uno
+  // general (sin product_id). Antes el checkout solo sabía de la promo por
+  // platillo (CartItem.unitPrice/total) — con un banner general o uno por
+  // producto, el total mostrado aquí no coincidía con lo que de verdad se
+  // cobraba al confirmar.
+  double _effectiveUnitPrice(CartItem item) {
+    if (item.product.isPromoActive) return item.product.promoPrice;
+    final banners = _banners[item.restaurantId] ?? const [];
+    final specific = banners.where((b) => b.productId == item.product.id && b.isDiscountActive);
+    final general = banners.where((b) => b.productId == null && b.isDiscountActive);
+    final match = specific.isNotEmpty ? specific.first : (general.isNotEmpty ? general.first : null);
+    if (match?.discountPercent != null) {
+      return (item.product.price * (1 - match!.discountPercent! / 100));
+    }
+    return item.product.price;
+  }
+
+  double _effectiveItemTotal(CartItem item) =>
+      _effectiveUnitPrice(item) * item.paidQuantity;
+
+  double _effectiveCartTotal(List<CartItem> items) =>
+      items.fold(0.0, (s, i) => s + _effectiveItemTotal(i));
 
   Future<void> _loadSavedAddresses() async {
     final addresses = await AuthService.getSavedAddresses();
@@ -219,7 +249,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   }
 
   double _orderTotalDisplay(CartProvider cart) =>
-      cart.total + _deliveryFee - (cart.hasValidPromo ? cart.promoDiscount : 0);
+      _effectiveCartTotal(cart.items) + _deliveryFee - (cart.hasValidPromo ? cart.promoDiscount : 0);
 
   Widget _buildPromoSection(CartProvider cart, Color textMain, Color textSub, Color cardBg) {
     final canApply = _singleRestaurantId != null;
@@ -859,7 +889,14 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 children: [
                   ...cart.items.asMap().entries.map((e) {
                     final isLast = e.key == cart.items.length - 1;
-                    return _OrderItemRow(item: e.value, isLast: isLast, textMain: textMain, textSub: textSub, divColor: divColor);
+                    return _OrderItemRow(
+                      item: e.value,
+                      isLast: isLast,
+                      textMain: textMain,
+                      textSub: textSub,
+                      divColor: divColor,
+                      effectiveTotal: _effectiveItemTotal(e.value),
+                    );
                   }),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
@@ -873,7 +910,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                               style: TextStyle(color: textSub, fontSize: 14),
                             ),
                             Text(
-                              '\$${cart.total.toStringAsFixed(0)} MXN',
+                              '\$${_effectiveCartTotal(cart.items).toStringAsFixed(0)} MXN',
                               style: TextStyle(color: textMain, fontSize: 14),
                             ),
                           ],
@@ -1220,7 +1257,11 @@ class _OrderItemRow extends StatelessWidget {
   final Color textMain;
   final Color textSub;
   final Color divColor;
-  const _OrderItemRow({required this.item, this.isLast = false, required this.textMain, required this.textSub, required this.divColor});
+  // Precio ya con el descuento real que va a cobrar place_order() (promo
+  // por platillo o banner, lo que aplique) — nunca item.total a secas, que
+  // solo conoce la promo por platillo.
+  final double effectiveTotal;
+  const _OrderItemRow({required this.item, this.isLast = false, required this.textMain, required this.textSub, required this.divColor, required this.effectiveTotal});
 
   @override
   Widget build(BuildContext context) {
@@ -1237,7 +1278,7 @@ class _OrderItemRow extends StatelessWidget {
                     child: Text(item.product.name, style: TextStyle(color: textMain, fontSize: 14)),
                   ),
                   Text(
-                    '${item.quantity}x  \$${item.total.toStringAsFixed(0)}',
+                    '${item.quantity}x  \$${effectiveTotal.toStringAsFixed(0)}',
                     style: TextStyle(color: textSub, fontSize: 14),
                   ),
                 ],
