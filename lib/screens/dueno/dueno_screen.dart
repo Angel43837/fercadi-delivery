@@ -697,7 +697,50 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
       child: SafeArea(
         bottom: false,
+        child: Column(children: [
+          _buildHeaderRow(appData, isOpen),
+          // A diferencia de _buildClosedEmptyGate (una pantalla completa,
+          // de una sola vez, para el onboarding del primer día), este aviso
+          // se queda mientras el restaurante siga cerrado, en cualquier
+          // visita — antes un dueño con platillos ya cargados que
+          // simplemente se le olvidaba prender el switch no tenía ningún
+          // recordatorio.
+          if (!isOpen) _buildClosedReminder(),
+        ]),
+      ),
+    );
+  }
+
+  Widget _buildClosedReminder() {
+    final hasProducts = _productsLoaded && _products.isNotEmpty;
+    final message = hasProducts
+        ? 'Tu restaurante está cerrado, actívalo para recibir pedidos'
+        : 'Tu restaurante está cerrado. Agrega tus platillos y luego actívalo para empezar a recibir pedidos';
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: AppConstants.primaryColor.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppConstants.primaryColor.withValues(alpha: 0.35)),
+        ),
         child: Row(children: [
+          const Icon(Icons.info_outline, color: AppConstants.primaryColor, size: 16),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(message,
+                style: const TextStyle(
+                    color: AppConstants.primaryColor, fontSize: 12, fontWeight: FontWeight.w600)),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _buildHeaderRow(AppDataProvider appData, bool isOpen) {
+    return Row(children: [
           GestureDetector(
             onTap: () => setState(() => _tab = 3),
             child: _restPhoto.isNotEmpty
@@ -796,9 +839,7 @@ class _DuenoScreenState extends State<DuenoScreen> with WidgetsBindingObserver {
               ]),
             ),
           ),
-        ]),
-      ),
-    );
+        ]);
   }
 
   // ── Retiros del restaurante ──────────────────────────────────────────────
