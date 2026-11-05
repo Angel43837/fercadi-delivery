@@ -168,7 +168,13 @@ Deno.serve(async (req) => {
             .select('id, status')
             .eq('stripe_payment_intent_id', paymentIntentId)
             .maybeSingle()
-          if (tip && tip.status === 'pending_payment') {
+          // No solo 'pending_payment': un intento anterior pudo marcarse
+          // 'failed' (tarjeta rechazada) y luego el cliente reintentó con
+          // otra tarjeta sobre un PaymentIntent/fila nuevos — ese 'succeeded'
+          // sí debe poder pasarla a 'paid'. Lo único que nunca se vuelve a
+          // tocar es una que YA quedó 'paid' (evita que un evento duplicado
+          // o fuera de orden la regrese a 'failed').
+          if (tip && tip.status !== 'paid') {
             await supabase
               .from('order_tips')
               .update({ status: newStatus === 'paid' ? 'paid' : 'failed' })

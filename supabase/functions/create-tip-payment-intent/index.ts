@@ -93,10 +93,18 @@ Deno.serve(async (req) => {
       return json({ error: 'Ya le diste propina a este pedido' }, 409)
     }
 
-    // Si ya había un intento pendiente, se reusa SU monto (no el que venga
-    // ahora) — la llave de idempotencia de abajo es la misma en cualquier
-    // reintento, y Stripe rechaza reusarla con parámetros distintos.
-    const finalAmountCents = existing ? Math.round(Number(existing.amount) * 100) : amountCents
+    // Un intento ANTERIOR todavía 'pending_payment' (la petición de verdad
+    // podría seguir en curso, ej. la app se cerró a medio pago) sí reusa la
+    // MISMA llave de idempotencia y el mismo monto — así un reintento no
+    // cobra dos veces. Pero uno que el webhook ya marcó 'failed' (la tarjeta
+    // se rechazó de verdad, ese intento ya está muerto) usa una llave nueva:
+    // reusar la fija haría que Stripe regresara ese mismo PaymentIntent ya
+    // en estado terminal, y el cliente nunca podría pagar con otra tarjeta.
+    const isDeadRetry = existing?.status === 'failed'
+    const finalAmountCents = existing && !isDeadRetry ? Math.round(Number(existing.amount) * 100) : amountCents
+    const idempotencyKey = isDeadRetry
+      ? `gogo-tip-${orderId}-retry-${crypto.randomUUID()}`
+      : `gogo-tip-${orderId}`
 
     const body = new URLSearchParams({
       amount: String(finalAmountCents),
@@ -111,24 +119,37 @@ Deno.serve(async (req) => {
       headers: {
         Authorization: `Bearer ${stripeSecretKey}`,
         'Content-Type': 'application/x-www-form-urlencoded',
-        'Idempotency-Key': `gogo-tip-${orderId}`,
+        'Idempotency-Key': idempotencyKey,
       },
       body,
     })
     const intent = await stripeRes.json()
     if (!stripeRes.ok) return json({ error: intent.error?.message ?? 'Error de Stripe' }, 400)
 
-    if (existing) {
-      await admin.from('order_tips').update({ stripe_payment_intent_id: intent.id }).eq('id', existing.id)
-    } else {
-      await admin.from('order_tips').insert({
-        order_id: orderId,
-        customer_id: callerId,
-        repartidor_id: order.repartidor_id,
-        amount: finalAmountCents / 100,
-        stripe_payment_intent_id: intent.id,
-        status: 'pending_payment',
-      })
+    // Si esto falla, NO se regresa el client_secret: el cliente pagaría una
+    // propina que la BD nunca sabría a qué pedido ligar (el webhook busca
+    // por stripe_payment_intent_id en order_tips; sin esta fila, el cobro se
+    // queda huérfano y el repartidor nunca ve ese dinero en su saldo).
+    const { error: dbError } = existing
+      ? await admin.from('order_tips')
+          .update({ stripe_payment_intent_id: intent.id, status: 'pending_payment', amount: finalAmountCents / 100 })
+          .eq('id', existing.id)
+      : await admin.from('order_tips').insert({
+          order_id: orderId,
+          customer_id: callerId,
+          repartidor_id: order.repartidor_id,
+          amount: finalAmountCents / 100,
+          stripe_payment_intent_id: intent.id,
+          status: 'pending_payment',
+        })
+    if (dbError) {
+      // El PaymentIntent ya se creó en Stripe pero no se pudo registrar —
+      // se cancela para no dejarlo cobrable sin que nada en la BD lo rastree.
+      await fetch(`https://api.stripe.com/v1/payment_intents/${intent.id}/cancel`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${stripeSecretKey}` },
+      }).catch(() => {})
+      return json({ error: 'No se pudo registrar la propina, intenta de nuevo.' }, 500)
     }
 
     return json({ client_secret: intent.client_secret })
