@@ -2584,6 +2584,14 @@ class SupabaseService {
   // CREATE TABLE ratings (id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
   //   order_id text, stars int, comment text, tip numeric, is_driver bool,
   //   created_at timestamptz DEFAULT now());
+  // upsert por (order_id, is_driver) — antes era un insert() simple dentro de
+  // un try/catch que tragaba cualquier error: antes de la restricción única
+  // (20261105010000_ratings_unique_constraint.sql) eso dejaba calificar el
+  // mismo pedido 2 veces sin aviso; con la restricción ya puesta, un insert
+  // directo en un reintento (ej. "Reintentar propina", que vuelve a llamar
+  // esto solo para actualizar el monto real cobrado) habría tronado en
+  // silencio. Ya no se traga el error — quien llama decide qué hacer si
+  // falla (ver rating_dialog.dart).
   static Future<void> submitRating({
     required String orderId,
     required int stars,
@@ -2592,15 +2600,13 @@ class SupabaseService {
     double? tip,
   }) async {
     if (useMock) return;
-    try {
-      await _client.from('ratings').insert({
-        'order_id': orderId,
-        'stars': stars,
-        'comment': comment.isEmpty ? null : comment,
-        'tip': tip,
-        'is_driver': isDriver,
-      });
-    } catch (_) {}
+    await _client.from('ratings').upsert({
+      'order_id': orderId,
+      'stars': stars,
+      'comment': comment.isEmpty ? null : comment,
+      'tip': tip,
+      'is_driver': isDriver,
+    }, onConflict: 'order_id,is_driver');
   }
 
   // Historial completo de pedidos de un cliente (todas las fechas, no solo hoy).

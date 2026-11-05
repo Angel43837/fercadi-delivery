@@ -33,6 +33,10 @@ class _RatingDialogState extends State<_RatingDialog> {
   double _tipAmount = 0;
   bool _sending = false;
   String? _tipError;
+  // true en cuanto la calificación ya quedó guardada de verdad — a partir de
+  // ahí, si la propina falló/se canceló, el botón de abajo cambia a
+  // "Reintentar propina" en vez de volver a mandar toda la calificación.
+  bool _ratingSaved = false;
 
   static const _tipOptions = [10.0, 20.0, 50.0, 100.0];
 
@@ -55,29 +59,79 @@ class _RatingDialogState extends State<_RatingDialog> {
     // guarda de todos modos aunque la propina falle o se cancele. Antes un
     // pago de propina rechazado se llevaba entre las patas la calificación
     // completa (el cliente perdía su estrella/comentario sin enterarse).
-    var tipPaid = false;
+    // El monto que se guarda es el que el SERVIDOR confirma que de verdad
+    // va a cobrar (puede no ser _tipAmount si se reusó el de un intento
+    // anterior), nunca el elegido en la UI a ciegas.
+    double? chargedTip;
     if (!widget.isDriver && _tipAmount > 0) {
-      tipPaid = await _chargeStripeTip(_tipAmount);
+      chargedTip = await _chargeStripeTip(_tipAmount);
     }
 
-    await SupabaseService.submitRating(
-      orderId: widget.orderId,
-      stars: _stars,
-      comment: _commentCtrl.text.trim(),
-      tip: tipPaid ? _tipAmount : null,
-      isDriver: widget.isDriver,
-    );
+    try {
+      await SupabaseService.submitRating(
+        orderId: widget.orderId,
+        stars: _stars,
+        comment: _commentCtrl.text.trim(),
+        tip: chargedTip,
+        isDriver: widget.isDriver,
+      );
+      _ratingSaved = true;
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _sending = false);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('No se pudo guardar tu calificación. Intenta de nuevo.'),
+        backgroundColor: Colors.redAccent,
+      ));
+      return;
+    }
+
     if (!mounted) return;
     setState(() { _sending = false; });
-    if (!widget.isDriver && _tipAmount > 0 && !tipPaid) {
-      // No se cierra solo: se deja ver el error de la propina para que el
-      // cliente decida si reintenta o cierra sin ella.
+    if (!widget.isDriver && _tipAmount > 0 && chargedTip == null) {
+      // No se cierra solo: la calificación ya quedó guardada, pero se deja
+      // ver el error de la propina con el botón de "Reintentar propina" para
+      // que el cliente decida si reintenta o cierra sin ella.
       return;
     }
     Navigator.of(context).pop();
   }
 
-  Future<bool> _chargeStripeTip(double amount) async {
+  // Reintento SOLO de la propina — la calificación ya se guardó en _submit,
+  // aquí solo se vuelve a cobrar y, si sale bien, se actualiza ratings.tip
+  // (upsert por order_id+is_driver, ver submitRating).
+  Future<void> _retryTip() async {
+    setState(() { _sending = true; _tipError = null; });
+    final chargedTip = await _chargeStripeTip(_tipAmount);
+    if (chargedTip != null) {
+      try {
+        await SupabaseService.submitRating(
+          orderId: widget.orderId,
+          stars: _stars,
+          comment: _commentCtrl.text.trim(),
+          tip: chargedTip,
+          isDriver: widget.isDriver,
+        );
+      } catch (_) {
+        // La propina sí se cobró (Stripe y order_tips ya la tienen) — que no
+        // se haya podido reflejar en ratings.tip no es grave, solo se avisa.
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Tu propina sí se cobró, aunque no se pudo actualizar en tu calificación.'),
+          ));
+        }
+      }
+    }
+    if (!mounted) return;
+    setState(() { _sending = false; });
+    if (chargedTip != null) Navigator.of(context).pop();
+  }
+
+  // Regresa el monto REAL que el servidor va a cobrar (puede diferir del
+  // pedido si se reusó un intento anterior) si el pago se completa; null si
+  // falla o el cliente lo cancela — en los dos casos deja _tipError puesto
+  // para que el usuario sepa exactamente qué pasó.
+  Future<double?> _chargeStripeTip(double amount) async {
     try {
       // Llama a la Edge Function para crear el PaymentIntent
       final res = await Supabase.instance.client.functions.invoke(
@@ -88,9 +142,10 @@ class _RatingDialogState extends State<_RatingDialog> {
         },
       );
       final clientSecret = res.data?['client_secret'] as String?;
+      final chargedAmount = (res.data?['amount'] as num?)?.toDouble();
       if (clientSecret == null) {
         setState(() => _tipError = 'No se pudo iniciar el pago');
-        return false;
+        return null;
       }
       await Stripe.instance.initPaymentSheet(
         paymentSheetParameters: SetupPaymentSheetParameters(
@@ -100,14 +155,19 @@ class _RatingDialogState extends State<_RatingDialog> {
         ),
       );
       await Stripe.instance.presentPaymentSheet();
-      return true;
+      return chargedAmount ?? amount;
     } on StripeException catch (e) {
-      if (e.error.code == FailureCode.Canceled) return false;
+      if (e.error.code == FailureCode.Canceled) {
+        // Antes esto regresaba false sin dejar ningún mensaje — el cliente
+        // se quedaba viendo el diálogo sin entender qué había pasado.
+        if (mounted) setState(() => _tipError = 'Cancelaste el pago de la propina.');
+        return null;
+      }
       if (mounted) setState(() => _tipError = 'Pago fallido: ${e.error.localizedMessage}');
-      return false;
+      return null;
     } catch (_) {
       if (mounted) setState(() => _tipError = 'Error al procesar el pago');
-      return false;
+      return null;
     }
   }
 
@@ -245,11 +305,25 @@ class _RatingDialogState extends State<_RatingDialog> {
 
             const SizedBox(height: 20),
 
-            // Botón enviar
+            if (_ratingSaved) ...[
+              Row(children: [
+                const Icon(Icons.check_circle, color: Colors.white, size: 16),
+                const SizedBox(width: 6),
+                const Expanded(
+                  child: Text('Tu calificación ya se guardó.',
+                      style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+                ),
+              ]),
+              const SizedBox(height: 10),
+            ],
+
+            // Botón enviar — una vez guardada la calificación, si sigue
+            // pendiente la propina, este botón reintenta SOLO la propina en
+            // vez de volver a mandar toda la calificación.
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: _sending ? null : _submit,
+                onPressed: _sending ? null : (_ratingSaved ? _retryTip : _submit),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.white,
                   foregroundColor: _orange,
@@ -260,12 +334,23 @@ class _RatingDialogState extends State<_RatingDialog> {
                     ? const SizedBox(height: 18, width: 18,
                         child: CircularProgressIndicator(color: _orange, strokeWidth: 2))
                     : Text(
-                        _tipAmount > 0
-                            ? 'Pagar propina y calificar'
-                            : 'Enviar calificación',
+                        _ratingSaved
+                            ? 'Reintentar propina'
+                            : (_tipAmount > 0 ? 'Pagar propina y calificar' : 'Enviar calificación'),
                         style: const TextStyle(fontWeight: FontWeight.bold)),
               ),
             ),
+            if (_ratingSaved) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: TextButton(
+                  onPressed: _sending ? null : () => Navigator.of(context).pop(),
+                  child: Text('Cerrar sin propina',
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 12)),
+                ),
+              ),
+            ],
           ],
         ),
       ),

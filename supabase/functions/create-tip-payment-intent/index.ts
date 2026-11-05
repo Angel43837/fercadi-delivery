@@ -152,7 +152,11 @@ Deno.serve(async (req) => {
       return json({ error: 'No se pudo registrar la propina, intenta de nuevo.' }, 500)
     }
 
-    return json({ client_secret: intent.client_secret })
+    // Se regresa el monto real que se va a cobrar (puede no ser el mismo que
+    // pidió el celular esta vez: ver finalAmountCents) — así la UI guarda en
+    // ratings.tip lo que de verdad se cobró, no lo que el usuario alcanzó a
+    // seleccionar antes de que se reusara un monto distinto.
+    return json({ client_secret: intent.client_secret, amount: finalAmountCents / 100 })
   } catch (e) {
     return json({ error: String(e) }, 500)
   }
