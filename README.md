@@ -8,7 +8,7 @@ Permite a los clientes pedir comida desde su teléfono o navegador, a los dueño
 
 Toda la documentación del proyecto vive en [`documentos/`](documentos/):
 
-- [`documentos/CLAUDE.md`](documentos/CLAUDE.md) — guía rápida (stack, roles, temas, deploy, pendientes)
+- [`CLAUDE.md`](CLAUDE.md) (raíz del repo) — guía rápida y bitácora técnica (stack, roles, temas, deploy, rondas de trabajo); la copia que vivía en `documentos/CLAUDE.md` se retiró (nov 2026) por quedar desactualizada frente a esta.
 - [`documentos/Documentaciones/`](documentos/Documentaciones/) — arquitectura, manuales de frontend/backend/pagos/despliegue/actualizaciones
 - [`documentos/sesiones/`](documentos/sesiones/) — bitácora de sesiones de desarrollo
 - [`documentos/Manual_Usuario/`](documentos/Manual_Usuario/) — manual para el usuario final
