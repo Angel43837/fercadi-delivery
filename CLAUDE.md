@@ -716,3 +716,63 @@ Esta ronda se trabajó directo en `dev` (ya no en una rama aparte) — es una te
 - `lib/core/legal_content.dart`: `kLegalFullAddress` sigue en `[DOMICILIO_COMPLETO]` — falta el domicilio fiscal real (pedido varias veces, pendiente de tu patrón).
 - `git push origin dev` — este entorno no tiene forma de autenticarse con GitHub (ni token ni SSH, bloqueado también por el modo automático al intentar generar credenciales nuevas); hay que subirlo con "Sync Changes" en VS Code o desde una Terminal normal.
 - Probar en un iPhone/Android real los flujos de dinero y repartidor de esta ronda antes de considerar esto listo para producción.
+
+## Ronda "Flota, App Group, registro web, tiendas" — nov 2026
+
+Quinta ronda sobre `dev`. Resumen de los 5 bloques:
+
+**Bloque 1 (seguridad de roles)**: el mismo problema de Flota (confiar en
+`user_metadata.role` si `app_metadata.role` venía vacío) existía en 8 lugares más
+(`router.dart`, `splash_screen.dart`, login de repartidor/dueño/cliente,
+`reset_password_screen.dart`) — todos corregidos. Verificado en vivo: una cuenta de
+prueba se puso `role=jefe_flota` en su propio `user_metadata` sin ningún problema
+(`app_metadata` se quedó intacto) — antes de este fix eso la hubiera enrutado al panel
+de Flota en el celular.
+
+**Bloque 2 (App Group por flavor)**: GOGO Food y Pruebas ya no comparten
+`group.com.fercadi.app` — Pruebas tiene el suyo (`group.com.fercadi.app.pruebas`), vía
+un build setting nuevo `APP_GROUP_ID` (xcconfig de Runner + build settings inline del
+target del widget, que no usa xcconfig) y `$(APP_GROUP_ID)` en ambos `.entitlements`.
+El widget ya no trae el grupo fijo en Swift — lo lee de una clave nueva en su
+`Info.plist`. Verificado con un build de release de cada flavor (resuelven al grupo
+correcto); no se pudo probar en un dispositivo real que el widget muestre el pedido.
+**Pendiente tuyo**: crear en developer.apple.com el App Group `group.com.fercadi.app.pruebas`
+(el otro, `group.com.fercadi.app`, ya debe existir) y habilitarlo en los App IDs
+`com.fercadi.app.pruebas` y `com.fercadi.app.pruebas.GOGOTrackingWidget`.
+
+**Bloque 3 (registro web, investigación)**: no hay ningún restaurante en Pruebas con
+`owner_id` nulo que debiera tener uno — los 12 sin dueño son los de datos de muestra
+originales (normal). El registro web (`realSubmission.ts`) ya llena `owner_id`
+correctamente, no hace falta ningún cambio ahí. Se encontró algo aparte: 2 cuentas
+distintas tienen el mismo `restaurant_id` (`r_tacosshet_szfr`) en su `user_metadata` —
+solo una de las dos es la dueña real según `owner_id`, así que no es un hueco de
+seguridad (RLS usa `app_metadata`, que `sync_role_to_app_metadata` solo llena si
+`owner_id` coincide), pero sí es un dato inconsistente que vale la pena que alguien
+revise a mano (detalle de las 2 cuentas en el chat de esta sesión, no se deja aquí por
+ser datos personales reales). Sobre `status` vs `approval_status`: `status` resultó ser una columna
+**muerta** — ni la app, ni la web, ni ningún trigger la leen para nada; solo existe
+porque el `insert` del registro web nunca la toca y cae a su valor por default. Ya hay 3
+restaurantes con `status`/`approval_status` inconsistentes entre sí
+(`en_revision`/`aprobado`), más evidencia de que nadie la mantiene. **Pendiente tuyo**:
+decidir si se elimina la columna `status` (recomendado, ya que `approval_status` es la
+única fuente de verdad real) o se deja como está (no hace daño, solo confunde).
+
+**Bloque 4**: aviso persistente (no de una sola vez, como el que ya existía) cerca del
+switch Abierto/Cerrado del panel del dueño mientras el restaurante siga cerrado, con
+texto distinto según si ya tiene platillos o no. Tema naranja del dueño.
+
+**Bloque 5**: `documentos/tiendas/GUIA_TIENDAS.md` (Data safety/App Privacy, URLs
+públicas, cuenta de revisores, capturas, keystore y builds de producción) y
+`documentos/tiendas/PASO_A_PRODUCCION.md` (orden exacto, con reversa si algo sale mal).
+Comparación real Pruebas vs. producción (`dlukaxbcyetcdbdjjgct`): faltan 15 migraciones
+y 2 Edge Functions (`create-tip-payment-intent`, `sweep-awaiting-payments`); los
+nombres de secretos ya coinciden entre ambos proyectos. Las 15 migraciones se probaron
+completas en modo ensayo (`begin`/`rollback`) contra los datos reales de producción (18
+pedidos, 2 restaurantes, 7 usuarios) — **sin ningún error**. No se aplicó nada en
+producción.
+
+**Aparte, encontrado al revisar**: `documentos/CLAUDE.md` es una copia muy vieja de
+este archivo (de antes de agosto 2026, le faltan Morelia, las zonas nuevas, toda la
+ronda de seguridad, etc.) — alguien podría confundirse leyendo esa en vez de la de la
+raíz. No se tocó (no era parte de esta tarea), pero vale la pena decidir si se borra o
+se actualiza.
