@@ -7,8 +7,8 @@ import 'package:carousel_slider/carousel_slider.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
-import '../../core/constants.dart';
-import '../../models/product.dart';
+import 'package:gogo_core/core/constants.dart';
+import 'package:gogo_core/models/product.dart';
 import '../../providers/cart_provider.dart';
 
 class ProductDetailScreen extends StatefulWidget {

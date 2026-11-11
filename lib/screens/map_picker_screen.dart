@@ -12,7 +12,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart' as gm;
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart' as ll;
-import '../core/constants.dart';
+import 'package:gogo_core/core/constants.dart';
 import '../services/geocoding_service.dart';
 
 class MapPickerScreen extends StatefulWidget {

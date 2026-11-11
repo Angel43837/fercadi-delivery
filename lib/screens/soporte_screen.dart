@@ -13,9 +13,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../core/constants.dart';
-import '../models/support_message.dart';
-import '../services/supabase_service.dart';
+import 'package:gogo_core/core/constants.dart';
+import 'package:gogo_core/models/support_message.dart';
+import 'package:gogo_core/services/supabase_service.dart';
 
 class _ChatItem {
   final String id;

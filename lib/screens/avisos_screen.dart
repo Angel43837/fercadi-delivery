@@ -5,8 +5,8 @@
 // ya lo garantiza.
 
 import 'package:flutter/material.dart';
-import '../core/constants.dart';
-import '../services/supabase_service.dart';
+import 'package:gogo_core/core/constants.dart';
+import 'package:gogo_core/services/supabase_service.dart';
 
 class AvisosScreen extends StatefulWidget {
   const AvisosScreen({super.key});

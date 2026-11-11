@@ -18,9 +18,9 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../core/constants.dart';
-import '../../services/supabase_service.dart';
-import '../../services/auth_service.dart';
+import 'package:gogo_core/core/constants.dart';
+import 'package:gogo_core/services/supabase_service.dart';
+import 'package:gogo_core/services/auth_service.dart';
 import '../../widgets/phone_otp/phone_otp_flow.dart';
 
 // URL de regreso para móvil (deep link). Cada flavor de iOS tiene su propio

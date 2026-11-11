@@ -5,8 +5,8 @@
 // plataforma.
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import '../../services/auth_service.dart';
-import '../../services/supabase_service.dart';
+import 'package:gogo_core/services/auth_service.dart';
+import 'package:gogo_core/services/supabase_service.dart';
 import '../../theme/admin_theme.dart';
 import '../../theme/admin_widgets.dart';
 

@@ -2,11 +2,11 @@
 // repartidores independientes (repartidor_plus). Los repartidores de flota
 // no aparecen aquí: a ellos les paga directo su jefe de flota.
 import 'package:flutter/material.dart';
-import '../../models/rider_withdrawal.dart';
-import '../../models/withdrawal_status.dart';
-import '../../repositories/rider_withdrawal_repository.dart';
-import '../../services/location_service.dart';
-import '../../services/supabase_service.dart';
+import 'package:gogo_core/models/rider_withdrawal.dart';
+import 'package:gogo_core/models/withdrawal_status.dart';
+import 'package:gogo_core/repositories/rider_withdrawal_repository.dart';
+import 'package:gogo_core/services/location_service.dart';
+import 'package:gogo_core/services/supabase_service.dart';
 import '../../theme/admin_theme.dart';
 import '../../theme/admin_widgets.dart';
 

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../services/auth_service.dart';
+import 'package:gogo_core/services/auth_service.dart';
 import '../../theme/admin_theme.dart';
 
 class AdminLoginScreen extends StatefulWidget {

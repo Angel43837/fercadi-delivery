@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import '../models/product.dart';
+import 'package:gogo_core/models/product.dart';
 import '../models/cart_item.dart';
-import '../models/promotion_claim.dart';
+import 'package:gogo_core/models/promotion_claim.dart';
 
 class CartProvider extends ChangeNotifier {
   final List<CartItem> _items = [];

@@ -9,7 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'core/constants.dart';
+import 'package:gogo_core/core/constants.dart';
 import 'screens/flota/flota_screen.dart';
 import 'screens/flota/flota_login_screen.dart';
 import 'screens/flota/flota_rider_detail_screen.dart';

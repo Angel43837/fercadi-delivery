@@ -8,7 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../core/constants.dart';
+import 'package:gogo_core/core/constants.dart';
 import '../../core/guest_prompt.dart';
 import '../../models/cart_item.dart';
 import '../../providers/cart_provider.dart';

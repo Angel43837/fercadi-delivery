@@ -6,7 +6,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'constants.dart';
+import 'package:gogo_core/core/constants.dart';
 
 Future<void> showLoginRequiredSheet(
   BuildContext context, {

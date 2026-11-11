@@ -59,3 +59,6 @@ docker/data/
 fercadi-release.jks
 android/key.properties
 supabase/.dev-db-password.txt
+
+# Override local de gogo-core para probar cambios (ver README de gogo-core)
+pubspec_overrides.yaml

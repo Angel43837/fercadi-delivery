@@ -9,7 +9,7 @@
 // navegar: solo confirmar y volver.
 
 import 'package:flutter/material.dart';
-import '../../core/constants.dart';
+import 'package:gogo_core/core/constants.dart';
 import '../../widgets/phone_otp/phone_otp_flow.dart';
 
 class LinkPhoneScreen extends StatelessWidget {

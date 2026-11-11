@@ -3,7 +3,7 @@
 // de la función "Pedir un repartidor" (rider_calls), que tiene su propia
 // lógica de auto-reembolso aparte.
 import 'package:flutter/material.dart';
-import '../../services/supabase_service.dart';
+import 'package:gogo_core/services/supabase_service.dart';
 import '../../theme/admin_theme.dart';
 import '../../theme/admin_widgets.dart';
 

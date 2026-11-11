@@ -20,18 +20,18 @@ import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../../core/constants.dart';
+import 'package:gogo_core/core/constants.dart';
 import '../../core/restaurant_categories.dart';
-import '../../providers/app_data_provider.dart';
+import 'package:gogo_core/providers/app_data_provider.dart';
 import '../../controllers/restaurant_withdrawal_controller.dart';
-import '../../models/withdrawal_status.dart';
+import 'package:gogo_core/models/withdrawal_status.dart';
 import 'package:go_router/go_router.dart';
-import '../../models/restaurant_banner.dart';
+import 'package:gogo_core/models/restaurant_banner.dart';
 import '../../core/stripe_requirements.dart';
-import '../../services/auth_service.dart';
-import '../../services/location_service.dart';
+import 'package:gogo_core/services/auth_service.dart';
+import 'package:gogo_core/services/location_service.dart';
 import '../../services/notification_service.dart';
-import '../../services/supabase_service.dart';
+import 'package:gogo_core/services/supabase_service.dart';
 import '../map_picker_screen.dart';
 
 class _Product {

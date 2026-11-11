@@ -19,6 +19,23 @@ App de delivery para Maravatío, Michoacán. Flutter + Supabase + Stripe.
 
 ---
 
+## Código compartido: `packages/gogo_core` (desde nov 2026)
+
+GOGO Food (este repo), [GOGO Admin](https://github.com/Angel43837/GOGO-ADMIN) y [GOGO Flota](https://github.com/Angel43837/gogo-flota) comparten un paquete, **`packages/gogo_core/`** (dentro de este repo), con lo que antes estaba copiado en cada app:
+
+- `services/` (`supabase_service.dart`, `auth_service.dart`, `location_service.dart`)
+- `models/`, `core/` (`constants.dart`, `legal_content.dart`, `product_categories.dart`)
+- `repositories/` de retiros y `providers/app_data_provider.dart`
+
+**Esos archivos ya no están en `lib/`.** Se importan como `package:gogo_core/services/supabase_service.dart`. Las rutas `lib/services/...`, `lib/core/...` o `lib/models/...` que aparecen más abajo en este archivo ahora son `packages/gogo_core/lib/...`.
+
+Para arreglar algo en ellos: edita `packages/gogo_core/lib/...`. GOGO Food lo usa en ese momento (`path: packages/gogo_core`). Admin y Flota lo bajan de este repo fijado a un tag, así que después:
+1. Sube `version:` en `packages/gogo_core/pubspec.yaml`, anota en su `CHANGELOG.md`, commit y push.
+2. Crea el tag: `git tag gogo-core-v1.0.1 && git push origin gogo-core-v1.0.1`.
+3. En GOGO-ADMIN y gogo-flota: cambia `ref:` de `gogo_core` en su `pubspec.yaml` al tag nuevo, `flutter pub get`, prueba y commit.
+
+Detalle completo en `packages/gogo_core/README.md`.
+
 ## Correr la app
 
 ```powershell

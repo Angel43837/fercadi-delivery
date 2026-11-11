@@ -3,10 +3,10 @@
 // pueda cobrar su parte de las ventas. Antes de esto no existía ninguna
 // forma de que un restaurante pidiera su dinero desde la app.
 import 'package:flutter/material.dart';
-import '../../models/restaurant_withdrawal.dart';
-import '../../models/withdrawal_status.dart';
-import '../../repositories/restaurant_withdrawal_repository.dart';
-import '../../services/supabase_service.dart';
+import 'package:gogo_core/models/restaurant_withdrawal.dart';
+import 'package:gogo_core/models/withdrawal_status.dart';
+import 'package:gogo_core/repositories/restaurant_withdrawal_repository.dart';
+import 'package:gogo_core/services/supabase_service.dart';
 import '../../theme/admin_theme.dart';
 import '../../theme/admin_widgets.dart';
 

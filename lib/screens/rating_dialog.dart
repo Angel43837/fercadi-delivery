@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../services/supabase_service.dart';
+import 'package:gogo_core/services/supabase_service.dart';
 
 const _orange = Color(0xFFFF5722);
 const _orangeDark = Color(0xFFE64A19);

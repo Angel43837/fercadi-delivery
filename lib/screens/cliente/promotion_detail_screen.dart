@@ -3,9 +3,9 @@
 // cliente al tocar un banner de app_promos que tiene linked_promotion_id.
 
 import 'package:flutter/material.dart';
-import '../../core/constants.dart';
-import '../../models/promotion.dart';
-import '../../services/supabase_service.dart';
+import 'package:gogo_core/core/constants.dart';
+import 'package:gogo_core/models/promotion.dart';
+import 'package:gogo_core/services/supabase_service.dart';
 
 class PromotionDetailScreen extends StatefulWidget {
   final String promotionId;

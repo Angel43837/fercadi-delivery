@@ -4,7 +4,7 @@
 // armados desde core/legal_content.dart.
 
 import 'package:flutter/material.dart';
-import '../core/constants.dart';
+import 'package:gogo_core/core/constants.dart';
 
 class LegalDocumentScreen extends StatelessWidget {
   final String title;

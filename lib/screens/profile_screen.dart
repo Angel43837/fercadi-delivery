@@ -22,12 +22,12 @@ import 'package:latlong2/latlong.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../core/constants.dart';
+import 'package:gogo_core/core/constants.dart';
 import 'package:provider/provider.dart';
 import '../providers/cart_provider.dart';
-import '../services/auth_service.dart';
-import '../services/location_service.dart';
-import '../services/supabase_service.dart';
+import 'package:gogo_core/services/auth_service.dart';
+import 'package:gogo_core/services/location_service.dart';
+import 'package:gogo_core/services/supabase_service.dart';
 import 'cliente/link_phone_screen.dart';
 import 'map_picker_screen.dart';
 

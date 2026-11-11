@@ -8,9 +8,9 @@
 //     MapPickerScreen para regresar una ubicación elegida.
 
 import 'package:flutter/material.dart';
-import '../../core/constants.dart';
-import '../../models/promotion_claim.dart';
-import '../../services/supabase_service.dart';
+import 'package:gogo_core/core/constants.dart';
+import 'package:gogo_core/models/promotion_claim.dart';
+import 'package:gogo_core/services/supabase_service.dart';
 
 class MyPromotionsScreen extends StatefulWidget {
   final bool selectionMode;

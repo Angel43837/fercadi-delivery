@@ -7,8 +7,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../models/support_message.dart';
-import '../../services/supabase_service.dart';
+import 'package:gogo_core/models/support_message.dart';
+import 'package:gogo_core/services/supabase_service.dart';
 import '../../theme/admin_theme.dart';
 import '../../theme/admin_widgets.dart';
 

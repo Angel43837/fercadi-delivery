@@ -19,9 +19,9 @@ import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../core/constants.dart';
-import '../../services/auth_service.dart';
-import '../../services/location_service.dart';
+import 'package:gogo_core/core/constants.dart';
+import 'package:gogo_core/services/auth_service.dart';
+import 'package:gogo_core/services/location_service.dart';
 import '../map_picker_screen.dart';
 
 // Paleta propia de esta pantalla (naranja de fondo, blanco para texto/

@@ -12,8 +12,8 @@ import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../../services/auth_service.dart';
-import '../../services/supabase_service.dart';
+import 'package:gogo_core/services/auth_service.dart';
+import 'package:gogo_core/services/supabase_service.dart';
 
 class FlotaScreen extends StatefulWidget {
   const FlotaScreen({super.key});

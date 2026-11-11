@@ -1,4 +1,4 @@
-import 'product.dart';
+import 'package:gogo_core/models/product.dart';
 
 class CartItem {
   final Product product;

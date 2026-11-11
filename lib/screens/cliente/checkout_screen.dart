@@ -17,17 +17,17 @@ import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../core/constants.dart';
+import 'package:gogo_core/core/constants.dart';
 import '../../core/guest_prompt.dart';
 import '../../models/cart_item.dart';
-import '../../models/restaurant.dart';
-import '../../models/restaurant_banner.dart';
-import '../../models/promotion_claim.dart';
+import 'package:gogo_core/models/restaurant.dart';
+import 'package:gogo_core/models/restaurant_banner.dart';
+import 'package:gogo_core/models/promotion_claim.dart';
 import '../../providers/cart_provider.dart';
-import '../../services/location_service.dart';
-import '../../services/supabase_service.dart';
+import 'package:gogo_core/services/location_service.dart';
+import 'package:gogo_core/services/supabase_service.dart';
 import '../map_picker_screen.dart';
-import '../../services/auth_service.dart';
+import 'package:gogo_core/services/auth_service.dart';
 import '../../services/order_history_service.dart';
 
 enum _Pay { cash, card }

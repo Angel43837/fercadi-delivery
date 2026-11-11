@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
-import '../models/rider_balance.dart';
-import '../models/rider_withdrawal.dart';
+import 'package:gogo_core/models/rider_balance.dart';
+import 'package:gogo_core/models/rider_withdrawal.dart';
 import '../services/rider_withdrawal_service.dart';
 
 /// Mismo patrón que AppDataProvider (ChangeNotifier via provider). Se carga

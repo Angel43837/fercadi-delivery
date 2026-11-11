@@ -1,0 +1,24 @@
+name: gogo_core
+description: "Código compartido de GOGO Food (app, Admin y Flota): servicios de Supabase, auth, ubicación, modelos y configuración."
+version: 1.0.0
+publish_to: 'none'
+
+environment:
+  sdk: ^3.11.5
+  flutter: ">=1.17.0"
+
+# Mismas versiones que fercadi-delivery.
+dependencies:
+  flutter:
+    sdk: flutter
+  supabase_flutter: ^2.8.0
+  http: ^1.2.0
+  shared_preferences: ^2.3.0
+  geolocator: ^13.0.2
+  geocoding: ^3.0.0
+  flutter_image_compress: ^2.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0

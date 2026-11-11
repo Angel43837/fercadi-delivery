@@ -12,10 +12,10 @@ import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../../core/constants.dart';
-import '../../services/location_service.dart';
+import 'package:gogo_core/core/constants.dart';
+import 'package:gogo_core/services/location_service.dart';
 import '../../services/notification_service.dart';
-import '../../services/supabase_service.dart';
+import 'package:gogo_core/services/supabase_service.dart';
 import '../chat_screen.dart';
 import '../rating_dialog.dart';
 

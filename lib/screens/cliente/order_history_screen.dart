@@ -6,11 +6,11 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
-import '../../core/constants.dart';
-import '../../models/product.dart';
+import 'package:gogo_core/core/constants.dart';
+import 'package:gogo_core/models/product.dart';
 import '../../providers/cart_provider.dart';
 import '../../services/order_history_service.dart';
-import '../../services/supabase_service.dart';
+import 'package:gogo_core/services/supabase_service.dart';
 
 class OrderHistoryScreen extends StatefulWidget {
   const OrderHistoryScreen({super.key});

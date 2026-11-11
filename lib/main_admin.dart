@@ -3,9 +3,9 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'core/constants.dart';
+import 'package:gogo_core/core/constants.dart';
 import 'theme/admin_theme.dart';
-import 'providers/app_data_provider.dart';
+import 'package:gogo_core/providers/app_data_provider.dart';
 import 'screens/admin/admin_screen.dart';
 import 'screens/admin/admin_login_screen.dart';
 import 'screens/admin/admin_resenas_screen.dart';
@@ -14,7 +14,7 @@ import 'screens/admin/admin_retiros_restaurantes_screen.dart';
 import 'screens/admin/admin_promociones_screen.dart';
 import 'screens/admin/admin_reembolsos_screen.dart';
 import 'screens/admin/admin_soporte_screen.dart';
-import 'services/auth_service.dart';
+import 'package:gogo_core/services/auth_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();

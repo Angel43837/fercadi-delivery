@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
-import '../models/rider_balance.dart';
-import '../models/restaurant_withdrawal.dart';
+import 'package:gogo_core/models/rider_balance.dart';
+import 'package:gogo_core/models/restaurant_withdrawal.dart';
 import '../services/restaurant_withdrawal_service.dart';
 
 /// Mismo patrón que RiderWithdrawalController (ChangeNotifier via provider).

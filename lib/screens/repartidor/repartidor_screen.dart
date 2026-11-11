@@ -24,13 +24,13 @@ import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../../core/constants.dart';
+import 'package:gogo_core/core/constants.dart';
 import '../../providers/theme_provider.dart';
-import '../../services/location_service.dart';
+import 'package:gogo_core/services/location_service.dart';
 import '../../services/notification_service.dart';
-import '../../services/supabase_service.dart';
+import 'package:gogo_core/services/supabase_service.dart';
 import '../../widgets/gogo_rider_3d.dart';
-import '../../services/auth_service.dart';
+import 'package:gogo_core/services/auth_service.dart';
 import '../chat_screen.dart';
 import '../rating_dialog.dart';
 

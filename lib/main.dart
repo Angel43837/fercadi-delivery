@@ -11,17 +11,17 @@ import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:provider/provider.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'core/constants.dart';
+import 'package:gogo_core/core/constants.dart';
 import 'providers/cart_provider.dart';
-import 'providers/app_data_provider.dart';
+import 'package:gogo_core/providers/app_data_provider.dart';
 import 'providers/theme_provider.dart';
 import 'controllers/rider_withdrawal_controller.dart';
 import 'controllers/restaurant_withdrawal_controller.dart';
 import 'router.dart';
-import 'services/supabase_service.dart';
+import 'package:gogo_core/services/supabase_service.dart';
 import 'services/notification_service.dart';
 import 'services/fcm_service.dart';
-import 'services/location_service.dart';
+import 'package:gogo_core/services/location_service.dart';
 
 Future<void> _startApp() async {
   // Inicializa Stripe

@@ -13,12 +13,12 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../controllers/rider_withdrawal_controller.dart';
 import '../../core/rider_achievements.dart';
-import '../../models/withdrawal_status.dart';
+import 'package:gogo_core/models/withdrawal_status.dart';
 import '../../core/stripe_requirements.dart';
-import '../../repositories/rider_withdrawal_repository.dart';
-import '../../services/auth_service.dart';
-import '../../services/location_service.dart';
-import '../../services/supabase_service.dart';
+import 'package:gogo_core/repositories/rider_withdrawal_repository.dart';
+import 'package:gogo_core/services/auth_service.dart';
+import 'package:gogo_core/services/location_service.dart';
+import 'package:gogo_core/services/supabase_service.dart';
 import '../../widgets/gogo_rider_3d.dart';
 import 'entrega_activa_screen.dart';
 

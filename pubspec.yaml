@@ -41,6 +41,10 @@ dependencies:
   sign_in_with_apple: ^6.1.4
   # Moto 3D de GOGO (assets/models/gogo_rider.glb) en la pantalla del repartidor
   model_viewer_plus: ^1.10.0
+  # Código compartido con GOGO Admin y GOGO Flota (servicios, modelos, core).
+  # Vive en packages/gogo_core/ de este mismo repo (ver su README).
+  gogo_core:
+    path: packages/gogo_core
 
 dev_dependencies:
   flutter_test:

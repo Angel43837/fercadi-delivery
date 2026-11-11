@@ -7,22 +7,22 @@ import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:latlong2/latlong.dart';
-import '../../core/constants.dart';
+import 'package:gogo_core/core/constants.dart';
 import '../../core/guest_prompt.dart';
 import '../../core/restaurant_categories.dart';
-import '../../services/auth_service.dart';
+import 'package:gogo_core/services/auth_service.dart';
 import '../map_picker_screen.dart';
-import '../../models/restaurant.dart';
-import '../../models/category.dart';
-import '../../models/product.dart';
-import '../../providers/app_data_provider.dart';
+import 'package:gogo_core/models/restaurant.dart';
+import 'package:gogo_core/models/category.dart';
+import 'package:gogo_core/models/product.dart';
+import 'package:gogo_core/providers/app_data_provider.dart';
 import '../../providers/cart_provider.dart';
 import '../../providers/theme_provider.dart';
-import '../../services/location_service.dart';
+import 'package:gogo_core/services/location_service.dart';
 import '../../services/notification_service.dart';
-import '../../services/supabase_service.dart';
-import '../../models/restaurant_banner.dart';
-import '../../models/app_promo.dart';
+import 'package:gogo_core/services/supabase_service.dart';
+import 'package:gogo_core/models/restaurant_banner.dart';
+import 'package:gogo_core/models/app_promo.dart';
 
 // Trunca por caracteres (no solo por ancho/maxLines) para que el título de
 // un platillo nunca empuje el precio ni cambie la altura de la tarjeta,

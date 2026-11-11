@@ -17,7 +17,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import '../core/constants.dart';
+import 'package:gogo_core/core/constants.dart';
 
 // Medidas exactas del diseño (lienzo de referencia 380×911), convertidas a
 // fracción del ancho/alto real para que se vea igual en cualquier pantalla.

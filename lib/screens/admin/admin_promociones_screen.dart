@@ -6,9 +6,9 @@
 // (/admin/promociones en main_admin.dart), no una pestaña del IndexedStack.
 
 import 'package:flutter/material.dart';
-import '../../models/category.dart';
-import '../../models/product.dart';
-import '../../services/supabase_service.dart';
+import 'package:gogo_core/models/category.dart';
+import 'package:gogo_core/models/product.dart';
+import 'package:gogo_core/services/supabase_service.dart';
 import '../../theme/admin_theme.dart';
 import '../../theme/admin_widgets.dart';
 
