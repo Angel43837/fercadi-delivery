@@ -30,6 +30,7 @@ import 'package:gogo_core/services/location_service.dart';
 import 'package:gogo_core/services/supabase_service.dart';
 import 'cliente/link_phone_screen.dart';
 import 'map_picker_screen.dart';
+import '../widgets/social_links.dart';
 
 const _avatarColors = [
   AppConstants.primaryColor,
@@ -1027,6 +1028,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 onTap: () => context.push('/terms'),
               ),
             ]),
+          ),
+
+          const SizedBox(height: 20),
+          _SectionLabel('Síguenos'),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            decoration: BoxDecoration(color: cardBg, borderRadius: BorderRadius.circular(16)),
+            child: const SocialLinksRow(),
           ),
 
           // ── Sesión ──────────────────────────────────────────────────────────
