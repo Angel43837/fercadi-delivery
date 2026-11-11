@@ -88,8 +88,8 @@ class _SplashScreenState extends State<SplashScreen>
       'dueno'          => '/dueno',
       'repartidor'     => '/repartidor',
       'repartidor_plus'=> '/rider',
-      // 'admin' y 'jefe_flota' tienen sus propias apps (main_admin.dart /
-      // main_flota.dart) y no navegan dentro del router del cliente.
+      // 'admin' y 'jefe_flota' tienen sus propias apps (repos GOGO-ADMIN /
+      // gogo-flota) y no navegan dentro del router del cliente.
       _                => '/restaurants',
     };
 

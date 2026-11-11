@@ -1,7 +1,0 @@
-#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.profile-flota.xcconfig"
-#include "Generated.xcconfig"
-
-// App Group compartido por GOGO Food, Admin y Flota (ver Bloque 2, nov 2026 —
-// solo Pruebas usa uno distinto, para no compartir sesión/datos del widget
-// con GOGO Food si algún día ambos apuntan a proyectos de Supabase distintos).
-APP_GROUP_ID = group.com.fercadi.app

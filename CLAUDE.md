@@ -59,7 +59,7 @@ Supabase real: `false` + credenciales en `lib/core/constants.dart`
 | Admin | `/admin` | Panel oscuro — todos los restaurantes, pedidos, usuarios |
 | Jefe de flota | `/flota` | Panel de riders a su cargo (mapa, entregas, ganancias) |
 
-**Admin y Jefe de flota son apps/sitios separados**, no viven dentro de GOGO Food: `lib/main_admin.dart` / `lib/main_flota.dart`, cada uno con su propio router (`_adminRouter` / `_flotaRouter`), bundle id (`com.fercadi.admin` / `com.fercadi.flota`) y build (Android APK propio, flavor de iOS propio, sitio web propio). Ver `documentos/Documentaciones/manual_ios.md`.
+**Admin y Jefe de flota son apps separadas, en sus propios repos** (desde nov 2026): [GOGO-ADMIN](https://github.com/Angel43837/GOGO-ADMIN) (`com.fercadi.admin`) y [gogo-flota](https://github.com/Angel43837/gogo-flota) (`com.fercadi.flota`). Ya no viven en este repo (se quitaron `main_admin.dart`, `main_flota.dart`, `screens/admin/`, `screens/flota/`, los flavors `admin`/`flota` de iOS y `web_flota/`); comparten con esta app el paquete `packages/gogo_core`.
 
 El rol se guarda en `user_metadata.role` en Supabase Auth y en SharedPreferences.
 La sesión persiste: el splash espera el evento `initialSession` de Supabase antes de rutear.
@@ -97,7 +97,7 @@ npx vercel --prod --archive=tgz
 **Android APKs** (dos apps: cliente y admin):
 ```powershell
 .\build_apks.ps1
-# Genera: build\GOGOFood.apk y build\GOGOAdmin.apk
+# Genera: build/GOGOFood.apk (Admin y Flota se compilan desde sus propios repos)
 ```
 
 Bundle ID: `com.fercadi.app` (admin: `com.fercadi.admin`)

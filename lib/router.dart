@@ -60,8 +60,8 @@ const _clientRoutes = {
 // requieren cuenta real.
 const _guestBrowsable = {'/restaurants', '/product-detail', '/cart'};
 
-// 'admin' y 'jefe_flota' tienen sus propias apps separadas (main_admin.dart /
-// main_flota.dart) y no tienen pantallas dentro de este router.
+// 'admin' y 'jefe_flota' tienen sus propias apps, en sus propios repos
+// (GOGO-ADMIN / gogo-flota), y no tienen pantallas dentro de este router.
 String _roleHome(String role) {
   switch (role) {
     case 'repartidor_plus': return '/rider';
